@@ -1,0 +1,170 @@
+// 导演时间 · SillyTavern 适配层
+//
+// T-102。全局禁则 G7：所有 getContext() 调用必须集中在本文件。
+// 其它模块一律通过这里暴露的方法访问酒馆，禁止自己拿 context。
+//
+// 关键设计：
+// 1. 能力探测 —— ST 版本差异大，不假设任何 API 存在
+// 2. 注入参数封死 —— position/depth/scan/role 固定为实测正确值，调用方改不了
+
+// 注入到聊天记录末尾、system 角色、不触发世界书扫描（见项目书 §4.3）
+const INJECT_POSITION = 1;
+const INJECT_DEPTH = 0;
+const INJECT_SCAN = false;
+const INJECT_ROLE = 0;
+
+function defaultProvider() {
+  try {
+    if (typeof SillyTavern !== 'undefined' && typeof SillyTavern.getContext === 'function') {
+      return SillyTavern.getContext();
+    }
+  } catch {
+    /* 忽略：未运行在酒馆中 */
+  }
+  return {};
+}
+
+function hasFunction(value) {
+  return typeof value === 'function';
+}
+
+function normalizeEntries(entries) {
+  const list = Array.isArray(entries)
+    ? entries
+    : Object.entries(entries ?? {}).map(([id, entry]) => ({ id, ...entry }));
+
+  return list.map((entry, index) => ({
+    id: String(entry.id ?? entry.uid ?? index),
+    name: entry.name ?? entry.comment ?? entry.keys?.join(', ') ?? `条目 ${index + 1}`,
+    content: entry.content ?? entry.text ?? '',
+  }));
+}
+
+function normalizeBook(name, book) {
+  return {
+    name,
+    entries: normalizeEntries(book?.entries ?? book).map((entry) => ({ ...entry, bookName: name })),
+  };
+}
+
+export function createSillyTavernContext(contextProvider = defaultProvider) {
+  function getHost() {
+    try {
+      return contextProvider() ?? {};
+    } catch {
+      return {};
+    }
+  }
+
+  const ctx = {
+    // ---------- 能力探测 ----------
+    get capabilities() {
+      const host = getHost();
+      return {
+        context: typeof contextProvider === 'function',
+        chat: host.chatId !== undefined || host.chatMetadata !== undefined,
+        character: Array.isArray(host.characters) && host.characterId !== undefined,
+        messages: Array.isArray(host.chat),
+        setExtensionPrompt: hasFunction(host.setExtensionPrompt),
+        saveSettings: hasFunction(host.saveSettingsDebounced),
+        chatState: hasFunction(host.saveMetadataDebounced) || hasFunction(host.saveMetadata),
+        confirmation: hasFunction(host.Popup?.show?.confirm) || hasFunction(host.popup?.confirm),
+        events: hasFunction(host.eventSource?.on),
+        worldInfo: hasFunction(host.loadWorldInfo) || hasFunction(host.getWorldInfoNames) || Array.isArray(host.world_names),
+        // 主连接模式才需要；独立 API 模式禁用（禁则 G1）
+        rawGeneration: hasFunction(host.generateRaw),
+      };
+    },
+
+    getContext: getHost,
+
+    // ---------- 基础读取 ----------
+    getMessages() {
+      return getHost().chat ?? [];
+    },
+
+    getCharacterData() {
+      const host = getHost();
+      return host.characters?.[host.characterId] ?? null;
+    },
+
+    getCurrentChatKey() {
+      const host = getHost();
+      return host.chatId ?? host.chatMetadata?.chat_id ?? null;
+    },
+
+    // ---------- 注入（唯一入口）----------
+    setExtensionPrompt(key, value) {
+      return getHost().setExtensionPrompt?.(key, value, INJECT_POSITION, INJECT_DEPTH, INJECT_SCAN, INJECT_ROLE);
+    },
+
+    clearExtensionPrompt(key) {
+      return ctx.setExtensionPrompt(key, '');
+    },
+
+    // ---------- 世界书 ----------
+    getWorldInfoNames() {
+      const host = getHost();
+      const names = hasFunction(host.getWorldInfoNames) ? host.getWorldInfoNames() : host.world_names;
+      return [...new Set((Array.isArray(names) ? names : []).filter(Boolean).map(String))];
+    },
+
+    async loadWorldInfoBook(name) {
+      const host = getHost();
+      if (!hasFunction(host.loadWorldInfo)) {
+        throw new Error('SillyTavern 世界书加载能力不可用');
+      }
+      return normalizeBook(name, await host.loadWorldInfo(name));
+    },
+
+    /** 角色卡内嵌世界书（character_book）—— 最容易被漏掉的一类来源 */
+    getCharacterBookEntries() {
+      const host = getHost();
+      const entries = host.characters?.[host.characterId]?.data?.character_book?.entries;
+      return Array.isArray(entries) ? normalizeEntries(entries) : [];
+    },
+
+    // ---------- 存储 ----------
+    getExtensionSettings() {
+      return getHost().extensionSettings ?? {};
+    },
+
+    saveSettings() {
+      return getHost().saveSettingsDebounced?.();
+    },
+
+    getChatState() {
+      const host = getHost();
+      return host.chatMetadata ?? null;
+    },
+
+    saveChatState() {
+      const host = getHost();
+      return (host.saveMetadataDebounced ?? host.saveMetadata)?.();
+    },
+
+    // ---------- 交互 ----------
+    showSystemMessage(message) {
+      const host = getHost();
+      if (hasFunction(host.showSystemMessage)) return host.showSystemMessage(message);
+      if (typeof globalThis.toastr?.info === 'function') return globalThis.toastr.info(message);
+      return undefined;
+    },
+
+    async showConfirm(message) {
+      const host = getHost();
+      const confirm = host.Popup?.show?.confirm ?? host.popup?.confirm;
+      if (!hasFunction(confirm)) return Promise.resolve(false);
+      return confirm(message);
+    },
+
+    on(eventName, listener) {
+      const eventSource = getHost().eventSource;
+      if (!hasFunction(eventSource?.on)) return () => {};
+      eventSource.on(eventName, listener);
+      return () => eventSource.off?.(eventName, listener);
+    },
+  };
+
+  return ctx;
+}

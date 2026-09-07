@@ -1,0 +1,9 @@
+{
+  "display_name": "导演时间",
+  "loading_order": 10,
+  "js": "index.js",
+  "css": "style.css",
+  "author": "",
+  "version": "0.1.0",
+  "minimum_client_version": "1.18.0"
+}

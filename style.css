@@ -1,0 +1,56 @@
+/* 导演时间 · 视觉令牌
+ *
+ * T-101：只定义变量，不写组件样式（禁则 G4：逻辑未验收前不做 UI 美化）。
+ * 规范见《UI设计-完全版.md》§10。
+ */
+
+:root {
+  /* 牛皮纸 · 日间 */
+  --dt-paper: #ede4d3;
+  --dt-card: #f5efe1;
+  --dt-ink: #2b2721;
+  --dt-ink-2: #5a5245;
+  --dt-ink-faded: #8a8073;
+  --dt-accent: #8c3a2b;
+
+  /* 线与底 */
+  --dt-rule: rgba(43, 39, 33, 0.28);
+  --dt-rule-soft: rgba(43, 39, 33, 0.18);
+  --dt-tint: rgba(43, 39, 33, 0.05);
+
+  /* 字体：仅两款 */
+  --dt-font-serif: 'Noto Serif SC', 'Songti SC', 'SimSun', 'STSong', serif;
+  --dt-font-mono: 'Space Mono', 'JetBrains Mono', ui-monospace, monospace;
+
+  /* 字号层级 */
+  --dt-size-scene: 17px;
+  --dt-size-title: 15px;
+  --dt-size-body: 14px;
+  --dt-size-minor: 13px;
+  --dt-size-label: 11px;
+
+  /* 圆角：小，纸质感不要大圆角 */
+  --dt-radius: 4px;
+  --dt-radius-lg: 6px;
+
+  /* 间距 */
+  --dt-gap: 8px;
+  --dt-gap-md: 12px;
+  --dt-pad-x: 20px;
+  --dt-pad-y: 24px;
+}
+
+/* 暗房 · 夜间（酒馆深色主题下自动切换） */
+[data-theme='dark'],
+body.dark {
+  --dt-paper: #23201c;
+  --dt-card: #2b2721;
+  --dt-ink: #e8dfd0;
+  --dt-ink-2: #b5aa99;
+  --dt-ink-faded: #7a7065;
+  --dt-accent: #c25a45;
+
+  --dt-rule: rgba(232, 223, 208, 0.24);
+  --dt-rule-soft: rgba(232, 223, 208, 0.14);
+  --dt-tint: rgba(232, 223, 208, 0.06);
+}
