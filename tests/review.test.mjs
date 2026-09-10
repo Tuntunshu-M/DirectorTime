@@ -33,7 +33,11 @@ function makeEnv() {
   const store = createStateStore(ctx, 'dt');
   const stages = createStageService({ store });
   const registered = [];
-  const registry = { register: (text) => { registered.push(text); return true; } };
+  let current = null;
+  const registry = {
+    register: (text) => { current = text || null; registered.push(text); return true; },
+    getStatus: () => ({ registered: current !== null, length: current?.length ?? 0, text: current ?? '' }),
+  };
   return { store, stages, registry, registered };
 }
 
@@ -159,6 +163,25 @@ await check('并发复盘被拦截（防重入）', async () => {
   assert.equal(second.skipped, true);
   release();
   await first;
+});
+
+await check('记录本轮回放：本轮生效的指令 vs 下轮将用的指令', async () => {
+  const env = makeEnv();
+  seed(env);
+  // 模拟上一轮复盘留下的注册内容——这才是本轮生成时真正生效的
+  env.registry.register('上一轮留下的指令');
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'advance', reason: '达成' }) },
+    stages: env.stages, registry: env.registry, store: env.store, getSettings: () => ({}),
+  });
+  await service.run({ userMessage: '好啊', charMessage: '那我们走吧' });
+
+  const turn = service.getLastTurn();
+  assert.equal(turn.userMessage, '好啊');
+  assert.equal(turn.charMessage, '那我们走吧');
+  assert.equal(turn.usedInjection, '上一轮留下的指令', '本轮生效的应是复盘前的内容');
+  assert.ok(turn.nextInjection.includes('订好机票'), '下轮应换成新阶段的指令');
+  assert.equal(turn.action, 'advance');
 });
 
 console.log('注入文本拼装');

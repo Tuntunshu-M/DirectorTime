@@ -6,7 +6,7 @@
 // 状态计算抽成纯函数 buildDebugState，便于自动化测试；DOM 渲染单独一层。
 
 /** 纯函数：把当前状态整理成 Debug 需要的结构 */
-export function buildDebugState({ store, registry, last = null, capabilities = null } = {}) {
+export function buildDebugState({ store, registry, last = null, capabilities = null, lastTurn = null } = {}) {
   const state = store?.get?.() ?? {};
   const stages = state.stages ?? [];
   const active = stages.find((stage) => stage.id === state.activeStageId) ?? null;
@@ -33,6 +33,7 @@ export function buildDebugState({ store, registry, last = null, capabilities = n
     lastAction: last?.action ?? null,
     lastReason: last?.reason ?? null,
     lastRaw: last?.raw ?? '',
+    turn: lastTurn ?? null,
     lastReviewAt: state.runtime?.lastReviewAt ?? 0,
     cost: state.cost ?? { sessionTotal: 0, callCount: 0 },
     capabilities: capabilities ?? null,
@@ -47,7 +48,7 @@ const PANEL_STYLE = `
   font-family:var(--dt-font-mono,ui-monospace,monospace); font-size:12px; line-height:1.6;
 `;
 
-export function createDebugPanel({ store, registry, getCapabilities } = {}) {
+export function createDebugPanel({ store, registry, getCapabilities, getLastTurn } = {}) {
   let el = null;
   let last = null;
 
@@ -72,7 +73,11 @@ export function createDebugPanel({ store, registry, getCapabilities } = {}) {
 
   function render() {
     const node = ensure();
-    const s = buildDebugState({ store, registry, last, capabilities: getCapabilities?.() });
+    const s = buildDebugState({
+      store, registry, last,
+      capabilities: getCapabilities?.(),
+      lastTurn: getLastTurn?.() ?? null,
+    });
 
     node.innerHTML = `
       <div style="font-size:13px;margin-bottom:8px">◆ 导演时间 · 调试</div>
@@ -85,6 +90,18 @@ export function createDebugPanel({ store, registry, getCapabilities } = {}) {
         ${row('上次动作', s.lastAction ? `${s.lastAction}（${s.lastReason ?? ''}）` : '—')}
         ${row('累计', `调用 ${s.cost.callCount} 次`)}
       </div>
+      <details open style="margin-top:8px"><summary>本轮回放 · 跟随 user 输入发送了什么</summary>
+        <div style="margin:6px 0">
+          ${row('user 说', s.turn?.userMessage || '—')}
+          ${row('本轮注入', s.turn?.usedInjection ? `${s.turn.usedInjection.length} 字` : '（空）')}
+          ${row('char 回', (s.turn?.charMessage || '—').slice(0, 100))}
+          ${row('判定', s.turn ? `${s.turn.action}（${s.turn.reason}）` : '—')}
+        </div>
+        <pre style="white-space:pre-wrap;margin:6px 0">${escapeHtml(s.turn?.usedInjection || '（本轮没有注入内容）')}</pre>
+        <details><summary>下轮将注入</summary>
+          <pre style="white-space:pre-wrap;margin:6px 0">${escapeHtml(s.turn?.nextInjection || '（空）')}</pre>
+        </details>
+      </details>
       <details style="margin-top:6px"><summary>注入全文</summary>
         <pre style="white-space:pre-wrap;margin:6px 0">${escapeHtml(s.injection.text || '（空）')}</pre>
       </details>
@@ -124,7 +141,11 @@ export function createDebugPanel({ store, registry, getCapabilities } = {}) {
 
   /** 导出全部状态，提 issue 时直接贴 */
   function exportJson() {
-    const s = buildDebugState({ store, registry, last, capabilities: getCapabilities?.() });
+    const s = buildDebugState({
+      store, registry, last,
+      capabilities: getCapabilities?.(),
+      lastTurn: getLastTurn?.() ?? null,
+    });
     const json = JSON.stringify(s, null, 2);
     try {
       navigator.clipboard?.writeText(json);
