@@ -12,6 +12,7 @@ import { createCheckpointService } from './director/checkpoint.js';
 import { createReviewService } from './director/review.js';
 import { createPromptRegistry } from './inject/prompt-registry.js';
 import { createDebugPanel } from './ui/debug.js';
+import { createSettingsPanel } from './ui/settings.js';
 
 const MESSAGE_RECEIVED = 'message_received';
 const CHAT_CHANGED = 'chat_id_changed';
@@ -78,7 +79,24 @@ export function bootstrap({ ctx, store } = {}) {
     }
   });
 
-  const api = { client, stages, registry, checkpoint, review, debug };
+  // 测试用配置面板：没有它就没法填 API
+  const settingsPanel = createSettingsPanel({
+    store,
+    onTest: () => client.testConnection(settings().connection ?? {}),
+    onSave: () => registry.sync(),
+  });
+
+  const api = { client, stages, registry, checkpoint, review, debug, settingsPanel };
+
+  // 还没填端点就自动弹出配置面板 —— 云酒馆不方便开控制台
+  if (!settings().connection?.endpoint) {
+    try {
+      settingsPanel.show();
+    } catch {
+      /* DOM 未就绪时忽略 */
+    }
+  }
+
   if (typeof window !== 'undefined') {
     window.DirectorTime = { ...(window.DirectorTime ?? {}), ...api };
   }
