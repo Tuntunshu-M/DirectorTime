@@ -1,0 +1,191 @@
+// T-206 测试：复盘编排 + 注入文本拼装
+
+import assert from 'node:assert/strict';
+import { createReviewService } from '../src/director/review.js';
+import { createStageService } from '../src/director/stage.js';
+import { normalizeStages } from '../src/director/outline.js';
+import { createStateStore } from '../src/core/state.js';
+import { buildInstruction } from '../src/inject/instruction.js';
+
+let passed = 0;
+function check(name, fn) {
+  return Promise.resolve()
+    .then(fn)
+    .then(() => {
+      passed += 1;
+      console.log(`  ✓ ${name}`);
+    })
+    .catch((error) => {
+      console.error(`  ✗ ${name}\n    ${error.message}`);
+      process.exitCode = 1;
+    });
+}
+
+function makeEnv() {
+  const meta = {};
+  const settingsStore = {};
+  const ctx = {
+    getChatState: () => meta,
+    saveChatState: () => true,
+    getExtensionSettings: () => settingsStore,
+    saveSettings: () => true,
+  };
+  const store = createStateStore(ctx, 'dt');
+  const stages = createStageService({ store });
+  const registered = [];
+  const registry = { register: (text) => { registered.push(text); return true; } };
+  return { store, stages, registry, registered };
+}
+
+function seed(env) {
+  const list = normalizeStages([
+    { title: '询问', goal: '知道想不想去', activity: '饭桌上问', checkpoint: { criteria: 'user 同意出行', antiCriteria: 'user 明确不想出门' }, beats: ['做饭', '开口'] },
+    { title: '订票', goal: '订好机票', activity: '买机票', checkpoint: { criteria: 'user 确认日期', antiCriteria: 'user 反悔' }, beats: ['查航班'] },
+  ]);
+  env.stages.load(list);
+  return list;
+}
+
+console.log('T-206 复盘编排');
+
+await check('regenerate 不触发复盘', async () => {
+  const env = makeEnv();
+  seed(env);
+  let judged = false;
+  const service = createReviewService({
+    checkpoint: { judge: async () => { judged = true; return { action: 'advance' }; } },
+    stages: env.stages, registry: env.registry, store: env.store, getSettings: () => ({}),
+  });
+  const r = await service.run({ type: 'regenerate' });
+  assert.equal(r.skipped, true);
+  assert.equal(judged, false);
+});
+
+await check('swipe 不触发复盘', async () => {
+  const env = makeEnv();
+  seed(env);
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'advance' }) },
+    stages: env.stages, registry: env.registry, store: env.store, getSettings: () => ({}),
+  });
+  assert.equal((await service.run({ type: 'swipe' })).skipped, true);
+});
+
+await check('判定 advance 时推进阶段', async () => {
+  const env = makeEnv();
+  const list = seed(env);
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'advance', reason: '达成' }) },
+    stages: env.stages, registry: env.registry, store: env.store, getSettings: () => ({}),
+  });
+  const r = await service.run({ userMessage: '好啊', charMessage: '那我们走吧' });
+  assert.equal(r.action, 'advance');
+  assert.equal(env.store.get().activeStageId, list[1].id);
+  assert.equal(env.store.get().stages[0].status, 'done');
+});
+
+await check('判定 retry 时累加卡住计数', async () => {
+  const env = makeEnv();
+  seed(env);
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'retry', reason: '未达成' }) },
+    stages: env.stages, registry: env.registry, store: env.store, getSettings: () => ({}),
+  });
+  await service.run({ userMessage: '嗯' });
+  assert.equal(env.store.get().stages[0].stuckCount, 1);
+});
+
+await check('判定 hold（调用失败）不计入卡住', async () => {
+  const env = makeEnv();
+  seed(env);
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'hold', reason: '超时' }) },
+    stages: env.stages, registry: env.registry, store: env.store, getSettings: () => ({}),
+  });
+  await service.run({ userMessage: 'x' });
+  assert.equal(env.store.get().stages[0].stuckCount, 0);
+});
+
+await check('判定 rewrite 时重置卡住计数', async () => {
+  const env = makeEnv();
+  seed(env);
+  const id = env.store.get().stages[0].id;
+  env.stages.bumpStuck(id);
+  env.stages.bumpStuck(id);
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'rewrite', reason: '部分达成' }) },
+    stages: env.stages, registry: env.registry, store: env.store, getSettings: () => ({}),
+  });
+  await service.run({ userMessage: '也许吧' });
+  assert.equal(env.store.get().stages[0].stuckCount, 0);
+});
+
+await check('复盘后更新注入内容（供下一轮使用）', async () => {
+  const env = makeEnv();
+  seed(env);
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'advance', reason: '达成' }) },
+    stages: env.stages, registry: env.registry, store: env.store, getSettings: () => ({}),
+  });
+  const r = await service.run({ userMessage: '好' });
+  assert.ok(r.injected.length > 0);
+  assert.ok(env.registered.length > 0);
+  // 推进后应注入新阶段的内容
+  assert.ok(env.registered[env.registered.length - 1].includes('订好机票'));
+});
+
+await check('没有进行中的阶段时注入被清空', () => {
+  const env = makeEnv();
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'hold' }) },
+    stages: env.stages, registry: env.registry, store: env.store, getSettings: () => ({}),
+  });
+  const text = service.syncInjection();
+  assert.equal(text, '');
+  assert.equal(env.registered[env.registered.length - 1], '');
+});
+
+await check('并发复盘被拦截（防重入）', async () => {
+  const env = makeEnv();
+  seed(env);
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const service = createReviewService({
+    checkpoint: { judge: async () => { await gate; return { action: 'hold' }; } },
+    stages: env.stages, registry: env.registry, store: env.store, getSettings: () => ({}),
+  });
+  const first = service.run({ userMessage: 'a' });
+  const second = await service.run({ userMessage: 'b' });
+  assert.equal(second.skipped, true);
+  release();
+  await first;
+});
+
+console.log('注入文本拼装');
+
+await check('包含本场目标与推进点正反条件', () => {
+  const text = buildInstruction({
+    stage: { goal: '知道想不想去', beats: ['做饭', '开口'], checkpoint: { criteria: 'user 同意出行', antiCriteria: 'user 明确不想出门' } },
+  });
+  assert.ok(text.includes('知道想不想去'));
+  assert.ok(text.includes('user 同意出行'));
+  assert.ok(text.includes('user 明确不想出门'));
+  assert.ok(text.includes('做饭 → 开口'));
+});
+
+await check('有侧写时追加角色动机层（形态③）', () => {
+  const text = buildInstruction({
+    stage: { goal: 'g', beats: ['b'], checkpoint: { criteria: 'c', antiCriteria: 'a' } },
+    profile: { desire: '被需要', conflictStyle: '先退一步' },
+  });
+  assert.ok(text.includes('[导演指令]'));
+  assert.ok(text.includes('[角色此刻的动机]'));
+  assert.ok(text.includes('被需要'));
+});
+
+await check('无内容时返回空字符串', () => {
+  assert.equal(buildInstruction({}), '');
+  assert.equal(buildInstruction({ stage: {} }), '');
+});
+
+console.log(`\n通过 ${passed} 项`);
