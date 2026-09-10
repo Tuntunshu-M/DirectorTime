@@ -1,11 +1,11 @@
 // 临时冒烟测试：验证 T-102 / T-103 / T-104 的核心逻辑。跑完即删。
 import assert from 'node:assert/strict';
 
-import { createSillyTavernContext } from './src/core/context.js';
-import { createStateStore, assertInvariants } from './src/core/state.js';
-import { migrate } from './src/core/migrations.js';
-import { createEventBus } from './src/core/event-bus.js';
-import { createDefaultState, SCHEMA_VERSION } from './src/core/default-state.js';
+import { createSillyTavernContext } from '../src/core/context.js';
+import { createStateStore, assertInvariants } from '../src/core/state.js';
+import { migrate } from '../src/core/migrations.js';
+import { createEventBus } from '../src/core/event-bus.js';
+import { createDefaultState, SCHEMA_VERSION } from '../src/core/default-state.js';
 
 let passed = 0;
 function check(name, fn) {
