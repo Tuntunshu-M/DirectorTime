@@ -6,6 +6,7 @@
 import { createSillyTavernContext } from './src/core/context.js';
 import { createEventBus } from './src/core/event-bus.js';
 import { createStateStore } from './src/core/state.js';
+import { bootstrap, lastTurnMessages } from './src/bootstrap.js';
 
 export const MODULE_NAME = 'director_time';
 
@@ -21,8 +22,10 @@ let booted = false;
 function boot() {
   if (booted) return;
   booted = true;
+  store.load();
+  const api = bootstrap({ ctx, store });
   console.log('[导演时间] 已加载', ctx.capabilities);
-  bus.emit('boot', { capabilities: ctx.capabilities });
+  bus.emit('boot', { capabilities: ctx.capabilities, api });
 }
 
 // 正常路径：等酒馆就绪
@@ -33,4 +36,4 @@ if (!ctx.capabilities.events) boot();
 
 window.DirectorTime = { ctx, bus, store, MODULE_NAME };
 
-export { ctx, bus, store };
+export { ctx, bus, store, lastTurnMessages };

@@ -56,5 +56,7 @@ export function createDefaultSettings() {
     historyLimit: 200,
     stuckThreshold: 3,
     confidenceThreshold: 0.7,
+    // 导演 API：独立模式自己填，主连接模式留空由酒馆提供
+    connection: { mode: 'independent', endpoint: '', apiKey: '', model: '' },
   };
 }
