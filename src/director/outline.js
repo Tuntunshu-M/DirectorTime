@@ -59,6 +59,7 @@ export function createOutlineService({ client, getConnection, now = Date.now } =
     const stages = normalizeStages(data.stages);
     return {
       ok: true,
+      request: messages,
       outline: {
         id: nextId('ol'),
         title: data.title,
@@ -114,6 +115,7 @@ export function createOutlineService({ client, getConnection, now = Date.now } =
 
     return {
       ok: true,
+      request: messages,
       stages: normalizeStages(data.stages, { startIndex, activateFirst: false }),
     };
   }

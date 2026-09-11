@@ -6,7 +6,7 @@
 // 状态计算抽成纯函数 buildDebugState，便于自动化测试；DOM 渲染单独一层。
 
 /** 纯函数：把当前状态整理成 Debug 需要的结构 */
-export function buildDebugState({ store, registry, last = null, capabilities = null, lastTurn = null } = {}) {
+export function buildDebugState({ store, registry, last = null, capabilities = null, lastTurn = null, lastRequest = null } = {}) {
   const state = store?.get?.() ?? {};
   const stages = state.stages ?? [];
   const active = stages.find((stage) => stage.id === state.activeStageId) ?? null;
@@ -37,6 +37,7 @@ export function buildDebugState({ store, registry, last = null, capabilities = n
     lastReviewAt: state.runtime?.lastReviewAt ?? 0,
     cost: state.cost ?? { sessionTotal: 0, callCount: 0 },
     capabilities: capabilities ?? null,
+    lastRequest: lastRequest ?? '',
   };
 }
 
@@ -49,7 +50,7 @@ const PANEL_STYLE = `
   font-family:var(--dt-font-mono,ui-monospace,monospace); font-size:12px; line-height:1.6;
 `;
 
-export function createDebugPanel({ store, registry, getCapabilities, getLastTurn } = {}) {
+export function createDebugPanel({ store, registry, getCapabilities, getLastTurn, getLastRequest } = {}) {
   let el = null;
   let last = null;
 
@@ -78,6 +79,7 @@ export function createDebugPanel({ store, registry, getCapabilities, getLastTurn
       store, registry, last,
       capabilities: getCapabilities?.(),
       lastTurn: getLastTurn?.() ?? null,
+      lastRequest: getLastRequest?.() ?? null,
     });
 
     node.innerHTML = `
@@ -115,6 +117,9 @@ export function createDebugPanel({ store, registry, getCapabilities, getLastTurn
       <details style="margin-top:6px"><summary>模型原始返回</summary>
         <pre style="white-space:pre-wrap;margin:6px 0">${escapeHtml(s.lastRaw || '（无）')}</pre>
       </details>
+      <details style="margin-top:6px"><summary>上次发给导演 API（实际文本）</summary>
+        <pre style="white-space:pre-wrap;margin:6px 0">${escapeHtml(s.lastRequest || '（还没有请求过）')}</pre>
+      </details>
       <div style="margin-top:10px"><button id="dt-debug-export" style="font:inherit;padding:4px 10px">导出状态 JSON</button></div>
     `;
 
@@ -150,6 +155,7 @@ export function createDebugPanel({ store, registry, getCapabilities, getLastTurn
       store, registry, last,
       capabilities: getCapabilities?.(),
       lastTurn: getLastTurn?.() ?? null,
+      lastRequest: getLastRequest?.() ?? null,
     });
     const json = JSON.stringify(s, null, 2);
     try {

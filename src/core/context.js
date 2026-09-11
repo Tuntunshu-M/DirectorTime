@@ -124,6 +124,31 @@ export function createSillyTavernContext(contextProvider = defaultProvider) {
       return Array.isArray(entries) ? normalizeEntries(entries) : [];
     },
 
+    /**
+     * 世界书来源枚举（项目书 §F1）：全局 / 角色主 / 角色附加 / 人格 / 聊天（按名字加载）
+     * + 角色卡内嵌（直接读条目）。ST 版本差异大，缺哪类就返回空数组，不报错。
+     */
+    getLorebookSources() {
+      const host = getHost();
+      const character = host.characters?.[host.characterId] ?? null;
+      const persona = host.user_avatar ? host.personas?.[host.user_avatar] : null;
+      const asNames = (value) => {
+        if (!value) return [];
+        return (Array.isArray(value) ? value : [value])
+          .filter((name) => typeof name === 'string' && name.trim())
+          .map((name) => name.trim());
+      };
+
+      return [
+        { type: 'global', label: '全局世界书', names: ctx.getWorldInfoNames() },
+        { type: 'character-primary', label: '角色主世界书', names: asNames(character?.world) },
+        { type: 'character-extra', label: '角色附加世界书', names: asNames(character?.data?.extensions?.world ?? character?.extraBooks) },
+        { type: 'persona', label: '人格世界书', names: asNames(persona?.world_info ?? persona?.world) },
+        { type: 'chat', label: '聊天世界书', names: asNames(host.chatMetadata?.world_info) },
+        { type: 'character-embedded', label: '角色卡内嵌', names: [], embedded: true },
+      ];
+    },
+
     // ---------- 存储 ----------
     getExtensionSettings() {
       return getHost().extensionSettings ?? {};

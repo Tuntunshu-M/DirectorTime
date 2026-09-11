@@ -29,6 +29,10 @@ export function createMainPanel({
   onSave,
   onGenerate,
   onExtend,
+  loadWorldSources,
+  getWorldSelection,
+  saveWorldSelection,
+  getWorldText,
   getEnabled,
   onToggleEnabled,
   onOpenDebug,
@@ -38,6 +42,9 @@ export function createMainPanel({
   let el = null;
   let escapeHandler = null;
   let view = 'status';
+  let worldSources = null;
+  let worldKeyword = '';
+  let worldLoading = false;
 
   function ensure() {
     if (el) return el;
@@ -50,6 +57,7 @@ export function createMainPanel({
           <label class="dt-switch" title="导演时间总开关">
             <input type="checkbox" id="dt-panel-enabled"> 总开关
           </label>
+          <button class="dt-btn" id="dt-panel-world" type="button" title="世界书接入">世界书</button>
           <button class="dt-btn" id="dt-panel-config" type="button" title="导演 API 配置">配置</button>
           <button class="dt-btn" id="dt-panel-close" type="button" aria-label="关闭导演时间" title="关闭">✕</button>
         </header>
@@ -60,6 +68,7 @@ export function createMainPanel({
 
     el.querySelector('#dt-panel-close').addEventListener('click', close);
     el.querySelector('#dt-panel-config').addEventListener('click', () => setView(view === 'config' ? 'status' : 'config'));
+    el.querySelector('#dt-panel-world').addEventListener('click', () => setView(view === 'world' ? 'status' : 'world'));
     el.querySelector('#dt-panel-enabled').addEventListener('change', (event) => {
       onToggleEnabled?.(event.target.checked);
       render();
@@ -132,15 +141,115 @@ export function createMainPanel({
     body.querySelector('#dt-panel-debug')?.addEventListener('click', () => onOpenDebug?.());
   }
 
+  async function loadWorld(force) {
+    worldLoading = true;
+    render();
+    try {
+      worldSources = (await loadWorldSources?.(force)) ?? [];
+    } catch (error) {
+      console.warn('[导演时间] 世界书加载失败', error);
+      worldSources = [];
+    } finally {
+      worldLoading = false;
+      render();
+    }
+  }
+
+  async function refreshWorldPreview(body) {
+    const pre = body.querySelector('#dt-world-preview');
+    if (!pre || !getWorldText) return;
+    try {
+      pre.textContent = (await getWorldText()) || '（没有勾选任何条目）';
+    } catch (error) {
+      pre.textContent = `预览失败：${error?.message ?? error}`;
+    }
+  }
+
+  /** 世界书页：来源树 + 勾选 + 搜索 + 实际发送文本预览（T-401） */
+  function renderWorld(body) {
+    const selection = getWorldSelection?.() ?? {};
+    const limit = store?.getSettings?.().worldLimit ?? 20;
+    const keyword = worldKeyword.trim().toLowerCase();
+    const statText = () => `已选 ${Object.keys(getWorldSelection?.() ?? {}).length} 条 · 上限 ${limit} 条`;
+
+    const list = (worldSources ?? []).map((source) => {
+      const books = (source.books ?? []).map((book) => {
+        const all = book.entries ?? [];
+        const entries = all.filter((entry) => !keyword
+          || book.name.toLowerCase().includes(keyword)
+          || entry.name.toLowerCase().includes(keyword)
+          || entry.content.toLowerCase().includes(keyword));
+        if (!entries.length && !book.error) return '';
+        const head = `<div style="margin:6px 0 2px;opacity:.75">▸ ${escapeHtml(book.name)}${book.error ? `（${escapeHtml(book.error)}）` : `　${all.length} 条`}</div>`;
+        const items = entries.map((entry) => `
+          <label style="display:block;margin-left:14px">
+            <input type="checkbox" data-world-key="${escapeHtml(entry.key)}" ${selection[entry.key] ? 'checked' : ''}> ${escapeHtml(entry.name)}${entry.enabled ? '' : '<span style="opacity:.6">（禁用）</span>'}${entry.constant ? '<span style="opacity:.6">（常驻）</span>' : ''}
+          </label>`).join('');
+        return head + items;
+      }).join('');
+      if (!books) return '';
+      return `<div style="margin-bottom:6px"><div style="opacity:.6">${escapeHtml(source.label)}</div>${books}</div>`;
+    }).join('');
+
+    const placeholder = worldLoading
+      ? '<div style="opacity:.7">加载中…</div>'
+      : (worldSources
+        ? (list || '<div style="opacity:.7">（没有可勾选的条目）</div>')
+        : '<div style="opacity:.7">点「刷新」加载世界书</div>');
+
+    body.innerHTML = `
+      <div style="display:flex;gap:6px;margin-bottom:6px">
+        <input id="dt-world-search" style="flex:1;box-sizing:border-box;padding:4px 6px;font:inherit" placeholder="搜索书名或条目" value="${escapeHtml(worldKeyword)}">
+        <button id="dt-world-reload" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">刷新</button>
+      </div>
+      <div id="dt-world-stat" style="opacity:.7;margin-bottom:6px">${statText()}</div>
+      <div>${placeholder}</div>
+      <details style="margin-top:8px"><summary>将发送给导演 API 的世界书文本</summary>
+        <pre id="dt-world-preview" style="white-space:pre-wrap;margin:6px 0">—</pre>
+      </details>
+    `;
+
+    const search = body.querySelector('#dt-world-search');
+    search?.addEventListener('input', () => {
+      worldKeyword = search.value;
+      render();
+    });
+    body.querySelector('#dt-world-reload')?.addEventListener('click', () => loadWorld(true));
+
+    body.querySelectorAll('input[data-world-key]').forEach((box) => {
+      box.addEventListener('change', () => {
+        const next = { ...(getWorldSelection?.() ?? {}) };
+        if (box.checked) next[box.dataset.worldKey] = true;
+        else delete next[box.dataset.worldKey];
+        saveWorldSelection?.(next);
+        const stat = body.querySelector('#dt-world-stat');
+        if (stat) stat.textContent = statText();
+        refreshWorldPreview(body);
+      });
+    });
+
+    // 搜索重渲染后把焦点与光标放回去
+    if (keyword) {
+      search?.focus();
+      search?.setSelectionRange(worldKeyword.length, worldKeyword.length);
+    }
+
+    refreshWorldPreview(body);
+  }
+
   function render() {
+    const title = view === 'config' ? '导演时间 · 配置' : (view === 'world' ? '导演时间 · 世界书' : '导演时间');
     const node = ensure();
-    node.querySelector('#dt-panel-title').textContent = view === 'config' ? '导演时间 · 配置' : '导演时间';
+    node.querySelector('#dt-panel-title').textContent = title;
     node.querySelector('#dt-panel-enabled').checked = Boolean(getEnabled?.());
     node.querySelector('#dt-panel-config').textContent = view === 'config' ? '返回' : '配置';
+    node.querySelector('#dt-panel-world').textContent = view === 'world' ? '返回' : '世界书';
 
     const body = node.querySelector('#dt-panel-body');
     if (view === 'config') {
       renderSettingsForm({ container: body, store, onTest, onSave });
+    } else if (view === 'world') {
+      renderWorld(body);
     } else {
       renderStatus(body);
     }
@@ -149,6 +258,11 @@ export function createMainPanel({
 
   function setView(next) {
     view = next;
+    // 第一次进世界书页自动加载一次（可能慢，先渲染「加载中」）
+    if (view === 'world' && worldSources === null && !worldLoading) {
+      loadWorld(false);
+      return el;
+    }
     return render();
   }
 

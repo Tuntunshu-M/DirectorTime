@@ -13,6 +13,7 @@ import { createBeatService } from './director/beats.js';
 import { createCheckpointService } from './director/checkpoint.js';
 import { createReviewService } from './director/review.js';
 import { createPromptRegistry } from './inject/prompt-registry.js';
+import { createLorebookService } from './world/lorebook.js';
 import { createDebugPanel } from './ui/debug.js';
 import { createSettingsPanel } from './ui/settings.js';
 import { createMainPanel } from './ui/panel.js';
@@ -58,6 +59,7 @@ export function bootstrap({ ctx, store } = {}) {
     getConnection: () => settings().connection ?? {},
   });
   const registry = createPromptRegistry({ ctx, store, getSettings: settings });
+  const lorebook = createLorebookService({ ctx });
   const beats = createBeatService({
     client,
     getConnection: () => settings().connection ?? {},
@@ -82,6 +84,7 @@ export function bootstrap({ ctx, store } = {}) {
     registry,
     getCapabilities: () => ctx.capabilities,
     getLastTurn: () => review.getLastTurn(),
+    getLastRequest: () => lastDirectorRequest,
   });
 
   // ---------- 剧本生成 ----------
@@ -109,6 +112,33 @@ export function bootstrap({ ctx, store } = {}) {
       .join('\n');
   }
 
+  // ---------- 世界书（T-401 / M7）----------
+  let worldCache = { at: 0, sources: [] };
+  let lastDirectorRequest = '';
+
+  /** 枚举世界书全部来源；30 秒内复用缓存，force=true 强制刷新 */
+  async function collectWorldSources(force = false) {
+    if (!force && worldCache.sources.length && Date.now() - worldCache.at < 30000) return worldCache.sources;
+    const sources = await lorebook.collect();
+    worldCache = { at: Date.now(), sources };
+    return sources;
+  }
+
+  /** 勾选条目 → 喂给 {{world}} 的文本；一条没勾就返回空串，不占 prompt */
+  async function worldText() {
+    const selection = settings().worldSelection ?? {};
+    if (!Object.keys(selection).length) return '';
+    const sources = await collectWorldSources();
+    return lorebook.buildText(lorebook.pick(sources, selection), { limit: settings().worldLimit ?? 20 });
+  }
+
+  /** 记录最近一次发给导演 API 的 user 文本，供 Debug 核对实际发送内容（T-401 验收） */
+  function rememberRequest(result) {
+    const user = (result?.request ?? []).find((message) => message.role === 'user');
+    if (user?.content) lastDirectorRequest = user.content;
+    return result;
+  }
+
   /**
    * 生成并装载一份分场剧本。显式调用，不自动跑。
    * 失败一律只提示、不注入（禁则 G5）；未配置导演 API 时只提示。
@@ -124,13 +154,13 @@ export function bootstrap({ ctx, store } = {}) {
     generating = true;
     ctx.showSystemMessage?.('导演时间：正在生成剧本…');
     try {
-      const result = await outline.generate({
+      const result = rememberRequest(await outline.generate({
         premise,
         tone: toneText(),
         profile: '',
-        world: '',
+        world: await worldText(),
         context: recentContext(),
-      });
+      }));
 
       if (!result.ok || !result.stages?.length) {
         const reason = result.error ?? '模型没有产出可用阶段';
@@ -212,16 +242,16 @@ export function bootstrap({ ctx, store } = {}) {
       .map((stage) => `- [${marks[stage.status] ?? stage.status}] ${stage.title}：${stage.goal}`)
       .join('\n');
 
-    const result = await outline.extend({
+    const result = rememberRequest(await outline.extend({
       count: need,
       startIndex: list.length + 1,
       outline: state.outline,
       tone: toneText(),
       profile: '',
-      world: '',
+      world: await worldText(),
       history,
       context: recentContext(),
-    });
+    }));
 
     if (!result.ok || !result.stages?.length) {
       console.warn('[导演时间] 续写阶段失败', result.error);
@@ -299,6 +329,10 @@ export function bootstrap({ ctx, store } = {}) {
     onSave: () => review.syncInjection(),
     onGenerate: () => regenerateScript(),
     onExtend: () => topUpStages({ force: true }),
+    loadWorldSources: (force) => collectWorldSources(force),
+    getWorldSelection: () => settings().worldSelection ?? {},
+    saveWorldSelection: (selection) => store.saveSettings({ worldSelection: selection }),
+    getWorldText: () => worldText(),
     getEnabled: () => Boolean(settings().enabled),
     onToggleEnabled: (value) => setEnabled(value),
     onOpenDebug: () => { openOnly('debug'); debug.show(); },
@@ -314,8 +348,9 @@ export function bootstrap({ ctx, store } = {}) {
   };
 
   const api = {
-    client, stages, outline, beats, registry, checkpoint, review, debug,
+    client, stages, outline, beats, lorebook, registry, checkpoint, review, debug,
     generateScript, regenerateScript, topUpStages, resetScript, setEnabled,
+    collectWorldSources, worldText,
     settingsPanel: settingsPanelApi, panel, unmountMenu,
   };
 
