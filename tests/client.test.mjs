@@ -27,7 +27,8 @@ function jsonResponse(payload, { ok = true, status = 200 } = {}) {
   };
 }
 
-const BASE = { endpoint: 'https://api.example.com/v1', apiKey: 'sk-super-secret', model: 'm' };
+// 仅用于测试的假值，不是真实密钥
+const BASE = { endpoint: 'https://api.example.com/v1', apiKey: 'sk-test-only-fake', model: 'm' };
 const MESSAGES = [{ role: 'user', content: 'hi' }];
 
 console.log('T-201 导演 API 客户端');
@@ -77,12 +78,12 @@ await check('空内容报 DirectorEmptyError', async () => {
 
 await check('HTTP 错误里不含密钥与端点', async () => {
   const client = createDirectorClient({
-    fetchImpl: async () => jsonResponse({ error: 'bad key sk-super-secret at api.example.com' }, { ok: false, status: 401 }),
+    fetchImpl: async () => jsonResponse({ error: 'bad key sk-test-only-fake at api.example.com' }, { ok: false, status: 401 }),
   });
   await assert.rejects(
     () => client.request({ ...BASE, messages: MESSAGES }),
     (error) => {
-      assert.ok(!error.message.includes('sk-super-secret'), '消息里不应出现密钥');
+      assert.ok(!error.message.includes('sk-test-only-fake'), '消息里不应出现密钥');
       assert.ok(!error.message.includes('api.example.com'), '消息里不应出现端点');
       assert.ok(error.message.includes('[REDACTED]'));
       return true;
