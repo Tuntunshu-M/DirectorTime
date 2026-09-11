@@ -33,6 +33,11 @@ export function normalizeStages(rawStages = [], { startIndex = 1, activateFirst 
     beats: Array.isArray(stage.beats) ? stage.beats : [],
     // 第一个阶段开工，其余排队（续写时全排队）
     status: activateFirst && i === 0 ? 'active' : 'pending',
+    // T-416：楼层节奏（null = 用全局 settings.pacing）
+    pacing: stage.pacing ?? null,
+    turnCount: 0,
+    // T-417 才填，先占位
+    initiative: '',
     stuckCount: 0,
     locked: false,
     aiOriginal: null,
@@ -64,6 +69,9 @@ export function createOutlineService({ client, getConnection, now = Date.now } =
         id: nextId('ol'),
         title: data.title,
         premise: data.premise ?? vars.premise ?? '',
+        // T-416：主目标 + 来源（用户指定 / AI 构思），续写时必须带上
+        objective: data.objective,
+        objectiveSource: vars.objective ? 'user' : 'ai',
         tone: vars.tone ?? null,
         foreshadows: [],
         createdAt: now(),
@@ -83,6 +91,7 @@ export function createOutlineService({ client, getConnection, now = Date.now } =
     count = 2,
     startIndex = 1,
     outline: currentOutline = null,
+    objective = '',
     history = '',
     tone = '',
     profile = '',
@@ -94,6 +103,8 @@ export function createOutlineService({ client, getConnection, now = Date.now } =
       count,
       title: currentOutline?.title ?? '',
       premise: currentOutline?.premise ?? '',
+      // T-416：续写必须带主目标，否则续着续着就跑偏
+      objective: objective || currentOutline?.objective || '',
       tone,
       profile,
       world,

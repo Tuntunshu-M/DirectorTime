@@ -14,12 +14,13 @@ import { migrate } from './migrations.js';
  * 违反说明状态机写错了，必须立刻暴露而不是静默继续。
  */
 export function assertInvariants(state) {
-  const active = (state.stages ?? []).filter((stage) => stage.status === 'active');
-  if (active.length > 1) {
-    throw new Error(`[导演时间] 状态不变量被破坏：存在 ${active.length} 个 active 阶段`);
+  // T-416 起当前场可能是 active（演着）或 ready（已达成、收尾中），两者都算"当前"
+  const current = (state.stages ?? []).filter((stage) => stage.status === 'active' || stage.status === 'ready');
+  if (current.length > 1) {
+    throw new Error(`[导演时间] 状态不变量被破坏：存在 ${current.length} 个 active/ready 阶段`);
   }
-  if (state.activeStageId && active.length === 1 && active[0].id !== state.activeStageId) {
-    throw new Error('[导演时间] 状态不变量被破坏：activeStageId 与实际 active 阶段不一致');
+  if (state.activeStageId && current.length === 1 && current[0].id !== state.activeStageId) {
+    throw new Error('[导演时间] 状态不变量被破坏：activeStageId 与实际 active/ready 阶段不一致');
   }
   return true;
 }

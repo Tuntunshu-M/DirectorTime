@@ -4,8 +4,15 @@
 // 不变量：任一时刻有且仅有一个 active（由 state.assertInvariants 兜底）。
 
 export function createStageService({ store } = {}) {
+  /**
+   * 当前场：activeStageId 指向的那个阶段。
+   * T-416 起它可能是 `active`（正常演）或 `ready`（已达成、收尾中，还没切场）。
+   */
   function getActive() {
-    return store.get().stages.find((stage) => stage.status === 'active') ?? null;
+    const state = store.get();
+    return state.stages.find((stage) => stage.id === state.activeStageId)
+      ?? state.stages.find((stage) => stage.status === 'active')
+      ?? null;
   }
 
   /** 装载新剧本：第一个阶段开工 */
@@ -110,5 +117,26 @@ export function createStageService({ store } = {}) {
     }), { label: '激活阶段' });
   }
 
-  return { getActive, load, advance, bumpStuck, resetStuck, drop, insertAfter, update, append, activate };
+  /** 本场已聊楼数 +1（T-416） */
+  function bumpTurn(id) {
+    return store.update((draft) => ({
+      ...draft,
+      stages: draft.stages.map((stage) =>
+        stage.id === id ? { ...stage, turnCount: (stage.turnCount ?? 0) + 1 } : stage
+      ),
+    }));
+  }
+
+  /** 改阶段状态（T-416：settle → ready，收尾但不切场） */
+  function setStatus(id, status) {
+    return store.update((draft) => ({
+      ...draft,
+      stages: draft.stages.map((stage) => (stage.id === id ? { ...stage, status } : stage)),
+    }));
+  }
+
+  return {
+    getActive, load, advance, bumpStuck, resetStuck, drop, insertAfter, update,
+    append, activate, bumpTurn, setStatus,
+  };
 }

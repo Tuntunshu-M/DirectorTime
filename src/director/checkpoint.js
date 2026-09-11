@@ -23,39 +23,62 @@ export function decide(judgement, options = {}) {
     threshold = 0.7,
     stuckCount = 0,
     stuckThreshold = 3,
+    turnCount = 0,
+    minTurns = 3,
+    maxTurns = 8,
   } = options;
 
   const status = judgement?.status;
   const confidence = Number.isFinite(Number(judgement?.confidence))
     ? Number(judgement.confidence)
     : 0;
+  // 本轮跑完是第几楼（decide 收的是本轮之前的计数）
+  const playedTurns = Number(turnCount ?? 0) + 1;
 
-  // 明确违背且把握足 → 不推进，交给意愿矩阵决定让步还是坚持
+  // 1. 明确违背且把握足 → 不推进，交给意愿矩阵决定让步还是坚持
   if (status === 'violated' && confidence >= threshold) {
     return { action: 'redirect', reason: '明确表达相反意图' };
   }
 
-  // 达成 → 推进
-  if (status === 'achieved') {
-    return { action: 'advance', reason: '意图已达成' };
+  // 2. 到点就走，不管聊成什么样 —— "char 带 user 走"的硬保证。
+  //    **必须排在 achieved 之前**：同一轮即使达成了，动作也是 force。
+  if (playedTurns >= maxTurns) {
+    return { action: 'force', reason: `本场已聊满 ${maxTurns} 楼，强制推进` };
   }
 
-  // 把握不足 → 放行。宁可跳一步，也不要卡死
+  // 3. 达成：够楼数就切场；不够就先收尾（settle），不立刻切场
+  if (status === 'achieved') {
+    if (playedTurns >= minTurns) return { action: 'advance', reason: '意图已达成' };
+    return { action: 'settle', reason: `已达成，本场还差 ${minTurns - playedTurns} 楼，先收尾` };
+  }
+
+  // 4. 把握不足 → 放行。宁可跳一步，也不要卡死
   if (confidence < threshold) {
     return { action: 'advance', reason: `置信度 ${confidence} 低于 ${threshold}，按放行处理` };
   }
 
-  // 部分达成 → 换条走位再试一次，不算失败
+  // 5. 部分达成 → 换条走位再试一次，不算失败
   if (status === 'partial') {
     return { action: 'rewrite', reason: '部分达成，重写走位再试' };
   }
 
-  // 完全没碰到，且已经卡够久 → 强制推进
+  // 6. 完全没碰到，且已经卡够久 → 强制推进
   if (stuckCount + 1 >= stuckThreshold) {
     return { action: 'force', reason: `连续 ${stuckThreshold} 轮未推进，熔断` };
   }
 
   return { action: 'retry', reason: '尚未达成' };
+}
+
+/** 楼层节奏：阶段自己的 pacing 优先，null 时用全局 settings.pacing */
+export function resolvePacing(stage, settings = {}) {
+  const base = settings?.pacing ?? {};
+  const own = stage?.pacing ?? {};
+  const pick = (value, fallback) => (Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : fallback);
+  return {
+    min: pick(own.min, pick(base.min, 3)),
+    max: pick(own.max, pick(base.max, 8)),
+  };
 }
 
 export function createCheckpointService({ client, stages, getConnection, getSettings } = {}) {
@@ -90,14 +113,18 @@ export function createCheckpointService({ client, stages, getConnection, getSett
       return { action: 'hold', reason: '判定结果无法解析', raw };
     }
 
+    const pacing = resolvePacing(active, settings);
     const result = decide(judgement, {
       threshold: settings.confidenceThreshold ?? 0.7,
       stuckCount: active.stuckCount ?? 0,
       stuckThreshold: settings.stuckThreshold ?? 3,
+      turnCount: active.turnCount ?? 0,
+      minTurns: pacing.min,
+      maxTurns: pacing.max,
     });
 
-    return { ...result, judgement, raw };
+    return { ...result, judgement, raw, pacing };
   }
 
-  return { judge, decide };
+  return { judge, decide, resolvePacing };
 }

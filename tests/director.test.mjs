@@ -34,6 +34,7 @@ function makeStore() {
 }
 
 const VALID_OUTLINE_JSON = JSON.stringify({
+  objective: '和 user 一起去 D 市旅行',
   title: 'D 市旅行',
   premise: '租民宿住一周',
   stages: [
@@ -76,7 +77,23 @@ await check('generate 成功时返回 outline 与 stages', async () => {
   const result = await service.generate({ premise: '想去旅行' });
   assert.equal(result.ok, true);
   assert.equal(result.outline.title, 'D 市旅行');
+  assert.equal(result.outline.objective, '和 user 一起去 D 市旅行');
+  assert.equal(result.outline.objectiveSource, 'ai', '没给定目标时来源为 ai');
   assert.equal(result.stages.length, 2);
+});
+
+await check('用户指定主目标时 objectiveSource=user（T-416）', async () => {
+  const client = { request: async () => VALID_OUTLINE_JSON };
+  const service = createOutlineService({ client, getConnection: () => ({}) });
+  const result = await service.generate({ objective: '用户定的目标' });
+  assert.equal(result.outline.objectiveSource, 'user');
+});
+
+await check('新阶段带 pacing / turnCount / initiative 占位（T-416）', () => {
+  const stages = normalizeStages([{ goal: 'a', checkpoint: { criteria: 'x', antiCriteria: 'y' } }]);
+  assert.equal(stages[0].pacing, null, 'null 表示用全局 pacing');
+  assert.equal(stages[0].turnCount, 0);
+  assert.equal(stages[0].initiative, '', 'T-417 才填');
 });
 
 await check('模型返回解析不了时 ok:false 且带 raw', async () => {

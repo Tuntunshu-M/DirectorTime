@@ -96,6 +96,7 @@ check('缺少 antiCriteria 的大纲判为非法', () => {
 
 check('合法大纲通过校验', () => {
   const good = {
+    objective: '和 user 一起去 D 市',
     title: '旅行',
     premise: '去 D 市',
     stages: [
@@ -109,6 +110,15 @@ check('合法大纲通过校验', () => {
     ],
   };
   assert.equal(isValidOutline(good), true);
+});
+
+check('缺少 objective 的大纲判为非法（T-416）', () => {
+  const noObjective = {
+    title: '旅行',
+    stages: [{ goal: 'g', checkpoint: { criteria: 'c', antiCriteria: 'a' } }],
+  };
+  assert.equal(isValidOutline(noObjective), false);
+  assert.equal(parseDirectorResponse(JSON.stringify(noObjective), 'outline'), null);
 });
 
 check('parseDirectorResponse 对非法内容返回 null', () => {

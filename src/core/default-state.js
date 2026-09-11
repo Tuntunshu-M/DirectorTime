@@ -62,6 +62,10 @@ export function createDefaultSettings() {
     maxRounds: 15,
     // 生成新阶段后拿侧写做一致性自检（T-402 §六，可关）
     consistencyCheck: true,
+    // 用户指定的主目标（T-416；留空则由 AI 自己构思一个）
+    objective: '',
+    // 楼层节奏：每场最少 / 最多聊几楼（T-416；阶段自己的 pacing 可覆盖）
+    pacing: { min: 3, max: 8 },
     // 世界书：勾选的条目（entryKey → true）与进 prompt 的条数上限（项目书 §F1 / 附录建议 20）
     worldSelection: {},
     worldLimit: 20,

@@ -183,6 +183,7 @@ export function bootstrap({ ctx, store } = {}) {
     try {
       const vars = {
         premise,
+        objective: settings().objective ?? '',
         tone: toneText(),
         profile: profileText(profile.read()),
         world: await worldText(),
@@ -277,6 +278,8 @@ export function bootstrap({ ctx, store } = {}) {
       count: need,
       startIndex: list.length + 1,
       outline: state.outline,
+      // T-416：续写必须带上主目标，否则续着续着就跑偏
+      objective: state.outline?.objective ?? '',
       tone: toneText(),
       profile: profileText(profile.read()),
       world: await worldText(),

@@ -5,7 +5,7 @@ import { createReviewService } from '../src/director/review.js';
 import { createStageService } from '../src/director/stage.js';
 import { normalizeStages } from '../src/director/outline.js';
 import { createStateStore } from '../src/core/state.js';
-import { buildInstruction } from '../src/inject/instruction.js';
+import { buildInstruction, buildDirectorLayer } from '../src/inject/instruction.js';
 
 let passed = 0;
 function check(name, fn) {
@@ -185,6 +185,50 @@ await check('retry / hold 不触发续写', async () => {
   assert.equal(topped, 0);
 });
 
+console.log('楼层节奏（T-416）');
+
+await check('每轮结束本场 turnCount +1', async () => {
+  const env = makeEnv();
+  seed(env);
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'retry', reason: '未达成' }) },
+    stages: env.stages, registry: env.registry, store: env.store, getSettings: () => ({}),
+  });
+  await service.run({ userMessage: '嗯' });
+  await service.run({ userMessage: '嗯嗯' });
+  assert.equal(env.store.get().stages[0].turnCount, 2);
+});
+
+await check('settle → 状态变 ready、不切场、注入换成收尾版', async () => {
+  const env = makeEnv();
+  const list = seed(env);
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'settle', reason: '已达成，先收尾' }) },
+    stages: env.stages, registry: env.registry, store: env.store, getSettings: () => ({}),
+  });
+  await service.run({ userMessage: '好' });
+
+  const stage = env.store.get().stages[0];
+  assert.equal(stage.status, 'ready');
+  assert.equal(env.store.get().activeStageId, list[0].id, '不切场');
+  assert.ok(env.registered[env.registered.length - 1].includes('本场已达成'));
+});
+
+await check('force 也走推进，并把 reason 报给 onEvent', async () => {
+  const env = makeEnv();
+  const list = seed(env);
+  let payload = null;
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'force', reason: '到点强制推进' }) },
+    stages: env.stages, registry: env.registry, store: env.store, getSettings: () => ({}),
+    onEvent: (_name, data) => { payload = data; },
+  });
+  await service.run({ userMessage: '嗯' });
+  assert.equal(env.store.get().activeStageId, list[1].id);
+  assert.equal(payload.action, 'force');
+  assert.equal(payload.reason, '到点强制推进');
+});
+
 await check('复盘后更新注入内容（供下一轮使用）', async () => {
   const env = makeEnv();
   seed(env);
@@ -270,6 +314,22 @@ await check('有侧写时追加角色动机层（形态③）', () => {
 await check('无内容时返回空字符串', () => {
   assert.equal(buildInstruction({}), '');
   assert.equal(buildInstruction({ stage: {} }), '');
+});
+
+await check('指令三种状态输出不同文本（T-416c）', () => {
+  const normal = buildDirectorLayer({ stage: { status: 'active', goal: 'g', turnCount: 0 }, pacing: { min: 3, max: 8 } });
+  assert.ok(normal.includes('不要等 user 提问'), '正常场次给主动性提示');
+
+  const ready = buildDirectorLayer({ stage: { status: 'ready', goal: 'g' }, pacing: { min: 3, max: 8 } });
+  assert.ok(ready.includes('本场已达成'), '收尾场次给收尾指令');
+  assert.ok(!ready.includes('不要等 user 提问'));
+
+  const nearMax = buildDirectorLayer({ stage: { status: 'active', goal: 'g', turnCount: 7 }, pacing: { min: 3, max: 8 } });
+  assert.ok(nearMax.includes('这一场够久了'), '接近上限给推进指令');
+  assert.ok(!nearMax.includes('不要等 user 提问'));
+
+  const withObjective = buildDirectorLayer({ stage: { status: 'active', goal: 'g' }, outline: { objective: '成为最强' }, pacing: { min: 3, max: 8 } });
+  assert.ok(withObjective.includes('主线目标：成为最强'));
 });
 
 console.log(`\n通过 ${passed} 项`);

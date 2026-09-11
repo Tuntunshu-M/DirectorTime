@@ -57,6 +57,8 @@ export function isValidStage(stage) {
 export function isValidOutline(data) {
   if (!data || typeof data !== 'object') return false;
   if (typeof data.title !== 'string' || !data.title.trim()) return false;
+  // 主目标是 T-416 的硬要求：缺了就没有"所有阶段服务于它"这条约束
+  if (typeof data.objective !== 'string' || !data.objective.trim()) return false;
   if (!Array.isArray(data.stages) || data.stages.length === 0) return false;
   return data.stages.every(isValidStage);
 }

@@ -15,6 +15,7 @@ export function renderTemplate(template, vars = {}) {
 }
 
 const OUTLINE_SHAPE = `{
+  "objective": "这个剧本最终要达成什么（一句话主目标）",
   "title": "剧本标题",
   "premise": "一句话前提",
   "stages": [
@@ -41,6 +42,7 @@ export const PROMPTS = {
 ${OUTLINE_SHAPE}
 
 分场要求：
+- objective 是整个副本的主目标；**每个阶段的 goal 都必须服务于它**，不要写与它无关的支线
 - 3 到 5 个阶段，每个阶段只推进一件事
 - goal 一句话说清这一场要达成什么
 - beats 是角色的具体走位，2 到 4 条
@@ -54,6 +56,8 @@ ${OUTLINE_SHAPE}
 - 一次只判一件事，复合条件拆成两个连续阶段`,
     user: `当前情况：
 - 用户想法：{{premise}}
+- 用户指定的主目标：{{objective}}
+  （若为空：请你自己构思一个主目标，所有阶段必须服务于它）
 - 剧情基调：{{tone}}
 - 人物侧写：{{profile}}
 - 世界书设定：{{world}}
@@ -137,6 +141,7 @@ user 说：{{userMessage}}
 - 一个阶段只推进一件事；criteria 写意图级，不要写死具体名词；antiCriteria 必填`,
     user: `剧本：{{title}}
 前提：{{premise}}
+当前主目标：{{objective}}
 剧情基调：{{tone}}
 人物侧写：{{profile}}
 世界书设定：{{world}}
@@ -147,7 +152,7 @@ user 说：{{userMessage}}
 近期对话：
 {{context}}
 
-请只输出接下来的 {{count}} 个阶段。`,
+续写的 {{count}} 个阶段必须继续服务于「当前主目标」，不要另起炉灶。`,
   },
 
   GEN_PROFILE: {

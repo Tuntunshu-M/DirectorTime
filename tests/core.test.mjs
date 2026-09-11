@@ -74,6 +74,12 @@ check('默认设置含世界书勾选与条数上限', () => {
   assert.equal(createDefaultSettings().worldLimit, 20);
 });
 
+check('默认设置含主目标与楼层节奏（T-416）', () => {
+  const settings = createDefaultSettings();
+  assert.equal(settings.objective, '');
+  assert.deepEqual(settings.pacing, { min: 3, max: 8 });
+});
+
 check('旧数据缺字段时补齐，不崩', () => {
   const state = migrate({ stages: [], schemaVersion: 0 });
   assert.equal(state.schemaVersion, SCHEMA_VERSION);

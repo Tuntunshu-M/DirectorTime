@@ -9,6 +9,7 @@
 //   2. 判定失败（hold）不计入卡住——网络问题不该熔断剧情
 
 import { buildInstruction } from '../inject/instruction.js';
+import { resolvePacing } from './checkpoint.js';
 
 const SKIP_TYPES = ['regenerate', 'swipe', 'impersonate', 'quiet'];
 
@@ -29,7 +30,10 @@ export function createReviewService({
   function syncInjection() {
     const state = store?.get?.();
     const active = state?.stages?.find((stage) => stage.id === state.activeStageId);
-    const text = active ? buildInstruction({ stage: active, outline: state.outline, profile: getProfile?.() ?? null }) : '';
+    const pacing = active ? resolvePacing(active, getSettings?.() ?? {}) : null;
+    const text = active
+      ? buildInstruction({ stage: active, outline: state.outline, profile: getProfile?.() ?? null, pacing })
+      : '';
     registry?.register?.(text);
     return text;
   }
@@ -60,11 +64,18 @@ export function createReviewService({
 
       const activeId = active?.id;
 
+      // 每轮结束本场楼数 +1（T-416e）—— decide 收的是本轮之前的计数
+      if (activeId) stages?.bumpTurn?.(activeId);
+
       switch (result.action) {
         case 'advance':
         case 'force':
-          // 放行与熔断都走推进
+          // 放行、熔断、到点都走推进
           stages?.advance?.();
+          break;
+        case 'settle':
+          // 已达成但还没到 min 楼：进入收尾（ready），不切场（T-416）
+          if (activeId) stages?.setStatus?.(activeId, 'ready');
           break;
         case 'retry':
           if (activeId) stages?.bumpStuck?.(activeId);

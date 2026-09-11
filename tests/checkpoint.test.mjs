@@ -2,7 +2,7 @@
 // 这段逻辑是「剧情卡死」的根治手段，必须逐分支覆盖。
 
 import assert from 'node:assert/strict';
-import { decide, createCheckpointService } from '../src/director/checkpoint.js';
+import { decide, createCheckpointService, resolvePacing } from '../src/director/checkpoint.js';
 
 let passed = 0;
 function check(name, fn) {
@@ -20,8 +20,8 @@ function check(name, fn) {
 
 console.log('T-205 放行规则');
 
-await check('达成 → advance', () => {
-  assert.equal(decide({ status: 'achieved', confidence: 0.9 }).action, 'advance');
+await check('达成且够楼数 → advance', () => {
+  assert.equal(decide({ status: 'achieved', confidence: 0.9 }, { minTurns: 1 }).action, 'advance');
 });
 
 await check('明确违背且高置信 → redirect（不推进）', () => {
@@ -69,6 +69,39 @@ await check('阈值边界：等于阈值不算不足', () => {
   assert.equal(decide({ status: 'pending', confidence: 0.7 }, { threshold: 0.7 }).action, 'retry');
 });
 
+console.log('楼层节奏（T-416）');
+
+await check('达成但没到 min 楼 → settle（不卡住，进入收尾）', () => {
+  const r = decide({ status: 'achieved', confidence: 0.9 }, { turnCount: 0, minTurns: 3, maxTurns: 8 });
+  assert.equal(r.action, 'settle');
+});
+
+await check('收尾中再过一轮到 min → advance', () => {
+  const r = decide({ status: 'achieved', confidence: 0.9 }, { turnCount: 2, minTurns: 3, maxTurns: 8 });
+  assert.equal(r.action, 'advance');
+});
+
+await check('到 max 楼强制推进：即使 achieved 也是 force（优先级正确）', () => {
+  const r = decide({ status: 'achieved', confidence: 0.95 }, { turnCount: 7, minTurns: 3, maxTurns: 8 });
+  assert.equal(r.action, 'force');
+});
+
+await check('pending 但到 max 楼也 force（char 带 user 走）', () => {
+  const r = decide({ status: 'pending', confidence: 0.9 }, { turnCount: 7, minTurns: 3, maxTurns: 8 });
+  assert.equal(r.action, 'force');
+});
+
+await check('turnCount 缺失时按 0 处理（旧数据不崩）', () => {
+  assert.equal(decide({ status: 'achieved', confidence: 0.9 }, { minTurns: 1 }).action, 'advance');
+});
+
+await check('resolvePacing：阶段覆盖全局 / null 用全局 / 非法值回落', () => {
+  assert.deepEqual(resolvePacing({ pacing: null }, { pacing: { min: 2, max: 5 } }), { min: 2, max: 5 });
+  assert.deepEqual(resolvePacing({ pacing: { min: 1, max: 9 } }, { pacing: { min: 2, max: 5 } }), { min: 1, max: 9 });
+  assert.deepEqual(resolvePacing({}, {}), { min: 3, max: 8 });
+  assert.deepEqual(resolvePacing({ pacing: { min: 0, max: 'x' } }, { pacing: { min: 2, max: 6 } }), { min: 2, max: 6 });
+});
+
 console.log('判定服务');
 
 function makeStages(active) {
@@ -89,13 +122,24 @@ await check('没有进行中的阶段 → hold', async () => {
 await check('模型返回合法判定时给出对应动作', async () => {
   const service = createCheckpointService({
     client: { request: async () => '{"status":"achieved","confidence":0.95,"reason":"答应了"}' },
-    stages: makeStages({ id: 'a', goal: 'g', checkpoint: { criteria: 'c', antiCriteria: 'ac' }, stuckCount: 0 }),
+    stages: makeStages({ id: 'a', goal: 'g', checkpoint: { criteria: 'c', antiCriteria: 'ac' }, stuckCount: 0, turnCount: 0 }),
     getConnection: () => ({}),
-    getSettings: () => ({}),
+    getSettings: () => ({ pacing: { min: 1, max: 8 } }),
   });
   const r = await service.judge({ userMessage: '好啊那就去吧' });
   assert.equal(r.action, 'advance');
   assert.equal(r.judgement.status, 'achieved');
+  assert.deepEqual(r.pacing, { min: 1, max: 8 });
+});
+
+await check('没到 min 楼时走真实链路给 settle', async () => {
+  const service = createCheckpointService({
+    client: { request: async () => '{"status":"achieved","confidence":0.95,"reason":"答应了"}' },
+    stages: makeStages({ id: 'a', goal: 'g', checkpoint: { criteria: 'c', antiCriteria: 'ac' }, stuckCount: 0, turnCount: 0 }),
+    getConnection: () => ({}),
+    getSettings: () => ({ pacing: { min: 3, max: 8 } }),
+  });
+  assert.equal((await service.judge({ userMessage: '好啊' })).action, 'settle');
 });
 
 await check('判定结果解析不了 → hold 并保留原文', async () => {
