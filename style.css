@@ -158,6 +158,16 @@ body.dark {
   cursor: pointer;
 }
 
+#dt-panel .dt-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
 /* 小屏 / 小窗口：面板再缩一档，保证不超出 */
 @media (max-width: 520px) {
   #dt-panel {

@@ -1,12 +1,11 @@
 // 导演时间 · 主面板
 //
 // 修 bug：菜单栏入口点进来看到的应该是主页面，而不是 API 配置。
-// 主页面 = 运行状态（UI 设计 §3 场记板 + §9 调试的简化版，数据复用 debug.js 的纯函数）；
-// 导演 API 配置收进右上角「配置」，随用随关。
+// 主页面 = 总开关 + 运行状态（数据复用 debug.js 的纯函数）；导演 API 配置收进右上角「配置」。
 //
 // 尺寸 / 定位跟随酒馆页面：样式在 style.css 的 #dt-panel（fixed + 100dvh + calc 限宽限高），
 // 与旧仓库 just-do-it-char 的 .stpd-overlay / .stpd-modal 同一套做法 ——
-// 手机、缩小的小窗口都不会超出视口，头部（含关闭按钮）永远可见，内容在内部滚动。
+// 手机、缩小的小窗口都不会超出视口，头部（含总开关与关闭按钮）永远可见，内容在内部滚动。
 //
 // G4：本文件只做结构与交互，不做视觉美化（无斜纹 / 旋转 / 印章 / 装饰纹理）。
 
@@ -29,6 +28,8 @@ export function createMainPanel({
   onTest,
   onSave,
   onGenerate,
+  getEnabled,
+  onToggleEnabled,
   onOpenDebug,
   getCapabilities,
   getLast,
@@ -45,6 +46,9 @@ export function createMainPanel({
       <section class="dt-card" role="dialog" aria-modal="true" aria-label="导演时间">
         <header class="dt-head">
           <strong class="dt-title" id="dt-panel-title">导演时间</strong>
+          <label class="dt-switch" title="导演时间总开关">
+            <input type="checkbox" id="dt-panel-enabled"> 总开关
+          </label>
           <button class="dt-btn" id="dt-panel-config" type="button" title="导演 API 配置">配置</button>
           <button class="dt-btn" id="dt-panel-close" type="button" aria-label="关闭导演时间" title="关闭">✕</button>
         </header>
@@ -55,6 +59,10 @@ export function createMainPanel({
 
     el.querySelector('#dt-panel-close').addEventListener('click', close);
     el.querySelector('#dt-panel-config').addEventListener('click', () => setView(view === 'config' ? 'status' : 'config'));
+    el.querySelector('#dt-panel-enabled').addEventListener('change', (event) => {
+      onToggleEnabled?.(event.target.checked);
+      render();
+    });
     // 点遮罩关闭；点卡片内部不关
     el.addEventListener('click', (event) => {
       if (event.target === el) close();
@@ -80,12 +88,16 @@ export function createMainPanel({
       lastTurn: getLast?.() ?? null,
     });
     const noStage = status.stage.total === 0;
+    const enabled = Boolean(getEnabled?.());
     const connection = store?.getSettings?.().connection ?? {};
-    const tip = connection.endpoint ? '' : `
-      <div style="margin-top:10px;opacity:.75">
-        还没配置导演 API → 点右上角「配置」填写端点 / 密钥 / 模型
-      </div>
-    `;
+    const tip = enabled
+      ? (connection.endpoint ? '' : `
+        <div style="margin-top:10px;opacity:.75">
+          还没配置导演 API → 点右上角「配置」填写端点 / 密钥 / 模型
+        </div>
+      `)
+      : '<div style="margin-top:10px;opacity:.75">总开关没开，导演时间处于停用状态</div>';
+
     body.innerHTML = `
       <div style="opacity:.6;margin-bottom:4px">运行状态</div>
       ${row('阶段', noStage ? '还没有剧本' : `${status.stage.index}/${status.stage.total} ${status.stage.title}`)}
@@ -96,10 +108,11 @@ export function createMainPanel({
       ${row('累计', `调用 ${status.cost.callCount} 次`)}
       ${tip}
       <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
-        ${noStage ? '<button id="dt-panel-generate" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">生成剧本</button>' : ''}
+        ${enabled && noStage ? '<button id="dt-panel-generate" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">生成剧本</button>' : ''}
         <button id="dt-panel-debug" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">打开调试面板</button>
       </div>
     `;
+
     body.querySelector('#dt-panel-generate')?.addEventListener('click', async (event) => {
       const button = event.currentTarget;
       button.disabled = true;
@@ -116,6 +129,7 @@ export function createMainPanel({
   function render() {
     const node = ensure();
     node.querySelector('#dt-panel-title').textContent = view === 'config' ? '导演时间 · 配置' : '导演时间';
+    node.querySelector('#dt-panel-enabled').checked = Boolean(getEnabled?.());
     node.querySelector('#dt-panel-config').textContent = view === 'config' ? '返回' : '配置';
 
     const body = node.querySelector('#dt-panel-body');

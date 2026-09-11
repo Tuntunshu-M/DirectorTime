@@ -69,9 +69,9 @@ export function bootstrap({ ctx, store } = {}) {
   // ---------- 剧本生成 ----------
   // T-203 的接线：清单里漏了"首次生成剧本"这一步，不接上就永远不会自动生成
   // （之前 review.run 拿不到 active 阶段，只会 hold）。
+  // 注意：**不随消息自动生成**，只由总开关 + 「生成剧本」按钮显式触发。
 
   let generating = false;
-  let autoGenerateTried = false;
 
   /** 剧情占比 → 可读文本，喂给 GEN_OUTLINE 的 {{tone}} */
   function toneText() {
@@ -92,7 +92,7 @@ export function bootstrap({ ctx, store } = {}) {
   }
 
   /**
-   * 生成并装载一份分场剧本。
+   * 生成并装载一份分场剧本。显式调用，不自动跑。
    * 失败一律只提示、不注入（禁则 G5）；未配置导演 API 时只提示。
    * @returns {Promise<{ok: boolean, error?: string}>}
    */
@@ -138,6 +138,18 @@ export function bootstrap({ ctx, store } = {}) {
     }
   }
 
+  /**
+   * 导演时间总开关。
+   * 开：恢复注入（有剧本时）；关：立刻清空注入（T-204 的四个清空时机之一）。
+   */
+  function setEnabled(value) {
+    store.saveSettings({ enabled: Boolean(value) });
+    // 关 → 立刻清空；开 → 用当前阶段重建注入（registry 里的 current 在 clear 后是空的）
+    if (settings().enabled) review.syncInjection();
+    else registry.clear();
+    return Boolean(settings().enabled);
+  }
+
   // 切聊天必须清空，否则会把上一个对话的指令带过去
   registry.installLifecycle();
   ctx.on?.(CHAT_CHANGED, () => {
@@ -148,16 +160,10 @@ export function bootstrap({ ctx, store } = {}) {
   ctx.on?.(MESSAGE_RECEIVED, async () => {
     if (!settings().enabled) return;
     const { userMessage, charMessage } = lastTurnMessages(ctx.getMessages());
-    try {
-      // 还没有剧本：先让导演生成一份（每个页面生命周期只自动试一次，失败用面板里的按钮重试）
-      if (!store.get().stages?.length) {
-        if (!autoGenerateTried) {
-          autoGenerateTried = true;
-          await generateScript({ premise: userMessage });
-        }
-        return;
-      }
+    // 还没有剧本就不动 —— 生成由用户显式触发，不随消息自动生成
+    if (!store.get().stages?.length) return;
 
+    try {
       const result = await review.run({ userMessage, charMessage, type: 'normal' });
       // 把模型原始返回也喂给 Debug —— 云酒馆看不到控制台，只能靠面板
       const turn = review.getLastTurn();
@@ -171,7 +177,7 @@ export function bootstrap({ ctx, store } = {}) {
   const settingsPanel = createSettingsPanel({
     store,
     onTest: () => client.testConnection(settings().connection ?? {}),
-    onSave: () => registry.sync(),
+    onSave: () => review.syncInjection(),
   });
 
   // 同一时刻只允许一个面板在场：开哪个，就把另外两个收起来
@@ -181,15 +187,17 @@ export function bootstrap({ ctx, store } = {}) {
     if (target !== 'settings') settingsPanel.hide();
   }
 
-  // 主页面：运行状态 + 配置 + 生成剧本；由菜单栏入口打开
+  // 主页面：总开关 + 运行状态 + 配置 + 生成剧本；由菜单栏入口打开
   const panel = createMainPanel({
     store,
     registry,
     getCapabilities: () => ctx.capabilities,
     getLast: () => review.getLastTurn(),
     onTest: () => client.testConnection(settings().connection ?? {}),
-    onSave: () => registry.sync(),
+    onSave: () => review.syncInjection(),
     onGenerate: () => generateScript({}),
+    getEnabled: () => Boolean(settings().enabled),
+    onToggleEnabled: (value) => setEnabled(value),
     onOpenDebug: () => { openOnly('debug'); debug.show(); },
   });
 
@@ -203,7 +211,7 @@ export function bootstrap({ ctx, store } = {}) {
   };
 
   const api = {
-    client, stages, outline, registry, checkpoint, review, debug, generateScript,
+    client, stages, outline, registry, checkpoint, review, debug, generateScript, setEnabled,
     settingsPanel: settingsPanelApi, panel, unmountMenu,
   };
 
