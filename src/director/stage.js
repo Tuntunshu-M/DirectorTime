@@ -88,5 +88,27 @@ export function createStageService({ store } = {}) {
     }));
   }
 
-  return { getActive, load, advance, bumpStuck, resetStuck, drop, insertAfter, update };
+  /** 续写：把新阶段追加到末尾（全部 pending），不影响当前 active */
+  function append(stages) {
+    if (!stages?.length) return null;
+    return store.update((draft) => ({
+      ...draft,
+      stages: [...draft.stages, ...stages],
+    }), { label: '续写阶段' });
+  }
+
+  /**
+   * 激活指定阶段。**只在没有 active 阶段时调用**，否则会破坏"有且仅有一个 active"的不变量。
+   * 用途：剧本一场就演完、续写后补位。
+   */
+  function activate(id) {
+    if (!id) return null;
+    return store.update((draft) => ({
+      ...draft,
+      stages: draft.stages.map((stage) => (stage.id === id ? { ...stage, status: 'active' } : stage)),
+      activeStageId: id,
+    }), { label: '激活阶段' });
+  }
+
+  return { getActive, load, advance, bumpStuck, resetStuck, drop, insertAfter, update, append, activate };
 }

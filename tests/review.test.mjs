@@ -159,6 +159,32 @@ await check('走位重写失败时保持原走位，仍注入当前阶段（G5�
   assert.ok(env.registered[env.registered.length - 1].includes('做饭 → 开口'));
 });
 
+await check('推进后调用 topUp 补足待演阶段（T-209）', async () => {
+  const env = makeEnv();
+  seed(env);
+  let topped = 0;
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'advance', reason: '达成' }) },
+    topUp: async () => { topped += 1; },
+    stages: env.stages, registry: env.registry, store: env.store, getSettings: () => ({}),
+  });
+  await service.run({ userMessage: '好' });
+  assert.equal(topped, 1);
+});
+
+await check('retry / hold 不触发续写', async () => {
+  const env = makeEnv();
+  seed(env);
+  let topped = 0;
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'retry', reason: '未达成' }) },
+    topUp: async () => { topped += 1; },
+    stages: env.stages, registry: env.registry, store: env.store, getSettings: () => ({}),
+  });
+  await service.run({ userMessage: '嗯' });
+  assert.equal(topped, 0);
+});
+
 await check('复盘后更新注入内容（供下一轮使用）', async () => {
   const env = makeEnv();
   seed(env);

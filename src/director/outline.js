@@ -12,12 +12,16 @@ function nextId(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${seq}`;
 }
 
-/** 给阶段补上运行时字段，并把第一个置为 active */
-export function normalizeStages(rawStages = []) {
-  return rawStages.map((stage, index) => ({
+/**
+ * 给阶段补上运行时字段。
+ * - 新建剧本：默认第一个 active、其余 pending
+ * - 续写：传 { startIndex, activateFirst: false }，序号接续、全部 pending（不动当前 active）
+ */
+export function normalizeStages(rawStages = [], { startIndex = 1, activateFirst = true } = {}) {
+  return rawStages.map((stage, i) => ({
     id: nextId('st'),
-    index: index + 1,
-    title: stage.title ?? `阶段 ${index + 1}`,
+    index: startIndex + i,
+    title: stage.title ?? `阶段 ${startIndex + i}`,
     goal: stage.goal ?? '',
     activity: stage.activity ?? '',
     checkpoint: {
@@ -27,8 +31,8 @@ export function normalizeStages(rawStages = []) {
       instruction: stage.checkpoint?.instruction ?? '',
     },
     beats: Array.isArray(stage.beats) ? stage.beats : [],
-    // 第一个阶段开工，其余排队
-    status: index === 0 ? 'active' : 'pending',
+    // 第一个阶段开工，其余排队（续写时全排队）
+    status: activateFirst && i === 0 ? 'active' : 'pending',
     stuckCount: 0,
     locked: false,
     aiOriginal: null,
@@ -70,5 +74,49 @@ export function createOutlineService({ client, getConnection, now = Date.now } =
     };
   }
 
-  return { generate };
+  /**
+   * 续写后续阶段（滚动剧本）：接着已经演过的剧情往下写，
+   * 让"待演阶段"始终有存货，不会演到没戏。
+   */
+  async function extend({
+    count = 2,
+    startIndex = 1,
+    outline: currentOutline = null,
+    history = '',
+    tone = '',
+    profile = '',
+    world = '',
+    context = '',
+  } = {}) {
+    const connection = getConnection?.() ?? {};
+    const messages = buildMessages('EXTEND_OUTLINE', {
+      count,
+      title: currentOutline?.title ?? '',
+      premise: currentOutline?.premise ?? '',
+      tone,
+      profile,
+      world,
+      history,
+      context,
+    });
+
+    let text;
+    try {
+      text = await client.request({ ...connection, messages });
+    } catch (error) {
+      return { ok: false, code: error?.name ?? 'DirectorRequestError', error: error?.message ?? '导演 API 请求失败' };
+    }
+
+    const data = parseDirectorResponse(text, 'stages');
+    if (!data) {
+      return { ok: false, code: 'PARSE_FAILED', error: '续写结果无法解析，本轮不改剧本', raw: text };
+    }
+
+    return {
+      ok: true,
+      stages: normalizeStages(data.stages, { startIndex, activateFirst: false }),
+    };
+  }
+
+  return { generate, extend };
 }

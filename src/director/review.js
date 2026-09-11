@@ -15,6 +15,7 @@ const SKIP_TYPES = ['regenerate', 'swipe', 'impersonate', 'quiet'];
 export function createReviewService({
   checkpoint,
   beats,
+  topUp,
   stages,
   registry,
   store,
@@ -91,9 +92,14 @@ export function createReviewService({
         default:
           // hold：判定失败不计入卡住
           break;
-      }
+        }
 
-      const injected = syncInjection();
+        // 推进后补足待演阶段，保证"永远有 1~2 条在等"（T-209）
+        if ((result.action === 'advance' || result.action === 'force') && topUp) {
+        await topUp();
+        }
+
+        const injected = syncInjection();
       store?.update?.((draft) => ({
         ...draft,
         runtime: { ...draft.runtime, lastReviewAt: Date.now() },

@@ -60,6 +60,7 @@ export function bootstrap({ ctx, store } = {}) {
   const review = createReviewService({
     checkpoint,
     beats,
+    topUp: topUpStages,
     stages,
     registry,
     store,
@@ -142,6 +143,45 @@ export function bootstrap({ ctx, store } = {}) {
     } finally {
       generating = false;
     }
+  }
+
+  // 待演阶段的存货目标：少于这个数就续写，保证"演完一场还有下一场"
+  const TARGET_PENDING = 2;
+
+  /** 待演阶段不够就续写（T-209）。失败只记日志、不动剧本（G5） */
+  async function topUpStages() {
+    const state = store.get();
+    const list = state.stages ?? [];
+    const pending = list.filter((stage) => stage.status === 'pending').length;
+    if (pending >= TARGET_PENDING) return null;
+    if (!state.outline || !settings().connection?.endpoint) return null;
+
+    const marks = { done: '已演', active: '正在演', pending: '待演' };
+    const history = list
+      .map((stage) => `- [${marks[stage.status] ?? stage.status}] ${stage.title}：${stage.goal}`)
+      .join('\n');
+
+    const result = await outline.extend({
+      count: TARGET_PENDING - pending,
+      startIndex: list.length + 1,
+      outline: state.outline,
+      tone: toneText(),
+      profile: '',
+      world: '',
+      history,
+      context: recentContext(),
+    });
+
+    if (!result.ok || !result.stages?.length) {
+      console.warn('[导演时间] 续写阶段失败', result.error);
+      return null;
+    }
+
+    stages.append(result.stages);
+    // 极端情况：剧本只有一场、演完才续写 —— 补位激活第一条，别让导演停摆
+    if (!store.get().activeStageId) stages.activate(result.stages[0].id);
+    console.log(`[导演时间] 已续写 ${result.stages.length} 个阶段`);
+    return result;
   }
 
   /**

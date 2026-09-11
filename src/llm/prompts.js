@@ -125,6 +125,30 @@ user 说：{{userMessage}}
 
 请给这一场换一组新走位。`,
   },
+
+  EXTEND_OUTLINE: {
+    system: `你是电影导演。这部戏已经演到一半，需要你接着往下写分场剧本。
+
+输出要求：
+- 只输出 JSON，不要解释，不要 markdown 代码块标记
+- 严格遵循这个结构：
+{ "stages": [ { "title": "阶段名", "goal": "这一场要达成什么", "activity": "角色主要活动", "checkpoint": { "criteria": "达成条件（意图级、可观测）", "antiCriteria": "明确的反意图（必填）" }, "beats": ["步骤一", "步骤二"] } ] }
+- 只写 {{count}} 个阶段，紧接着已经发生过的剧情往下走，不要重复已有阶段
+- 一个阶段只推进一件事；criteria 写意图级，不要写死具体名词；antiCriteria 必填`,
+    user: `剧本：{{title}}
+前提：{{premise}}
+剧情基调：{{tone}}
+人物侧写：{{profile}}
+世界书设定：{{world}}
+
+已经演过的阶段：
+{{history}}
+
+近期对话：
+{{context}}
+
+请只输出接下来的 {{count}} 个阶段。`,
+  },
 };
 
 /**

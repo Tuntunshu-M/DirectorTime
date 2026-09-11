@@ -173,6 +173,64 @@ await check('未锁定的阶段可更新，并保留 aiOriginal', () => {
   assert.ok(store.get().stages[0].aiOriginal);
 });
 
+console.log('滚动续写（T-209）');
+
+await check('normalizeStages 续写模式：序号接续、全部 pending', () => {
+  const list = normalizeStages([
+    { goal: 'a', checkpoint: { criteria: 'x', antiCriteria: 'y' } },
+    { goal: 'b', checkpoint: { criteria: 'x', antiCriteria: 'y' } },
+  ], { startIndex: 4, activateFirst: false });
+  assert.equal(list[0].index, 4);
+  assert.equal(list[1].index, 5);
+  assert.equal(list[0].status, 'pending');
+  assert.equal(list[1].status, 'pending');
+});
+
+await check('extend 返回续写阶段：全 pending、序号接续', async () => {
+  const client = {
+    request: async () => JSON.stringify({ stages: [{ goal: 'g', checkpoint: { criteria: 'c', antiCriteria: 'a' } }] }),
+  };
+  const service = createOutlineService({ client, getConnection: () => ({ endpoint: 'e', model: 'm' }) });
+  const result = await service.extend({ count: 1, startIndex: 3, outline: { title: 'T', premise: 'P' } });
+  assert.equal(result.ok, true);
+  assert.equal(result.stages.length, 1);
+  assert.equal(result.stages[0].index, 3);
+  assert.equal(result.stages[0].status, 'pending');
+});
+
+await check('extend 解析失败 → ok:false，不改剧本', async () => {
+  const client = { request: async () => '我做不到' };
+  const service = createOutlineService({ client, getConnection: () => ({}) });
+  const result = await service.extend({ count: 2, startIndex: 2 });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'PARSE_FAILED');
+});
+
+await check('append 追加 pending 阶段，不动当前 active', () => {
+  const store = makeStore();
+  const stages = createStageService({ store });
+  const list = normalizeStages([{ goal: 'a', checkpoint: { criteria: 'x', antiCriteria: 'y' } }]);
+  stages.load(list);
+  const appended = normalizeStages([{ goal: 'b', checkpoint: { criteria: 'x', antiCriteria: 'y' } }], { startIndex: 2, activateFirst: false });
+  stages.append(appended);
+  assert.equal(store.get().stages.length, 2);
+  assert.equal(store.get().activeStageId, list[0].id);
+  assert.equal(store.get().stages[1].status, 'pending');
+});
+
+await check('没有 active 时 activate 补位', () => {
+  const store = makeStore();
+  const stages = createStageService({ store });
+  const list = normalizeStages([{ goal: 'a', checkpoint: { criteria: 'x', antiCriteria: 'y' } }]);
+  stages.load(list);
+  stages.advance(); // 演完最后一场 → activeStageId 为 null
+  const appended = normalizeStages([{ goal: 'b', checkpoint: { criteria: 'x', antiCriteria: 'y' } }], { startIndex: 2, activateFirst: false });
+  stages.append(appended);
+  stages.activate(appended[0].id);
+  assert.equal(store.get().activeStageId, appended[0].id);
+  assert.equal(store.get().stages[1].status, 'active');
+});
+
 console.log('T-204 注入注册表');
 
 await check('开关开启时 register 真正注入（走真实链路，参数被封死）', () => {
