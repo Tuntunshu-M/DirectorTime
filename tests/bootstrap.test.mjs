@@ -1,7 +1,9 @@
-// 装配层测试：只测可纯函数验证的部分（轮次消息抽取）
+// 装配层测试：轮次消息抽取 + 总开关（判据 14）
 
 import assert from 'node:assert/strict';
-import { lastTurnMessages, normalizeMaxRounds, shouldResetScript } from '../src/bootstrap.js';
+import { lastTurnMessages, normalizeMaxRounds, shouldResetScript, bootstrap } from '../src/bootstrap.js';
+import { createStateStore } from '../src/core/state.js';
+import { normalizeStages } from '../src/director/outline.js';
 
 let passed = 0;
 function check(name, fn) {
@@ -70,6 +72,74 @@ check('超过上限才重置：15 轮不重置，16 轮重置', () => {
   assert.equal(shouldResetScript(1, 1), false);
   assert.equal(shouldResetScript(2, 1), true);
   assert.equal(shouldResetScript(5, undefined), false);
+});
+
+console.log('总开关（T-405 判据 14）');
+
+/** 最小 ctx 桩：不碰 DOM，只在 Node 里跑通装配 */
+function makeBootEnv() {
+  const listeners = {};
+  let injected = '';
+  const ext = {};
+  const ctx = {
+    capabilities: {},
+    getExtensionSettings: () => ext,
+    saveSettings: () => true,
+    getChatState: () => ({}),
+    saveChatState: () => true,
+    getMessages: () => [{ is_user: true, mes: '我不要' }, { is_user: false, mes: '好吧' }],
+    on: (name, fn) => { listeners[name] = fn; return () => {}; },
+    showSystemMessage: () => {},
+    setExtensionPrompt: (_key, value) => { injected = value ?? ''; return true; },
+    clearExtensionPrompt: () => { injected = ''; return true; },
+    characters: [{ name: 'C', data: { extensions: {} } }],
+    getCharacterId: () => 0,
+  };
+  const store = createStateStore(ctx, 'director_time_test');
+  return { ctx, store, listeners, getInjected: () => injected };
+}
+
+async function acheck(name, fn) {
+  try {
+    await fn();
+    passed += 1;
+    console.log(`  ✓ ${name}`);
+  } catch (error) {
+    console.error(`  ✗ ${name}\n    ${error.message}`);
+    process.exitCode = 1;
+  }
+}
+
+globalThis.window = globalThis.window ?? {}; // 面板/菜单模块在无 document 环境下的兜底
+
+await acheck('关掉总开关 → 立刻清空注入', async () => {
+  const env = makeBootEnv();
+  const api = bootstrap({ ctx: env.ctx, store: env.store });
+  env.store.saveSettings({ enabled: true, injectEnabled: true, connection: { endpoint: 'https://x/v1' } });
+  api.stages.load(normalizeStages([{ goal: 'g', checkpoint: { criteria: 'c', antiCriteria: 'a' } }]));
+  api.review.syncInjection();
+  assert.ok(env.getInjected().length > 0, '开着的时候应该有注入');
+
+  api.setEnabled(false);
+  assert.equal(env.getInjected(), '', '关总开关必须立刻清空注入（T-204 四个清空时机之一）');
+});
+
+await acheck('总开关关闭时收到消息不复盘（强制爱开着也一样不覆盖）', async () => {
+  const originalFetch = globalThis.fetch;
+  let fetched = 0;
+  globalThis.fetch = async () => { fetched += 1; return { ok: true, json: async () => ({}) }; };
+  try {
+    const env = makeBootEnv();
+    const api = bootstrap({ ctx: env.ctx, store: env.store });
+    env.store.saveSettings({ enabled: false, forceAffection: true, connection: { endpoint: 'https://x/v1' } });
+    api.stages.load(normalizeStages([{ goal: 'g', checkpoint: { criteria: 'c', antiCriteria: 'a' } }]));
+
+    await env.listeners['message_received']();
+    assert.equal(fetched, 0, '总开关关着就不该调导演 API');
+    assert.equal(env.getInjected(), '', '也不该有注入');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 console.log(`\n通过 ${passed} 项`);

@@ -16,7 +16,7 @@ import { parseDirectorResponse } from '../llm/schemas.js';
  *
  * @param {{status: string, confidence: number}} judgement
  * @param {{threshold?: number, stuckCount?: number, stuckThreshold?: number}} options
- * @returns {{action: 'advance'|'rewrite'|'retry'|'force'|'redirect', reason: string}}
+ * @returns {{action: 'advance'|'rewrite'|'force'|'settle'|'redirect', reason: string}}
  */
 export function decide(judgement, options = {}) {
   const {
@@ -67,7 +67,8 @@ export function decide(judgement, options = {}) {
     return { action: 'force', reason: `连续 ${stuckThreshold} 轮未推进，熔断` };
   }
 
-  return { action: 'retry', reason: '尚未达成' };
+  // 尚未达成：本场停留、就地换个说法再试（动作名统一为 rewrite —— T-405 拍板 c）
+  return { action: 'rewrite', reason: '尚未达成' };
 }
 
 /** 楼层节奏：阶段自己的 pacing 优先，null 时用全局 settings.pacing */

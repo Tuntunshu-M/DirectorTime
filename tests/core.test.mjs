@@ -84,6 +84,10 @@ check('默认意愿权重为 80（T-405 高档：user 优先）', () => {
   assert.equal(createDefaultSettings().will, 80);
 });
 
+check('强制爱默认关闭（T-405 §七：不开启就不该有任何变化）', () => {
+  assert.equal(createDefaultSettings().forceAffection, false);
+});
+
 check('旧数据缺字段时补齐，不崩', () => {
   const state = migrate({ stages: [], schemaVersion: 0 });
   assert.equal(state.schemaVersion, SCHEMA_VERSION);

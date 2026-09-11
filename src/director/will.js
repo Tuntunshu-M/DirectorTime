@@ -1,4 +1,4 @@
-// 导演时间 · 用户意愿矩阵（T-405 / M12）
+// 导演时间 · 用户意愿矩阵（T-405 / M12，含强制爱开关）
 //
 // 剧本有自己想去的方向，user 也有自己的想法。冲突时听谁的？Will 就是这个旋钮。
 //   T-416 管「char 往哪走」（主动性），T-405 管「user 反对时 char 怎么反应」（让步）。
@@ -7,10 +7,14 @@
 //   Will   用户意愿权重 0~100（设置项默认 80；阶段自己的 will 优先）
 //   Stance user 这一句的态度（JUDGE_STANCE：accept / hesitate / reject / irrelevant / redirect）
 //
-// 三条纪律：
+// 强制爱（原 T-419）是 Will 的一个覆盖模式：开了之后只覆盖"口头拒绝"这一种情况，
+// 硬禁区、总开关、其它 stance 一律不覆盖（规格 §七）。
+//
+// 四条纪律：
 //   1. resolve() 是纯函数，5 种 stance × 3 档 will 共 15 个组合全部可测
 //   2. 决策表用查表结构，不写 if-else 堆（以后改表不改逻辑）
 //   3. 拿不准 user 什么态度时按 accept 处理 —— 宁可推进，也不卡住
+//   4. 动作名统一用 rewrite（retry 已并入，拍板 c）
 
 import { buildMessages } from '../llm/prompts.js';
 import { parseDirectorResponse } from '../llm/schemas.js';
@@ -33,7 +37,8 @@ export function willTier(will) {
 const ACTIONS = {
   accept: { low: 'advance', mid: 'advance', high: 'advance' },
   hesitate: { low: 'advance', mid: 'hold', high: 'hold' },
-  reject: { low: 'retry', mid: 'drop', high: 'regenAfter' },
+  // 低 = 坚持一次（换个说法再试，算 rewrite 不算让）；中 = 让步作废本场；高 = 让步 + 重生成后续
+  reject: { low: 'rewrite', mid: 'drop', high: 'regenAfter' },
   irrelevant: { low: 'hold', mid: 'hold', high: 'follow' },
   redirect: { low: 'hold', mid: 'hold', high: 'regenAfter' },
 };
@@ -50,7 +55,7 @@ const REASONS = {
     high: 'user 犹豫，停留等 user 明确表态',
   },
   reject: {
-    low: 'user 反对，先换一组走位再试一次',
+    low: 'user 反对，先换个说法再试一次',
     mid: 'user 反对，让步、作废本场',
     high: 'user 强烈反对，让步、作废本场并重生成后续',
   },
@@ -69,37 +74,55 @@ const REASONS = {
 /**
  * 意愿矩阵：stance × Will 档位 → 动作。纯函数，不碰状态、不调 API。
  *
- * @param {{stance?: string, confidence?: number, will?: number, stuckCount?: number, stuckThreshold?: number}} input
- * @returns {{action: string, reason: string, tier: string, stance: string, floored: boolean}}
+ * @param {{stance?: string, confidence?: number, will?: number, stuckCount?: number,
+ *          stuckThreshold?: number, forceAffection?: boolean, violated?: boolean}} input
+ * @param {boolean} [input.violated] 本轮是否触及硬禁区（来自 T-205 判定；强制爱不覆盖它）
+ * @returns {{action: string, reason: string, tier: string, stance: string, floored: boolean, forced: boolean}}
  */
-export function resolve({ stance, confidence, will, stuckCount = 0, stuckThreshold = 3 } = {}) {
+export function resolve({
+  stance,
+  confidence,
+  will,
+  stuckCount = 0,
+  stuckThreshold = 3,
+  forceAffection = false,
+  violated = false,
+} = {}) {
   const raw = Number(confidence);
   const normalized = Number.isFinite(raw) ? raw : 0;
   // 置信度不足 / stance 不认识 → 一律按 accept 处理（放行，不卡住）
   const floored = normalized < CONFIDENCE_FLOOR;
   const effective = floored || !ACTIONS[stance] ? 'accept' : stance;
   const tier = willTier(will);
-  const base = { tier, stance: effective, floored, confidence: normalized };
+  const base = { tier, stance: effective, floored, forced: false, confidence: normalized };
 
-  // 熔断优先：不管 Will 多高，卡住达阈值就强制推进（防死锁）
+  // 1) 熔断优先：不管 Will 多高、也不管强制爱开没开，卡住达阈值就强制推进（防死锁）
   if (Number(stuckCount) + 1 >= Number(stuckThreshold)) {
     return { ...base, action: 'advance', reason: `连续 ${stuckThreshold} 轮未推进，熔断（不看 Will）` };
   }
 
-  // reject 低档的例外：先坚持一次，**再拒才让步**（不是死扛）
+  // 2) 强制爱：只覆盖"口头拒绝" —— 不让步、继续推进本场；硬禁区命中时不被覆盖（§七）
+  if (forceAffection && effective === 'reject' && !violated) {
+    return { ...base, action: 'hold', reason: '强制爱：不让步，继续推进本场', forced: true };
+  }
+
+  // 3) reject 低档：先坚持一次（换个说法再试），**已拒过一次才让步**（不是死扛）
   if (effective === 'reject' && tier === 'low') {
     if (Number(stuckCount) >= 1) {
       return { ...base, action: 'drop', reason: 'user 再次拒绝，让步、作废本场' };
     }
-    return { ...base, action: 'retry', reason: REASONS.reject.low };
+    return { ...base, action: 'rewrite', reason: REASONS.reject.low };
   }
 
   return { ...base, action: ACTIONS[effective][tier], reason: REASONS[effective][tier] };
 }
 
-/** 让步类动作：要就地执行，并跳过推进点判定（规格 T-416 §五） */
-export function isConcession(action) {
-  return ['retry', 'hold', 'drop', 'regenAfter', 'follow'].includes(action);
+/**
+ * 拍板 (b)：只有 accept（含置信不足的放行）才去跑推进点判定；
+ * 其它 stance 一律就地执行矩阵动作、本轮结束 —— 这样 rewrite 天然被包含，以后加动作也不会漏。
+ */
+export function shouldRunCheckpoint(decision) {
+  return !decision || decision.stance === 'accept';
 }
 
 export function createWillService({ client, getConnection } = {}) {

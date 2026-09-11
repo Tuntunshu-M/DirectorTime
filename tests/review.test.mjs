@@ -89,11 +89,13 @@ await check('判定 advance 时推进阶段', async () => {
   assert.equal(env.store.get().stages[0].status, 'done');
 });
 
-await check('判定 retry 时累加卡住计数', async () => {
+await check('判定 rewrite（未达成）时累加卡住计数', async () => {
   const env = makeEnv();
   seed(env);
   const service = createReviewService({
-    checkpoint: { judge: async () => ({ action: 'retry', reason: '未达成' }) },
+    checkpoint: {
+      judge: async () => ({ action: 'rewrite', reason: '尚未达成', judgement: { status: 'pending', confidence: 0.9 } }),
+    },
     stages: env.stages, registry: env.registry, store: env.store, getSettings: () => ({}),
   });
   await service.run({ userMessage: '嗯' });
@@ -118,7 +120,9 @@ await check('判定 rewrite 时重置卡住计数', async () => {
   env.stages.bumpStuck(id);
   env.stages.bumpStuck(id);
   const service = createReviewService({
-    checkpoint: { judge: async () => ({ action: 'rewrite', reason: '部分达成' }) },
+    checkpoint: {
+      judge: async () => ({ action: 'rewrite', reason: '部分达成', judgement: { status: 'partial', confidence: 0.9 } }),
+    },
     stages: env.stages, registry: env.registry, store: env.store, getSettings: () => ({}),
   });
   await service.run({ userMessage: '也许吧' });
@@ -131,7 +135,9 @@ await check('判定 rewrite 时换一组走位（T-205④）', async () => {
   const before = env.store.get().stages[0].beats.join('|');
   let asked = null;
   const service = createReviewService({
-    checkpoint: { judge: async () => ({ action: 'rewrite', reason: '部分达成' }) },
+    checkpoint: {
+      judge: async () => ({ action: 'rewrite', reason: '部分达成', judgement: { status: 'partial', confidence: 0.9 } }),
+    },
     beats: { rewrite: async (input) => { asked = input; return { ok: true, beats: ['新走位一', '新走位二'] }; } },
     stages: env.stages, registry: env.registry, store: env.store, getSettings: () => ({}),
   });
@@ -173,12 +179,12 @@ await check('推进后调用 topUp 补足待演阶段（T-209）', async () => {
   assert.equal(topped, 1);
 });
 
-await check('retry / hold 不触发续写', async () => {
+await check('rewrite / hold 不触发续写', async () => {
   const env = makeEnv();
   seed(env);
   let topped = 0;
   const service = createReviewService({
-    checkpoint: { judge: async () => ({ action: 'retry', reason: '未达成' }) },
+    checkpoint: { judge: async () => ({ action: 'rewrite', reason: '未达成' }) },
     topUp: async () => { topped += 1; },
     stages: env.stages, registry: env.registry, store: env.store, getSettings: () => ({}),
   });
@@ -192,7 +198,7 @@ await check('每轮结束本场 turnCount +1', async () => {
   const env = makeEnv();
   seed(env);
   const service = createReviewService({
-    checkpoint: { judge: async () => ({ action: 'retry', reason: '未达成' }) },
+    checkpoint: { judge: async () => ({ action: 'rewrite', reason: '未达成' }) },
     stages: env.stages, registry: env.registry, store: env.store, getSettings: () => ({}),
   });
   await service.run({ userMessage: '嗯' });
@@ -325,6 +331,100 @@ await check('regenAfter 重生成失败 → 只作废、不注入、不崩（判
   assert.equal(env.store.get().stages[0].status, 'dropped');
   assert.equal(env.store.get().activeStageId, null);
   assert.equal(r.injected, '', '重生成失败就不注入任何内容');
+});
+
+await check('判据 9：非 accept 的 stance 一律跳过推进点判定（拍板 b）', async () => {
+  const cases = [
+    ['hesitate', 50, 'hold'],
+    ['reject', 10, 'rewrite'],
+    ['irrelevant', 10, 'hold'],
+    ['redirect', 50, 'hold'],
+  ];
+  for (const [stance, will, expected] of cases) {
+    const env = makeEnv();
+    seed(env);
+    let judged = false;
+    const service = createReviewService({
+      checkpoint: { judge: async () => { judged = true; return { action: 'advance', reason: '达成' }; } },
+      will: { judge: async () => ({ ok: true, stance, confidence: 0.9 }) },
+      stages: env.stages, registry: env.registry, store: env.store,
+      getSettings: () => ({ will, stuckThreshold: 3 }),
+    });
+    const r = await service.run({ userMessage: 'x' });
+    assert.equal(judged, false, `${stance} @ will=${will} 不该跑推进点判定`);
+    assert.equal(r.action, expected, `${stance} @ will=${will}`);
+  }
+});
+
+await check('判据 12：强制爱开启时 reject 不让步、继续推进本场', async () => {
+  const env = makeEnv();
+  const list = seed(env);
+  const service = createReviewService({
+    // 强制爱这条路会先跑一次判定读 violated —— 这里判定说"没达成、没越线"
+    checkpoint: { judge: async () => ({ action: 'advance', judgement: { status: 'pending', confidence: 0.9 } }) },
+    will: { judge: async () => ({ ok: true, stance: 'reject', confidence: 0.95 }) },
+    stages: env.stages, registry: env.registry, store: env.store,
+    getSettings: () => ({ will: 90, forceAffection: true, stuckThreshold: 3 }),
+  });
+
+  const r = await service.run({ userMessage: '我不要' });
+  assert.equal(r.action, 'hold', '不让步');
+  assert.equal(env.store.get().activeStageId, list[0].id, '不换场');
+  assert.equal(env.store.get().stages[0].status, 'active', '本场不丢');
+  assert.ok(r.injected.includes('知道想不想去'), '继续注入本场指令');
+  assert.equal(env.store.get().stages[0].stuckCount, 1, '累计卡住，靠熔断保证剧情最终能走');
+});
+
+await check('判据 13：强制爱开启但触及硬禁区 → 不被覆盖（Will=90 仍让步）', async () => {
+  const env = makeEnv();
+  const list = seed(env);
+  let topped = 0;
+  const service = createReviewService({
+    checkpoint: {
+      judge: async () => ({ action: 'redirect', reason: '明确违背', judgement: { status: 'violated', confidence: 0.95 } }),
+    },
+    will: { judge: async () => ({ ok: true, stance: 'reject', confidence: 0.95 }) },
+    topUp: async () => {
+      topped += 1;
+      const fresh = normalizeStages(
+        [{ goal: '换个方向', checkpoint: { criteria: 'c', antiCriteria: 'a' } }],
+        { startIndex: list.length + 1, activateFirst: false }
+      );
+      env.stages.append(fresh);
+      return { ok: true, stages: fresh };
+    },
+    stages: env.stages, registry: env.registry, store: env.store,
+    getSettings: () => ({ will: 90, forceAffection: true, stuckThreshold: 3 }),
+  });
+
+  const r = await service.run({ userMessage: '我不要这个' });
+  assert.equal(r.action, 'regenAfter', '硬禁区命中 → 按 Will 高处理，不让强制爱覆盖');
+  assert.equal(env.store.get().stages[0].status, 'dropped');
+  assert.equal(topped, 1);
+  assert.equal(service.getLastTurn().stance.violated, true);
+});
+
+await check('判据 11：强制爱关闭时 reject 照常让步（行为不变）', async () => {
+  const env = makeEnv();
+  const list = seed(env);
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'advance' }) },
+    will: { judge: async () => ({ ok: true, stance: 'reject', confidence: 0.95 }) },
+    topUp: async () => {
+      const fresh = normalizeStages(
+        [{ goal: '换个方向', checkpoint: { criteria: 'c', antiCriteria: 'a' } }],
+        { startIndex: list.length + 1, activateFirst: false }
+      );
+      env.stages.append(fresh);
+      return { ok: true, stages: fresh };
+    },
+    stages: env.stages, registry: env.registry, store: env.store,
+    getSettings: () => ({ will: 90, forceAffection: false }),
+  });
+
+  const r = await service.run({ userMessage: '我不要' });
+  assert.equal(r.action, 'regenAfter');
+  assert.equal(service.getLastTurn().stance.forced, false);
 });
 
 await check('没有 will 服务时退化为原来的推进点路径（向后兼容）', async () => {

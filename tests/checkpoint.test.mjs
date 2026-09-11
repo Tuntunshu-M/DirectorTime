@@ -38,8 +38,8 @@ await check('部分达成且高置信 → rewrite（换走位再试）', () => {
   assert.equal(decide({ status: 'partial', confidence: 0.8 }).action, 'rewrite');
 });
 
-await check('未达成且高置信 → retry', () => {
-  assert.equal(decide({ status: 'pending', confidence: 0.9, }, { stuckCount: 0 }).action, 'retry');
+await check('未达成且高置信 → rewrite（换个说法再试，动作名已与 T-405 统一）', () => {
+  assert.equal(decide({ status: 'pending', confidence: 0.9, }, { stuckCount: 0 }).action, 'rewrite');
 });
 
 await check('连续卡住达阈值 → force（熔断）', () => {
@@ -54,8 +54,8 @@ await check('未达成但置信不足 → 放行（关键：防止卡死）', ()
 });
 
 await check('阈值可调', () => {
-  // 阈值 0.3 时，confidence 0.5 算够，pending 应 retry 而非放行
-  assert.equal(decide({ status: 'pending', confidence: 0.5 }, { threshold: 0.3 }).action, 'retry');
+  // 阈值 0.3 时，confidence 0.5 算够，pending 应 rewrite 而非放行
+  assert.equal(decide({ status: 'pending', confidence: 0.5 }, { threshold: 0.3 }).action, 'rewrite');
   // 阈值 0.9 时，confidence 0.5 不够，放行
   assert.equal(decide({ status: 'pending', confidence: 0.5 }, { threshold: 0.9 }).action, 'advance');
 });
@@ -66,7 +66,7 @@ await check('confidence 缺失时按 0 处理（放行）', () => {
 
 await check('阈值边界：等于阈值不算不足', () => {
   // confidence === threshold 时不触发放行分支
-  assert.equal(decide({ status: 'pending', confidence: 0.7 }, { threshold: 0.7 }).action, 'retry');
+  assert.equal(decide({ status: 'pending', confidence: 0.7 }, { threshold: 0.7 }).action, 'rewrite');
 });
 
 console.log('楼层节奏（T-416）');

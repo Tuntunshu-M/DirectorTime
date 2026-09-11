@@ -60,6 +60,8 @@ export function createDefaultSettings() {
     confidenceThreshold: 0.7,
     // 用户意愿权重（T-405）：0~33 剧情优先 / 34~66 平衡 / 67~100 user 优先
     will: 80,
+    // 强制爱（T-405 §七，原 T-419）：开了之后 user 口头拒绝也不让步，char 继续推进本场
+    forceAffection: false,
     // 跑满这么多轮就自动清空剧本（可在配置里改）
     maxRounds: 15,
     // 生成新阶段后拿侧写做一致性自检（T-402 §六，可关）

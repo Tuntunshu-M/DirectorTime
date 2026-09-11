@@ -337,7 +337,7 @@ export function bootstrap({ ctx, store } = {}) {
       const result = await review.run({ userMessage, charMessage, type: 'normal' });
       // 把模型原始返回也喂给 Debug —— 云酒馆看不到控制台，只能靠面板
       const turn = review.getLastTurn();
-      if (turn) debug.setLast({ ...turn, raw: result?.raw ?? turn.judgement ? JSON.stringify(turn.judgement) : '' });
+      if (turn) debug.setLast({ ...turn, raw: turn.raw || (turn.judgement ? JSON.stringify(turn.judgement) : '') });
 
       // 跑过上限就清空重来，避免剧本与历史无限膨胀（上限可在配置里改）
       if (!result?.skipped && shouldResetScript(countRound(), settings().maxRounds)) {
