@@ -38,8 +38,9 @@ export function normalizeStages(rawStages = [], { startIndex = 1, activateFirst 
     turnCount: 0,
     // T-405：本场单独的意愿权重（null = 用全局 settings.will）
     will: stage.will ?? null,
-    // T-417 才填，先占位
-    initiative: '',
+    // T-417：由侧写推导，随阶段一起生成（生成时侧写为空就是空串）
+    // 侧写版本戳 initiativeFrom 由 bootstrap 盖章，见 director/initiative.js
+    initiative: stage.initiative ?? '',
     stuckCount: 0,
     locked: false,
     aiOriginal: null,

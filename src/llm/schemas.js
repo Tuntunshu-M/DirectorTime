@@ -92,6 +92,11 @@ export function isValidBeats(data) {
   return data.beats.every((beat) => typeof beat === 'string' && beat.trim());
 }
 
+/** 主动性：{ initiative: "..." }（T-417；允许空字符串 = 没侧写、不生成） */
+export function isValidInitiative(data) {
+  return Boolean(data) && typeof data === 'object' && typeof data.initiative === 'string';
+}
+
 export function isValidJudgement(data) {
   if (!data || typeof data !== 'object') return false;
   if (!VALID_STATUSES.includes(data.status)) return false;
@@ -109,7 +114,7 @@ export function isValidStance(data) {
 /**
  * 统一入口：解析 + 校验。任何一步失败都返回 null。
  * @param {string} text 模型返回的原始文本
- * @param {'outline'|'stages'|'beats'|'profile'|'consistency'|'judgement'|'stance'} kind
+ * @param {'outline'|'stages'|'beats'|'profile'|'consistency'|'judgement'|'stance'|'initiative'} kind
  */
 export function parseDirectorResponse(text, kind) {
   const data = extractJson(text);
@@ -120,6 +125,7 @@ export function parseDirectorResponse(text, kind) {
   if (kind === 'beats') return isValidBeats(data) ? data : null;
   if (kind === 'profile') return isValidProfile(data) ? data : null;
   if (kind === 'consistency') return isValidConsistency(data) ? data : null;
+  if (kind === 'initiative') return isValidInitiative(data) ? data : null;
   if (kind === 'judgement') return isValidJudgement(data) ? data : null;
   if (kind === 'stance') return isValidStance(data) ? data : null;
 

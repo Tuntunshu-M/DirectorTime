@@ -89,11 +89,18 @@ await check('用户指定主目标时 objectiveSource=user（T-416）', async ()
   assert.equal(result.outline.objectiveSource, 'user');
 });
 
+await check('模型给的 initiative 必须原样保留（T-417）', () => {
+  const stages = normalizeStages([{
+    goal: 'a', initiative: '主动翻出旧相册', checkpoint: { criteria: 'x', antiCriteria: 'y' },
+  }]);
+  assert.equal(stages[0].initiative, '主动翻出旧相册', '不能被占位覆盖');
+});
+
 await check('新阶段带 pacing / turnCount / initiative 占位（T-416）', () => {
   const stages = normalizeStages([{ goal: 'a', checkpoint: { criteria: 'x', antiCriteria: 'y' } }]);
   assert.equal(stages[0].pacing, null, 'null 表示用全局 pacing');
   assert.equal(stages[0].turnCount, 0);
-  assert.equal(stages[0].initiative, '', 'T-417 才填');
+  assert.equal(stages[0].initiative, '', '没给就留空（T-417）');
   assert.equal(stages[0].will, null, 'null 表示用全局 will（T-405）');
 });
 

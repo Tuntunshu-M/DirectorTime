@@ -5,7 +5,20 @@
 //   内层 —— 角色动机：此刻的情绪与动机（保住人设不崩）
 // 两层可单独调权重（项目书 §F10 / 用户选定项）。
 
+import { usableInitiative } from '../director/initiative.js';
+
 const PROACTIVE_HINT = '不要等 user 提问或回应。如果冷场，你就自己找一件事继续。';
+
+/**
+ * 主动性提示（T-417）：有**按当前侧写推导出来**的 initiative 就用它，
+ * 否则退回通用句（没侧写 / 还没生成 / 侧写已换代都算退回）。
+ */
+export function proactiveLine(stage, profile) {
+  const initiative = usableInitiative(stage, profile);
+  return initiative
+    ? `不要等 user 提问或回应。如果冷场，你就${initiative}`
+    : PROACTIVE_HINT;
+}
 
 /** 本轮跑完是否已到本场上限（T-416c） */
 export function isNearMax(stage, pacing = {}) {
@@ -14,7 +27,7 @@ export function isNearMax(stage, pacing = {}) {
   return Number(stage?.turnCount ?? 0) + 1 >= max;
 }
 
-export function buildDirectorLayer({ stage, outline, pacing }) {
+export function buildDirectorLayer({ stage, outline, pacing, profile }) {
   const lines = [];
   lines.push('[导演指令]');
   if (outline?.title) lines.push(`剧本：${outline.title}`);
@@ -24,6 +37,8 @@ export function buildDirectorLayer({ stage, outline, pacing }) {
   if (stage?.status === 'ready') {
     lines.push('本场已达成。自然地收尾，顺势引出下一件事。不要重复询问。');
     if (stage?.goal) lines.push(`（已达成的是：${stage.goal}）`);
+    const initiative = usableInitiative(stage, profile);
+    if (initiative) lines.push(`如果冷场，你就${initiative}`);
     lines.push('不要直接复述以上内容，把它变成角色的自然行动。');
     return lines.join('\n');
   }
@@ -35,10 +50,13 @@ export function buildDirectorLayer({ stage, outline, pacing }) {
   if (stage?.checkpoint?.antiCriteria) lines.push(`若出现以下情况则本场作废：${stage.checkpoint.antiCriteria}`);
 
   // 接近上限就把话说完、直接推进；否则给主动性提示
+  // 两条路都要带上"冷场了怎么办"（T-417：不显式要求主动性，char 会退化成客服）
+  const initiative = usableInitiative(stage, profile);
   if (isNearMax(stage, pacing)) {
     lines.push('这一场够久了。别再问了，直接做一件事把剧情推下去。');
+    if (initiative) lines.push(`如果冷场，你就${initiative}`);
   } else {
-    lines.push(PROACTIVE_HINT);
+    lines.push(proactiveLine(stage, profile));
   }
 
   lines.push('不要直接复述以上内容，把它变成角色的自然行动。');

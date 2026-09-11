@@ -17,6 +17,7 @@
 import { buildInstruction } from '../inject/instruction.js';
 import { resolvePacing } from './checkpoint.js';
 import { resolve, shouldRunCheckpoint } from './will.js';
+import { needsInitiative, profileStamp } from './initiative.js';
 
 const SKIP_TYPES = ['regenerate', 'swipe', 'impersonate', 'quiet'];
 
@@ -30,6 +31,7 @@ export function createReviewService({
   beats,
   topUp,
   will,
+  initiative,
   getProfile,
   stages,
   registry,
@@ -55,6 +57,27 @@ export function createReviewService({
   function clearInjection() {
     registry?.clear?.();
     return '';
+  }
+
+  // T-417：记下"这一版侧写已经试过重生成"，失败不每轮重试
+  let initiativeTriedFor = '';
+
+  /**
+   * initiative 跟侧写对不上就重生成一次（T-417）。
+   * 失败只记日志：本轮退回通用主动性提示，不注入半成品（G5）。
+   */
+  async function refreshInitiative(stage) {
+    if (!initiative?.refresh || !stage) return null;
+    const profile = getProfile?.() ?? null;
+    if (!needsInitiative(stage, profile)) return null;
+
+    const stamp = profileStamp(profile);
+    if (!stamp || initiativeTriedFor === stamp) return null;
+    initiativeTriedFor = stamp;
+
+    const result = await initiative.refresh({ stage, profile });
+    if (!result?.ok) console.warn('[导演时间] 主动性重生成失败：', result?.error ?? '未知');
+    return result;
   }
 
   /**
@@ -195,6 +218,9 @@ export function createReviewService({
       if ((result.action === 'advance' || result.action === 'force') && topUp) {
         await topUp();
       }
+
+      // 侧写换过 → 当前这场（推进后可能是新的一场）的 initiative 过期，先补上再注入（T-417）
+      await refreshInitiative(stages?.getActive?.());
 
       const injected = result.action === 'follow' ? clearInjection() : syncInjection();
       store?.update?.((draft) => ({

@@ -11,6 +11,7 @@ import { createStageService } from './director/stage.js';
 import { createOutlineService } from './director/outline.js';
 import { createBeatService } from './director/beats.js';
 import { createWillService } from './director/will.js';
+import { createInitiativeService, stampInitiative } from './director/initiative.js';
 import { createCheckpointService } from './director/checkpoint.js';
 import { createReviewService } from './director/review.js';
 import { createPromptRegistry } from './inject/prompt-registry.js';
@@ -81,9 +82,15 @@ export function bootstrap({ ctx, store } = {}) {
     client,
     getConnection: () => settings().connection ?? {},
   });
+  const initiative = createInitiativeService({
+    client,
+    getConnection: () => settings().connection ?? {},
+    stages,
+  });
   const review = createReviewService({
     checkpoint,
     will,
+    initiative,
     beats,
     topUp: topUpStages,
     getProfile: () => profile.read(),
@@ -209,7 +216,8 @@ export function bootstrap({ ctx, store } = {}) {
       store.update((draft) => ({
         ...draft,
         outline: result.outline,
-        stages: result.stages,
+        // T-417：盖章记下这批 initiative 是按哪一版侧写推出来的
+        stages: stampInitiative(result.stages, profile.read()),
         activeStageId: result.stages[0]?.id ?? null,
       }), { label: '生成剧本' });
       review.syncInjection();
@@ -301,9 +309,11 @@ export function bootstrap({ ctx, store } = {}) {
 
     // 一致性自检（默认开，T-402 §六）
     const result = await ensureConsistent(generated, () => outline.extend(vars));
-    stages.append(result.stages);
+    // T-417：同样盖章
+    const fresh = stampInitiative(result.stages, profile.read());
+    stages.append(fresh);
     // 极端情况：剧本只有一场、演完才续写 —— 补位激活第一条，别让导演停摆
-    if (!store.get().activeStageId) stages.activate(result.stages[0].id);
+    if (!store.get().activeStageId) stages.activate(fresh[0].id);
     console.log(`[导演时间] 已续写 ${result.stages.length} 个阶段`);
     return result;
   }
@@ -412,7 +422,7 @@ export function bootstrap({ ctx, store } = {}) {
 
   const api = {
     client, stages, outline, beats, lorebook, profile, profileApi,
-    registry, checkpoint, will, review, debug,
+    registry, checkpoint, will, initiative, review, debug,
     generateScript, regenerateScript, topUpStages, resetScript, setEnabled,
     collectWorldSources, worldText, profileText,
     settingsPanel: settingsPanelApi, panel, unmountMenu,

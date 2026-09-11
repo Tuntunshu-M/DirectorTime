@@ -427,6 +427,75 @@ await check('判据 11：强制爱关闭时 reject 照常让步（行为不变�
   assert.equal(service.getLastTurn().stance.forced, false);
 });
 
+console.log('char 主动性（T-417）');
+
+await check('侧写换代 → 重生成一次，且立刻用进这一轮的注入', async () => {
+  const env = makeEnv();
+  const list = seed(env);
+  env.stages.update(list[0].id, { initiative: '主动翻出旧相册', initiativeFrom: '1' });
+  const profile = { fields: { coreDesire: '看海' }, updatedAt: 2 };
+  let refreshed = 0;
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'hold', reason: 'x' }) },
+    initiative: {
+      refresh: async ({ stage }) => {
+        refreshed += 1;
+        env.stages.update(stage.id, { initiative: '主动提起航海', initiativeFrom: '2' });
+        return { ok: true, initiative: '主动提起航海' };
+      },
+    },
+    getProfile: () => profile,
+    stages: env.stages, registry: env.registry, store: env.store,
+    getSettings: () => ({}),
+  });
+
+  const r = await service.run({ userMessage: '嗯' });
+  assert.equal(refreshed, 1, '侧写换代 → 重生成一次');
+  assert.ok(r.injected.includes('如果冷场，你就主动提起航海'), '这一轮的注入就用新的 initiative');
+  assert.equal(r.injected.includes('主动翻出旧相册'), false, '旧的不该再出现');
+
+  await service.run({ userMessage: '嗯' });
+  assert.equal(refreshed, 1, '同一版侧写只重生成一次');
+});
+
+await check('重生成失败 → 本轮退回通用提示，且不每轮重打 API', async () => {
+  const env = makeEnv();
+  const list = seed(env);
+  env.stages.update(list[0].id, { initiative: '旧的', initiativeFrom: '1' });
+  const profile = { fields: { coreDesire: '看海' }, updatedAt: 2 };
+  let calls = 0;
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'hold', reason: 'x' }) },
+    initiative: { refresh: async () => { calls += 1; return { ok: false, error: '超时' }; } },
+    getProfile: () => profile,
+    stages: env.stages, registry: env.registry, store: env.store,
+    getSettings: () => ({}),
+  });
+
+  const r1 = await service.run({ userMessage: 'a' });
+  assert.equal(r1.injected.includes('旧的'), false, '过期内容绝不注入');
+  assert.ok(r1.injected.includes('如果冷场，你就自己找一件事继续'), '退回通用提示');
+
+  await service.run({ userMessage: 'b' });
+  assert.equal(calls, 1, '同一版侧写只试一次，失败不每轮重打 API');
+});
+
+await check('没有 side profile 时不触发生成（不凭空造人设）', async () => {
+  const env = makeEnv();
+  const list = seed(env);
+  env.stages.update(list[0].id, { initiative: '', initiativeFrom: '' });
+  let calls = 0;
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'hold', reason: 'x' }) },
+    initiative: { refresh: async () => { calls += 1; return { ok: true }; } },
+    getProfile: () => null,
+    stages: env.stages, registry: env.registry, store: env.store,
+    getSettings: () => ({}),
+  });
+  await service.run({ userMessage: 'a' });
+  assert.equal(calls, 0);
+});
+
 await check('没有 will 服务时退化为原来的推进点路径（向后兼容）', async () => {
   const env = makeEnv();
   seed(env);

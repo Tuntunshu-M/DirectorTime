@@ -27,7 +27,8 @@ const OUTLINE_SHAPE = `{
         "criteria": "达成条件（意图级、可观测）",
         "antiCriteria": "明确的反意图（必填）"
       },
-      "beats": ["步骤一", "步骤二"]
+      "beats": ["步骤一", "步骤二"],
+      "initiative": "如果冷场，这个角色会主动做的一件事"
     }
   ]
 }`;
@@ -46,6 +47,8 @@ ${OUTLINE_SHAPE}
 - 3 到 5 个阶段，每个阶段只推进一件事
 - goal 一句话说清这一场要达成什么
 - beats 是角色的具体走位，2 到 4 条
+- initiative 必须**由「人物侧写」推导**：这一场如果冷场，这个角色会主动做的一件具体事
+  （一句话、能演、符合他的人设）。**侧写为空就填空字符串**，不要凭角色名瞎编
 
 推进点的写法（最关键，写错会导致剧情卡死）：
 - criteria 必须是**可观测行为**，禁止心理或状态描写
@@ -136,9 +139,10 @@ user 说：{{userMessage}}
 输出要求：
 - 只输出 JSON，不要解释，不要 markdown 代码块标记
 - 严格遵循这个结构：
-{ "stages": [ { "title": "阶段名", "goal": "这一场要达成什么", "activity": "角色主要活动", "checkpoint": { "criteria": "达成条件（意图级、可观测）", "antiCriteria": "明确的反意图（必填）" }, "beats": ["步骤一", "步骤二"] } ] }
+{ "stages": [ { "title": "阶段名", "goal": "这一场要达成什么", "activity": "角色主要活动", "checkpoint": { "criteria": "达成条件（意图级、可观测）", "antiCriteria": "明确的反意图（必填）" }, "beats": ["步骤一", "步骤二"], "initiative": "如果冷场，这个角色会主动做的一件事" } ] }
 - 只写 {{count}} 个阶段，紧接着已经发生过的剧情往下走，不要重复已有阶段
-- 一个阶段只推进一件事；criteria 写意图级，不要写死具体名词；antiCriteria 必填`,
+- 一个阶段只推进一件事；criteria 写意图级，不要写死具体名词；antiCriteria 必填
+- initiative 由「人物侧写」推导（同 GEN_OUTLINE）：侧写为空就填空字符串，不要瞎编`,
     user: `剧本：{{title}}
 前提：{{premise}}
 当前主目标：{{objective}}
@@ -153,6 +157,26 @@ user 说：{{userMessage}}
 {{context}}
 
 续写的 {{count}} 个阶段必须继续服务于「当前主目标」，不要另起炉灶。`,
+  },
+
+  GEN_INITIATIVE: {
+    system: `你是电影导演。这一场戏里如果 user 不说话、场面冷下来，角色要自己找一件事做 ——
+不能变成一问一答的客服。
+
+输出要求：
+- 只输出 JSON，不要解释，不要 markdown 代码块标记
+- 结构：{ "initiative": "一句话，角色的具体主动行为" }
+- **必须从这个角色的人物侧写推导**：他会主动做什么，取决于他的欲望、恐惧、性格、说话方式与禁忌
+- 写成一个能演的动作，不写心理描写，也不要与本场走位重复
+- 侧写为空 → 填空字符串，不要凭角色名瞎编`,
+    user: `人物侧写：
+{{profile}}
+
+本场目标：{{goal}}
+角色主要活动：{{activity}}
+本场走位：{{beats}}
+
+这一场如果冷场了，这个角色会主动做什么？`,
   },
 
   GEN_PROFILE: {
@@ -215,7 +239,8 @@ user 说：{{userMessage}}
 
 /**
  * 组装成 messages 数组，交给 client.request。
- * @param {'GEN_OUTLINE'|'JUDGE_CHECKPOINT'|'JUDGE_STANCE'} name
+ * @param {'GEN_OUTLINE'|'EXTEND_OUTLINE'|'GEN_PROFILE'|'GEN_INITIATIVE'
+ *         |'JUDGE_CHECKPOINT'|'JUDGE_STANCE'|'REWRITE_BEATS'|'CHECK_CONSISTENCY'} name
  */
 export function buildMessages(name, vars = {}) {
   const template = PROMPTS[name];
