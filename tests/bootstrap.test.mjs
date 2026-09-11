@@ -1,7 +1,7 @@
 // 装配层测试：只测可纯函数验证的部分（轮次消息抽取）
 
 import assert from 'node:assert/strict';
-import { lastTurnMessages } from '../src/bootstrap.js';
+import { lastTurnMessages, normalizeMaxRounds, shouldResetScript } from '../src/bootstrap.js';
 
 let passed = 0;
 function check(name, fn) {
@@ -51,6 +51,25 @@ check('mes 缺失时不崩', () => {
   const r = lastTurnMessages([{ is_user: true }, { is_user: false }]);
   assert.equal(r.userMessage, '');
   assert.equal(r.charMessage, '');
+});
+
+console.log('剧本轮数上限');
+
+check('maxRounds 非法值回落到 15', () => {
+  assert.equal(normalizeMaxRounds(undefined), 15);
+  assert.equal(normalizeMaxRounds(0), 15);
+  assert.equal(normalizeMaxRounds(-3), 15);
+  assert.equal(normalizeMaxRounds('abc'), 15);
+  assert.equal(normalizeMaxRounds(3.7), 3);
+  assert.equal(normalizeMaxRounds(5), 5);
+});
+
+check('超过上限才重置：15 轮不重置，16 轮重置', () => {
+  assert.equal(shouldResetScript(15, 15), false);
+  assert.equal(shouldResetScript(16, 15), true);
+  assert.equal(shouldResetScript(1, 1), false);
+  assert.equal(shouldResetScript(2, 1), true);
+  assert.equal(shouldResetScript(5, undefined), false);
 });
 
 console.log(`\n通过 ${passed} 项`);

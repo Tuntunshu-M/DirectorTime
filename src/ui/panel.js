@@ -28,6 +28,7 @@ export function createMainPanel({
   onTest,
   onSave,
   onGenerate,
+  onExtend,
   getEnabled,
   onToggleEnabled,
   onOpenDebug,
@@ -108,21 +109,26 @@ export function createMainPanel({
       ${row('累计', `调用 ${status.cost.callCount} 次`)}
       ${tip}
       <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
-        ${enabled && noStage ? '<button id="dt-panel-generate" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">生成剧本</button>' : ''}
+        ${enabled ? `<button id="dt-panel-generate" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">${noStage ? '生成剧本' : '重新生成剧本'}</button>` : ''}
+        ${enabled && !noStage ? '<button id="dt-panel-extend" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">重新续写</button>' : ''}
         <button id="dt-panel-debug" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">打开调试面板</button>
       </div>
     `;
 
-    body.querySelector('#dt-panel-generate')?.addEventListener('click', async (event) => {
-      const button = event.currentTarget;
-      button.disabled = true;
-      button.textContent = '生成中…';
-      try {
-        await onGenerate?.();
-      } finally {
-        render();
-      }
-    });
+    function wireBusy(selector, action) {
+      body.querySelector(selector)?.addEventListener('click', async (event) => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        button.textContent = '处理中…';
+        try {
+          await action?.();
+        } finally {
+          render();
+        }
+      });
+    }
+    wireBusy('#dt-panel-generate', onGenerate);
+    wireBusy('#dt-panel-extend', onExtend);
     body.querySelector('#dt-panel-debug')?.addEventListener('click', () => onOpenDebug?.());
   }
 

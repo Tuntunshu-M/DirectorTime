@@ -5,7 +5,7 @@ import { createSillyTavernContext } from '../src/core/context.js';
 import { createStateStore, assertInvariants } from '../src/core/state.js';
 import { migrate } from '../src/core/migrations.js';
 import { createEventBus } from '../src/core/event-bus.js';
-import { createDefaultState, SCHEMA_VERSION } from '../src/core/default-state.js';
+import { createDefaultState, createDefaultSettings, SCHEMA_VERSION } from '../src/core/default-state.js';
 
 let passed = 0;
 function check(name, fn) {
@@ -62,6 +62,11 @@ check('migrate(undefined) 返回默认状态且带 schemaVersion', () => {
   const state = migrate(undefined);
   assert.equal(state.schemaVersion, SCHEMA_VERSION);
   assert.deepEqual(state.stages, []);
+});
+
+check('默认运行时有 rounds 计数、默认设置轮数上限 15', () => {
+  assert.equal(createDefaultState().runtime.rounds, 0);
+  assert.equal(createDefaultSettings().maxRounds, 15);
 });
 
 check('旧数据缺字段时补齐，不崩', () => {

@@ -26,6 +26,8 @@ export function createDefaultRuntime() {
     promptRegistered: false,
     lastReviewAt: 0,
     purgeCount: 0,
+    // 本场戏已经跑了多少轮（每完成一次复盘 +1；超过上限就清空剧本）
+    rounds: 0,
   };
 }
 
@@ -56,6 +58,8 @@ export function createDefaultSettings() {
     historyLimit: 200,
     stuckThreshold: 3,
     confidenceThreshold: 0.7,
+    // 跑满这么多轮就自动清空剧本（可在配置里改）
+    maxRounds: 15,
     // 导演 API：独立模式自己填，主连接模式留空由酒馆提供
     connection: { mode: 'independent', endpoint: '', apiKey: '', model: '' },
   };

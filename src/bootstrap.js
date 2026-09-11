@@ -37,6 +37,17 @@ export function lastTurnMessages(messages = []) {
   };
 }
 
+/** 轮数上限的取整兜底：非法值回落到 defaultLimit */
+export function normalizeMaxRounds(value, defaultLimit = 15) {
+  const num = Number(value);
+  return Number.isFinite(num) && num > 0 ? Math.floor(num) : defaultLimit;
+}
+
+/** 是否已超过轮数上限（超过就清空剧本） */
+export function shouldResetScript(rounds, maxRounds, defaultLimit = 15) {
+  return Number(rounds) > normalizeMaxRounds(maxRounds, defaultLimit);
+}
+
 export function bootstrap({ ctx, store } = {}) {
   const settings = () => store.getSettings();
 
@@ -145,16 +156,56 @@ export function bootstrap({ ctx, store } = {}) {
     }
   }
 
+  /** 「重新生成剧本」：已有剧本时先确认，再整份重写 */
+  async function regenerateScript() {
+    if (store.get().stages?.length && ctx.capabilities?.confirmation) {
+      const ok = await ctx.showConfirm?.('重新生成会丢弃当前剧本。继续？');
+      if (!ok) return { ok: false, error: '已取消' };
+    }
+    return generateScript({});
+  }
+
   // 待演阶段的存货目标：少于这个数就续写，保证"演完一场还有下一场"
   const TARGET_PENDING = 2;
 
-  /** 待演阶段不够就续写（T-209）。失败只记日志、不动剧本（G5） */
-  async function topUpStages() {
+  /** 本场戏已经跑了多少轮（每完成一次复盘 +1） */
+  function countRound() {
+    let rounds = 0;
+    store.update((draft) => {
+      rounds = (draft.runtime?.rounds ?? 0) + 1;
+      return { ...draft, runtime: { ...draft.runtime, rounds } };
+    }, { track: false });
+    return rounds;
+  }
+
+  /** 清空剧本与历史（保留设置、花费与偏好），并清空注入 */
+  function resetScript(notice = '导演时间：剧本已清空') {
+    store.update((draft) => ({
+      ...draft,
+      outline: null,
+      stages: [],
+      activeStageId: null,
+      history: [],
+      runtime: { ...draft.runtime, rounds: 0, promptRegistered: false },
+    }), { track: false });
+    registry.clear();
+    ctx.showSystemMessage?.(notice);
+    return store.get();
+  }
+
+  /**
+   * 待演阶段不够就续写（T-209）。失败只记日志、不动剧本（G5）。
+   * @param {{ force?: boolean }} options force=true 时无视存货直接续写（面板「重新续写」）
+   */
+  async function topUpStages({ force = false } = {}) {
     const state = store.get();
     const list = state.stages ?? [];
     const pending = list.filter((stage) => stage.status === 'pending').length;
-    if (pending >= TARGET_PENDING) return null;
+    if (!force && pending >= TARGET_PENDING) return null;
     if (!state.outline || !settings().connection?.endpoint) return null;
+
+    const need = force ? TARGET_PENDING : TARGET_PENDING - pending;
+    if (need <= 0) return null;
 
     const marks = { done: '已演', active: '正在演', pending: '待演' };
     const history = list
@@ -162,7 +213,7 @@ export function bootstrap({ ctx, store } = {}) {
       .join('\n');
 
     const result = await outline.extend({
-      count: TARGET_PENDING - pending,
+      count: need,
       startIndex: list.length + 1,
       outline: state.outline,
       tone: toneText(),
@@ -214,6 +265,11 @@ export function bootstrap({ ctx, store } = {}) {
       // 把模型原始返回也喂给 Debug —— 云酒馆看不到控制台，只能靠面板
       const turn = review.getLastTurn();
       if (turn) debug.setLast({ ...turn, raw: result?.raw ?? turn.judgement ? JSON.stringify(turn.judgement) : '' });
+
+      // 跑过上限就清空重来，避免剧本与历史无限膨胀（上限可在配置里改）
+      if (!result?.skipped && shouldResetScript(countRound(), settings().maxRounds)) {
+        resetScript(`导演时间：已超过 ${normalizeMaxRounds(settings().maxRounds)} 轮，剧本已清空，点「生成剧本」开新戏`);
+      }
     } catch (error) {
       console.error('[导演时间] 复盘失败', error);
     }
@@ -241,7 +297,8 @@ export function bootstrap({ ctx, store } = {}) {
     getLast: () => review.getLastTurn(),
     onTest: () => client.testConnection(settings().connection ?? {}),
     onSave: () => review.syncInjection(),
-    onGenerate: () => generateScript({}),
+    onGenerate: () => regenerateScript(),
+    onExtend: () => topUpStages({ force: true }),
     getEnabled: () => Boolean(settings().enabled),
     onToggleEnabled: (value) => setEnabled(value),
     onOpenDebug: () => { openOnly('debug'); debug.show(); },
@@ -257,7 +314,8 @@ export function bootstrap({ ctx, store } = {}) {
   };
 
   const api = {
-    client, stages, outline, beats, registry, checkpoint, review, debug, generateScript, setEnabled,
+    client, stages, outline, beats, registry, checkpoint, review, debug,
+    generateScript, regenerateScript, topUpStages, resetScript, setEnabled,
     settingsPanel: settingsPanelApi, panel, unmountMenu,
   };
 

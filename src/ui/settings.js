@@ -42,6 +42,10 @@ export function renderSettingsForm({ container, store, onTest, onSave, onClose }
       <input type="checkbox" id="dt-inject" ${s.injectEnabled ? 'checked' : ''}> 剧情注入
     </label>
 
+    <div style="margin-top:10px">剧本轮数上限</div>
+    <input id="dt-max-rounds" type="number" min="1" style="${fieldStyle()}" value="${s.maxRounds ?? 15}">
+    <div style="font-size:11px;opacity:.7">跑满这么多轮就自动清空剧本，重新开新戏</div>
+
     <div style="margin-top:10px">端点</div>
     <input id="dt-endpoint" style="${fieldStyle()}" placeholder="https://你的站子/v1" value="${c.endpoint ?? ''}">
     <div>密钥</div>
@@ -63,6 +67,7 @@ export function renderSettingsForm({ container, store, onTest, onSave, onClose }
     store.saveSettings({
       enabled: node.querySelector('#dt-enabled').checked,
       injectEnabled: node.querySelector('#dt-inject').checked,
+      maxRounds: Math.max(1, Number(node.querySelector('#dt-max-rounds').value) || 15),
       connection: {
         mode: 'independent',
         endpoint: node.querySelector('#dt-endpoint').value.trim(),
