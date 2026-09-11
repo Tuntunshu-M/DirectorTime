@@ -40,6 +40,96 @@ function normalizeEntries(entries) {
   }));
 }
 
+// ---------- T-418 酒馆预设（只读、探测式）----------
+//
+// 纪律：**不硬编码任何 API 形状**。不同酒馆版本暴露的预设接口名字不一样，
+// 所以这里只做两件事：① 拿到 presetManager（拿不到就返回 null）② 在它身上找
+// "名字里带 preset 且带 list/names" 的方法，试出来为止。试不出来就返回空，
+// 绝不编一份假的预设列表（清单 T-418：「探测不到就停下报告」）。
+
+function findPresetManager(host) {
+  if (!hasFunction(host?.getPresetManager)) return null;
+  try {
+    const manager = host.getPresetManager();
+    return manager && typeof manager === 'object' ? manager : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 管理器上所有方法名（含原型链），诊断与探测共用 */
+function presetManagerMethods(manager) {
+  if (!manager) return [];
+  const names = new Set([
+    ...Object.keys(manager ?? {}),
+    ...Object.getOwnPropertyNames(Object.getPrototypeOf(manager) ?? {}),
+  ]);
+  return [...names].filter((name) => hasFunction(manager[name])).sort();
+}
+
+/** 把各种可能的形状收成名字数组 */
+function normalizePresetNames(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => (typeof item === 'string' ? item : item?.name ?? item?.id ?? ''))
+      .filter(Boolean);
+  }
+  if (typeof value === 'object') {
+    if (Array.isArray(value.presets)) return normalizePresetNames(value.presets);
+    if (Array.isArray(value.preset_names)) return normalizePresetNames(value.preset_names);
+    if (Array.isArray(value.names)) return normalizePresetNames(value.names);
+  }
+  return [];
+}
+
+function probePresetNames(manager) {
+  if (!manager) return [];
+  const candidates = presetManagerMethods(manager)
+    .filter((name) => /preset/i.test(name) && /(list|names|all)/i.test(name));
+  for (const method of candidates) {
+    try {
+      const found = normalizePresetNames(manager[method]());
+      if (found.length) return found;
+    } catch {
+      /* 这个方法不是干这个的，试下一个 */
+    }
+  }
+  return [];
+}
+
+/**
+ * 按名字取预设对象。
+ * 候选排序很讲究：**先 "byName"，再 "get"，但排除 "list/names/all"** ——
+ * 否则 getPresetList 也会被当成"按名字取"，传个名字进去还会回一份列表。
+ */
+function probePresetByName(manager, name) {
+  if (!manager || !name) return null;
+
+  const withPreset = presetManagerMethods(manager).filter((method) => /preset/i.test(method));
+  const candidates = [
+    ...withPreset.filter((method) => /(byname|by_name)/i.test(method)),
+    ...withPreset.filter((method) => (
+      !/(byname|by_name)/i.test(method)
+      && /(get|content|prompt)/i.test(method)
+      && !/(list|names|all)/i.test(method)
+    )),
+  ];
+
+  for (const method of candidates) {
+    try {
+      const value = manager[method](name);
+      // 预设应该是对象（或整块文本）；数组说明这是"列预设"的方法，不是我们要的
+      if (typeof value === 'string' ? value.trim() : (value && typeof value === 'object' && !Array.isArray(value))) {
+        return value;
+      }
+    } catch {
+      /* 试下一个 */
+    }
+  }
+  return null;
+}
+
 function normalizeBook(name, book) {
   return {
     name,
@@ -71,12 +161,46 @@ export function createSillyTavernContext(contextProvider = defaultProvider) {
         confirmation: hasFunction(host.Popup?.show?.confirm) || hasFunction(host.popup?.confirm),
         events: hasFunction(host.eventSource?.on),
         worldInfo: hasFunction(host.loadWorldInfo) || hasFunction(host.getWorldInfoNames) || Array.isArray(host.world_names),
+        // T-418：只声明"有取预设管理器的方法"，能不能真列出预设由 probe 的实测结果说话
+        presets: hasFunction(host.getPresetManager),
         // 主连接模式才需要；独立 API 模式禁用（禁则 G1）
         rawGeneration: hasFunction(host.generateRaw),
       };
     },
 
     getContext: getHost,
+
+    // ---------- 酒馆预设（T-418，只读）----------
+
+    /** 实测这个酒馆把预设暴露成什么样（诊断用，"探测不到"时靠它给证据） */
+    probePresetInterface() {
+      const host = getHost();
+      const manager = findPresetManager(host);
+      if (!manager) {
+        return {
+          hasGetter: hasFunction(host.getPresetManager),
+          hasManager: false,
+          methods: [],
+          names: [],
+        };
+      }
+      return {
+        hasGetter: true,
+        hasManager: true,
+        methods: presetManagerMethods(manager),
+        names: probePresetNames(manager),
+      };
+    },
+
+    /** 列出预设名；拿不到返回空数组（绝不抛、绝不编） */
+    listPresets() {
+      return probePresetNames(findPresetManager(getHost()));
+    },
+
+    /** 按名字读一个预设对象；读不到返回 null */
+    readPreset(name) {
+      return probePresetByName(findPresetManager(getHost()), name);
+    },
 
     // ---------- 基础读取 ----------
     getMessages() {

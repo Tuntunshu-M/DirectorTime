@@ -14,6 +14,7 @@ import { createWillService } from './director/will.js';
 import { createInitiativeService, stampInitiative } from './director/initiative.js';
 import { resolveRules } from './director/rules.js';
 import { createBreakFilterService, normalizeBreakFilter } from './llm/break-filter.js';
+import { createPresetService } from './inject/preset.js';
 import { createSpeculationService } from './director/speculate.js';
 import { carryOver, foreshadowText, openForeshadows, resolveRecalled } from './director/foreshadow.js';
 import { hardLimitText } from './director/hard-limits.js';
@@ -66,11 +67,18 @@ export function shouldResetScript(rounds, maxRounds, defaultLimit = 15) {
 export function bootstrap({ ctx, store } = {}) {
   const settings = () => store.getSettings();
 
+  // T-418 破限预设：选一个酒馆预设当破限词（只读）
+  const presets = createPresetService({
+    ctx,
+    getSelected: () => settings().preset?.name,
+    setSelected: (name) => store.saveSettings({ preset: { ...(settings().preset ?? {}), name } }),
+  });
+
   // T-411 破限词：只影响导演 API 请求（client.js 的 getBreakText 是唯一出口）
-  // 「跟随酒馆预设」需要一个预设读取接口，那个由 T-418 负责探测与封装；未接上前预设部分为空
+  // 「跟随酒馆预设」的内容来自 T-418 选中的预设；没选 → 空串（不注入任何额外内容）
   const breakFilter = createBreakFilterService({
     getFilter: () => settings().breakFilter,
-    getPresetText: () => '',
+    getPresetText: () => presets.text(),
   });
 
   const client = createDirectorClient({ getBreakText: () => breakFilter.text() });
@@ -154,6 +162,11 @@ export function bootstrap({ ctx, store } = {}) {
     getCapabilities: () => ctx.capabilities,
     getLastTurn: () => review.getLastTurn(),
     getLastRequest: () => lastDirectorRequest,
+    // T-418：Debug 里能看到选中的预设确实生效（判据 2）
+    getBreakStatus: () => ({
+      mode: normalizeBreakFilter(settings().breakFilter).mode,
+      preset: presets.status(),
+    }),
   });
 
   // ---------- 剧本生成 ----------
@@ -590,6 +603,8 @@ export function bootstrap({ ctx, store } = {}) {
     store,
     registry,
     profile: profileApi,
+    // T-418：配置页的「预设」折叠区（只读酒馆预设）
+    presets,
     getCapabilities: () => ctx.capabilities,
     getLast: () => review.getLastTurn(),
     onTest: () => client.testConnection(settings().connection ?? {}),
@@ -617,6 +632,16 @@ export function bootstrap({ ctx, store } = {}) {
   const api = {
     client, stages, outline, beats, lorebook, profile, profileApi,
     registry, checkpoint, will, initiative, rules: rulesApi, speculate, review, debug,
+    // T-418：破限预设（只读酒馆预设）—— UI 未做，先用控制台
+    presets: {
+      list: () => presets.list(),
+      select: (name) => presets.select(name),
+      clear: () => presets.clear(),
+      text: () => presets.text(),
+      status: () => presets.status(),
+      // 探测不到酒馆预设接口时，把这个结果贴出来（不猜、不造）
+      probe: () => presets.probe(),
+    },
     // T-415：剧情占比（三条线联动配平，和恒为 100）—— UI 未做，先用控制台
     tone: {
       get: () => normalizeTone(store.get().tone),

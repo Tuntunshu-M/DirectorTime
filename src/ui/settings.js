@@ -56,7 +56,36 @@ function profileSection(profile) {
 }
 
 /** 把配置表单渲染进指定容器；传了 onClose 才显示右上角关闭按钮 */
-export function renderSettingsForm({ container, store, onTest, onSave, onClose, profile } = {}) {
+/** T-418：预设下拉的选项（只读酒馆预设，空列表就不给下拉） */
+function presetOptions(list, current) {
+  const head = '<option value="">（不选）</option>';
+  return head + (list ?? [])
+    .map((name) => `<option value="${escapeAttr(name)}"${name === current ? ' selected' : ''}>${escapeAttr(name)}</option>`)
+    .join('');
+}
+
+/** T-418：破限预设折叠区。列表读不到就显示"无可用预设"，不报错、不伪造 */
+function presetSection(presets) {
+  const list = presets?.list?.() ?? [];
+  const status = presets?.status?.() ?? { name: '', length: 0 };
+  const message = status.name
+    ? `当前：${status.name}（${status.active ? `${status.length} 字` : '读不到内容，未生效'}）`
+    : '未选：不注入任何破限内容';
+
+  return `
+    <details style="margin-top:12px">
+      <summary>预设（破限提示词，只读酒馆预设）</summary>
+      <div style="margin:8px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        ${list.length
+    ? `<select id="dt-preset-select" style="${fieldStyle()}">${presetOptions(list, status.name)}</select>`
+    : '<span id="dt-preset-empty" style="opacity:.75">无可用预设</span>'}
+        <button id="dt-preset-refresh" type="button" style="font:inherit;padding:5px 12px">刷新列表</button>
+      </div>
+      <div id="dt-preset-msg" style="margin-top:6px;opacity:.75">${message}</div>
+    </details>`;
+}
+
+export function renderSettingsForm({ container, store, onTest, onSave, onClose, profile, presets } = {}) {
   const node = container;
   const s = store.getSettings();
   const c = s.connection ?? {};
@@ -93,6 +122,7 @@ export function renderSettingsForm({ container, store, onTest, onSave, onClose, 
     </div>
     <div id="dt-msg" style="margin-top:8px;opacity:.75">—</div>
     ${profile ? profileSection(profile) : ''}
+${presets ? presetSection(presets) : ''}
   `;
 
   node.querySelector('#dt-settings-close')?.addEventListener('click', () => onClose?.());
@@ -135,6 +165,24 @@ export function renderSettingsForm({ container, store, onTest, onSave, onClose, 
   });
 
   // ---------- 人物侧写折叠区（T-402）----------
+  if (presets) {
+    const presetMsg = () => node.querySelector('#dt-preset-msg');
+    node.querySelector('#dt-preset-select')?.addEventListener('change', (event) => {
+      const status = presets.select?.(event.target.value) ?? {};
+      if (presetMsg()) {
+        presetMsg().textContent = status.name
+          ? `当前：${status.name}（${status.active ? `${status.length} 字` : '读不到内容，未生效'}）`
+          : '未选：不注入任何破限内容';
+      }
+    });
+    node.querySelector('#dt-preset-refresh')?.addEventListener('click', () => {
+      const list = presets.list?.() ?? [];
+      const select = node.querySelector('#dt-preset-select');
+      if (select) select.innerHTML = presetOptions(list, presets.status?.().name ?? '');
+      if (presetMsg()) presetMsg().textContent = list.length ? `可用预设 ${list.length} 个` : '无可用预设';
+    });
+  }
+
   if (profile) {
     const profileMsg = () => node.querySelector('#dt-profile-msg');
 

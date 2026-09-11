@@ -104,6 +104,11 @@ DirectorTime.store.saveSettings({ hardLimits: ['自杀', '自残'] })
 // 破限词：off / preset（跟随酒馆预设）/ custom / append
 DirectorTime.breakFilter.set({ mode: 'custom', custom: '……' })
 
+// 破限预设：直接选一个酒馆里已经调好的预设当破限词（只读，不改编它）
+DirectorTime.presets.list()          // 列出酒馆预设
+DirectorTime.presets.select('预设名') // 选中（配合 breakFilter 的 preset / append 模式）
+DirectorTime.presets.probe()         // 列不出来时，把这行结果发我 —— 它显示这个酒馆到底暴露了什么
+
 // 主角（多人卡，可多选）
 DirectorTime.cast.set([{ name: '爱丽丝' }, { name: '鲍勃' }])
 

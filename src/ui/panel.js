@@ -30,6 +30,8 @@ export function createMainPanel({
   onGenerate,
   onExtend,
   profile,
+  // T-418：破限预设（只读酒馆预设）
+  presets,
   loadWorldSources,
   getWorldSelection,
   saveWorldSelection,
@@ -267,7 +269,7 @@ export function createMainPanel({
 
     const body = node.querySelector('#dt-panel-body');
     if (view === 'config') {
-      renderSettingsForm({ container: body, store, onTest, onSave, profile });
+      renderSettingsForm({ container: body, store, onTest, onSave, profile, presets });
     } else if (view === 'world') {
       renderWorld(body);
     } else {

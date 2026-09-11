@@ -8,7 +8,9 @@
 import { hitRate } from '../director/speculate.js';
 
 /** 纯函数：把当前状态整理成 Debug 需要的结构 */
-export function buildDebugState({ store, registry, last = null, capabilities = null, lastTurn = null, lastRequest = null } = {}) {
+export function buildDebugState({
+  store, registry, last = null, capabilities = null, lastTurn = null, lastRequest = null, breakStatus = null,
+} = {}) {
   const state = store?.get?.() ?? {};
   const stages = state.stages ?? [];
   const active = stages.find((stage) => stage.id === state.activeStageId) ?? null;
@@ -49,6 +51,8 @@ export function buildDebugState({ store, registry, last = null, capabilities = n
     cost: state.cost ?? { sessionTotal: 0, callCount: 0 },
     capabilities: capabilities ?? null,
     lastRequest: lastRequest ?? '',
+    // T-411 / T-418：破限词模式与选中的酒馆预设（判据：选中后要能在这里看到生效）
+    breakStatus: breakStatus ?? null,
   };
 }
 
@@ -61,7 +65,7 @@ const PANEL_STYLE = `
   font-family:var(--dt-font-mono,ui-monospace,monospace); font-size:12px; line-height:1.6;
 `;
 
-export function createDebugPanel({ store, registry, getCapabilities, getLastTurn, getLastRequest } = {}) {
+export function createDebugPanel({ store, registry, getCapabilities, getLastTurn, getLastRequest, getBreakStatus } = {}) {
   let el = null;
   let last = null;
 
@@ -84,6 +88,21 @@ export function createDebugPanel({ store, registry, getCapabilities, getLastTurn
     return `<div><span style="opacity:.6">${escapeHtml(label)}</span> ${escapeHtml(value)}</div>`;
   }
 
+  /** T-411 / T-418：破限词模式 + 选中的酒馆预设，压成一行 */
+  function breakFilterLine(status) {
+    if (!status) return '—';
+    const mode = status.mode === 'off' ? '关闭' : `模式 ${status.mode}`;
+    const parts = [mode];
+    if (status.preset?.name) {
+      parts.push(`预设「${status.preset.name}」${status.preset.active ? `生效 ${status.preset.length} 字` : '读不到内容'}`);
+    } else if (status.mode === 'preset' || status.mode === 'append') {
+      parts.push(status.preset?.available ? '未选预设' : '无可用预设');
+    } else if (status.mode === 'custom') {
+      parts.push('用自定义破限词');
+    }
+    return parts.join(' · ');
+  }
+
   /** T-407：把命中率 / 待验证的预测压成一行 */
   function speculationLine(spec) {
     if (!spec) return '未启用';
@@ -100,6 +119,7 @@ export function createDebugPanel({ store, registry, getCapabilities, getLastTurn
       capabilities: getCapabilities?.(),
       lastTurn: getLastTurn?.() ?? null,
       lastRequest: getLastRequest?.() ?? null,
+      breakStatus: getBreakStatus?.() ?? null,
     });
 
     node.innerHTML = `
@@ -115,6 +135,7 @@ export function createDebugPanel({ store, registry, getCapabilities, getLastTurn
         ${row('注入', s.injection.registered ? `已注册 · ${s.injection.length} 字` : '未注册')}
         ${row('上次动作', s.lastAction ? `${s.lastAction}（${s.lastReason ?? ''}）` : '—')}
         ${row('伏笔', s.foreshadows?.length ? `待回收 ${s.foreshadows.length}：${s.foreshadows.join(' / ')}` : '无')}
+        ${row('破限', breakFilterLine(s.breakStatus))}
         ${row('投机', speculationLine(s.speculation))}
         ${row('累计', `调用 ${s.cost.callCount} 次`)}
       </div>
@@ -179,6 +200,7 @@ export function createDebugPanel({ store, registry, getCapabilities, getLastTurn
       capabilities: getCapabilities?.(),
       lastTurn: getLastTurn?.() ?? null,
       lastRequest: getLastRequest?.() ?? null,
+      breakStatus: getBreakStatus?.() ?? null,
     });
     const json = JSON.stringify(s, null, 2);
     try {

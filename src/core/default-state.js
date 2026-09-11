@@ -132,6 +132,8 @@ export function createDefaultSettings() {
     // 破限词（T-411）：off 关闭 / preset 跟随酒馆预设 / custom 自定义 / append 预设后追加
     // 只影响导演 API 请求，不进角色回复端
     breakFilter: { mode: 'off', custom: '' },
+    // 破限预设（T-418）：选中的酒馆预设名；空 = 没选（什么都不注入）
+    preset: { name: '' },
     // 世界书：勾选的条目（entryKey → true）与进 prompt 的条数上限（项目书 §F1 / 附录建议 20）
     worldSelection: {},
     worldLimit: 20,
