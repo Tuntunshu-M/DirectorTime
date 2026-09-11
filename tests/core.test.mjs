@@ -135,6 +135,25 @@ check('history 可撤销', () => {
   assert.equal(store.get().activeStageId, 'a');
 });
 
+check('history 快照不嵌套：体积线性而非指数爆炸', () => {
+  const { ctx } = makeCtx();
+  const store = createStateStore(ctx, 'dt');
+  for (let i = 0; i < 12; i += 1) {
+    store.update((d) => ({ ...d, outline: { n: i } }), { label: `第${i}步` });
+  }
+  const history = store.get().history;
+  assert.equal(history.length, 12);
+  // 每条快照里不该再套着历史
+  assert.equal(history[history.length - 1].snapshot.history.length, 0);
+  // 12 步总量应在千字符量级；嵌套时会到几十万
+  const size = JSON.stringify(history).length;
+  assert.ok(size < 20000, `history 体积异常：${size}`);
+  // 撤销仍然正确
+  store.undo();
+  assert.equal(store.get().outline.n, 10);
+  assert.equal(store.get().history.length, 11);
+});
+
 check('导出 / 导入快照往返无损', () => {
   const { ctx } = makeCtx();
   const store = createStateStore(ctx, 'dt');

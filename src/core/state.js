@@ -78,7 +78,9 @@ export function createStateStore(ctx, moduleName = 'director_time') {
    */
   function update(mutator, options = {}) {
     const current = get();
-    const snapshot = options.track === false ? null : structuredClone(current);
+    // 快照必须剔除 history 自身：否则"历史里套历史"，体积每步翻倍
+    // （实测 10 步 43 万字符，滚动续写每轮 2 次带标签写入，十几轮就会 OOM）
+    const snapshot = options.track === false ? null : structuredClone({ ...current, history: [] });
     const next = mutator(current) ?? current;
 
     state = next;
