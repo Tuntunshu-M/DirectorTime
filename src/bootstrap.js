@@ -18,6 +18,7 @@ import { createPresetService } from './inject/preset.js';
 import { createSpeculationService } from './director/speculate.js';
 import { carryOver, foreshadowText, openForeshadows, resolveRecalled } from './director/foreshadow.js';
 import { hardLimitText } from './director/hard-limits.js';
+import { findUserDirectives, describeIssues } from './director/actor-guard.js';
 import { normalizeProtagonists, protagonistText } from './world/cast.js';
 import { gate, setLevel, normalizeAutomation } from './core/automation.js';
 import { createReviewQueue } from './core/review-queue.js';
@@ -210,6 +211,20 @@ export function bootstrap({ ctx, store } = {}) {
     return lorebook.buildText(lorebook.pick(sources, selection), { limit: settings().worldLimit ?? 20 });
   }
 
+  /**
+   * P0 兜底：检查剧本有没有在指挥 user。只报警，不改剧本、不打断生成。
+   * prompt 里已经写死了【演员界定】，这里是第二道网 —— 万一模型还是跑偏，控制台能立刻看出来。
+   */
+  function warnActorSlip(stages, where = '剧本') {
+    const issues = findUserDirectives(stages);
+    if (!issues.length) return issues;
+    console.warn(
+      `[导演时间] ${where}又把 user 写成了演员（P0）：\n${describeIssues(issues)}\n`
+      + '建议点「重新生成剧本」；若反复出现，把这段贴给维护者。'
+    );
+    return issues;
+  }
+
   /** 记录最近一次发给导演 API 的 user 文本，供 Debug 核对实际发送内容（T-401 验收） */
   function rememberRequest(result) {
     const user = (result?.request ?? []).find((message) => message.role === 'user');
@@ -289,6 +304,8 @@ export function bootstrap({ ctx, store } = {}) {
 
       // 一致性自检（默认开，T-402 §六）：不合人设最多重生成 2 次
       result = await ensureConsistent(result, () => outline.generate(vars));
+      // P0：剧本不许指挥 user（只报警）
+      warnActorSlip(result.stages, '生成的剧本');
 
       const loaded = {
         // T-408：重生成剧本时，上一份**还没回收的伏笔不能丢**（验收判据 1）
@@ -442,6 +459,8 @@ export function bootstrap({ ctx, store } = {}) {
 
     // 一致性自检（默认开，T-402 §六）
     const result = await ensureConsistent(generated, () => outline.extend(vars));
+    // P0：续写的阶段同样不许指挥 user（只报警）
+    warnActorSlip(result.stages, '续写的阶段');
     // T-417：同样盖章
     const fresh = stampInitiative(result.stages, profile.read());
 

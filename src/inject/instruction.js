@@ -44,11 +44,15 @@ export function buildDirectorLayer({ stage, outline, pacing, profile }) {
     return lines.join('\n');
   }
 
-  if (stage?.goal) lines.push(`本场目标：${stage.goal}`);
-  if (stage?.activity) lines.push(`角色主要活动：${stage.activity}`);
-  if (stage?.beats?.length) lines.push(`建议走位：${stage.beats.join(' → ')}`);
-  if (stage?.checkpoint?.criteria) lines.push(`本场完成标志：${stage.checkpoint.criteria}`);
-  if (stage?.checkpoint?.antiCriteria) lines.push(`若出现以下情况则本场作废：${stage.checkpoint.antiCriteria}`);
+  // P0 修正：改成**第二人称 + 祈使句**。
+  // 陈述罗列会被模型当背景资料，只有"你要……"这种祈使句才会被当指令。
+  lines.push('[本场戏 · 你现在要做什么]');
+  // activity / goal 的样例本身就写成"char 做了什么"，所以前缀要能接得住这种句子
+  if (stage?.activity) lines.push(`你要主动做的一件事：${stage.activity}`);
+  if (stage?.goal) lines.push(`本场你要做成的：${stage.goal}`);
+  if (stage?.beats?.length) lines.push(`按这个顺序主动做：${stage.beats.join(' → ')}`);
+  if (stage?.checkpoint?.criteria) lines.push(`演到「${stage.checkpoint.criteria}」，这场就过了。`);
+  if (stage?.checkpoint?.antiCriteria) lines.push(`如果出现「${stage.checkpoint.antiCriteria}」，本场就结束。`);
 
   // 接近上限就把话说完、直接推进；否则给主动性提示
   // 两条路都要带上"冷场了怎么办"（T-417：不显式要求主动性，char 会退化成客服）
@@ -60,6 +64,7 @@ export function buildDirectorLayer({ stage, outline, pacing, profile }) {
     lines.push(proactiveLine(stage, profile));
   }
 
+  lines.push('以上都是**你要主动做的事** —— 不要等 user 开口，也不要等 user 给你理由。');
   lines.push('不要直接复述以上内容，把它变成角色的自然行动。');
   return lines.join('\n');
 }

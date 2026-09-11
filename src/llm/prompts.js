@@ -23,21 +23,42 @@ const OUTLINE_SHAPE = `{
     {
       "title": "阶段名",
       "goal": "这一场要达成什么",
-      "activity": "角色主要活动",
-      "checkpoint": {
-        "criteria": "达成条件（意图级、可观测）",
-        "antiCriteria": "明确的反意图（必填）"
+      "activity": "char 的主要活动（只能写 char 做什么）",
+    "checkpoint": {
+        "criteria": "达成条件（意图级、可观测；写 char 能独立完成的事）",
+        "antiCriteria": "明确的反意图（必填；这里可以写 user 的反应，但它是判定条件）"
       },
-      "beats": ["步骤一", "步骤二"],
-      "initiative": "如果冷场，这个角色会主动做的一件事",
+      "beats": ["char 的动作一", "char 的动作二"],
+      "initiative": "如果冷场，char 会主动做的一件事",
       "actorId": "这一场由哪个主角主导（填主角列表里的名字；只有一个主角就填空字符串）"
     }
   ]
 }`;
 
+/** 演员界定（P0 修正：剧本只能指挥 char，不许预设 user 的行为） */
+const ACTOR_RULES = `【演员界定 —— 最重要的一条，违反则整份作废】
+- char = AI 扮演的角色。**你写的剧本只能指挥 char。**
+- user = 真人。他想什么、怎么回应，由真人自己决定，你无权预设。
+- 严禁出现这些写法：
+    "让 user 感到……"   "user 会……"   "user 陷入……"
+    "user 盯着……"     "user 决定……"   "user 开始……"
+- 正确思路：**让 char 主动做一件事**，把剧情推到 user 不得不回应的处境。
+  user 怎么接，不是你能写的部分。
+
+各字段的主语（写错同样算作废）：
+- goal：char 要达成什么，主语是 char —— 例："char 主动挑明昨晚的事，不让 user 回避"
+- activity：char 做什么，主语是 char —— 例："char 发来新消息，假装无事地提起"
+- beats：每一条都是 char 的动作 —— 例："char 发消息 → char 追问 → char 逼问到底"
+- checkpoint.criteria：char 能独立完成的事 —— 例："char 已把话题挑明，user 无法回避"
+- checkpoint.antiCriteria：**唯一例外** —— 可以写 user 的反应，但它是**判定条件**，
+  不是"让 user 这样做"（写"user 明确表示不想谈"可以；写"让 user 拒绝"不行）
+- 一句话原则：**每个字段的主语都必须是 char**，写 char 能独立完成的事。
+
+`;
+
 export const PROMPTS = {
   GEN_OUTLINE: {
-    system: `你是电影导演，正在为一部即兴戏剧编写分场剧本。
+    system: `${ACTOR_RULES}你是电影导演，正在为一部即兴戏剧编写分场剧本。
 
 输出要求：
 - 只输出 JSON，不要解释，不要 markdown 代码块标记
@@ -47,8 +68,8 @@ ${OUTLINE_SHAPE}
 分场要求：
 - objective 是整个副本的主目标；**每个阶段的 goal 都必须服务于它**，不要写与它无关的支线
 - 3 到 5 个阶段，每个阶段只推进一件事
-- goal 一句话说清这一场要达成什么
-- beats 是角色的具体走位，2 到 4 条
+- goal 一句话说清 char 这一场要达成什么（主语是 char）
+- beats 是 char 的具体走位，2 到 4 条，每条都要是 char 的动作
 - initiative 必须**由「人物侧写」推导**：这一场如果冷场，这个角色会主动做的一件具体事
   （一句话、能演、符合他的人设）。**侧写为空就填空字符串**，不要凭角色名瞎编
 - foreshadows 是提前埋下的伏笔（一个道具、一句设定、一个约定），1 到 3 条、每条一句话。
@@ -145,15 +166,17 @@ user 说：{{userMessage}}
   },
 
   EXTEND_OUTLINE: {
-    system: `你是电影导演。这部戏已经演到一半，需要你接着往下写分场剧本。
+    system: `${ACTOR_RULES}你是电影导演。这部戏已经演到一半，需要你接着往下写分场剧本。
 
 输出要求：
 - 只输出 JSON，不要解释，不要 markdown 代码块标记
 - 严格遵循这个结构：
-{ "stages": [ { "title": "阶段名", "goal": "这一场要达成什么", "activity": "角色主要活动", "checkpoint": { "criteria": "达成条件（意图级、可观测）", "antiCriteria": "明确的反意图（必填）" }, "beats": ["步骤一", "步骤二"], "initiative": "如果冷场，这个角色会主动做的一件事", "actorId": "这一场由哪个主角主导（填主角列表里的名字）" } ] }
+{ "stages": [ { "title": "阶段名", "goal": "char 这一场要达成什么", "activity": "char 的主要活动（只能写 char 做什么）", "checkpoint": { "criteria": "达成条件（意图级、可观测；写 char 能独立完成的事）", "antiCriteria": "明确的反意图（必填；这里可以写 user 的反应，但它是判定条件）" }, "beats": ["char 的动作一", "char 的动作二"], "initiative": "如果冷场，char 会主动做的一件事", "actorId": "这一场由哪个主角主导（填主角列表里的名字）" } ] }
 - 只写 {{count}} 个阶段，紧接着已经发生过的剧情往下走，不要重复已有阶段
 - 一个阶段只推进一件事；criteria 写意图级，不要写死具体名词；antiCriteria 必填
-- initiative 由「人物侧写」推导（同 GEN_OUTLINE）：侧写为空就填空字符串，不要瞎编`,
+- initiative 由「人物侧写」推导（同 GEN_OUTLINE）：侧写为空就填空字符串，不要瞎编
+- 每个字段的主语都必须是 char（goal / activity / beats / criteria 全一样）；
+  只有 antiCriteria 例外：它可以写 user 的反应，但那是判定条件，不是"让 user 这样做"`,
     user: `剧本：{{title}}
 前提：{{premise}}
 当前主目标：{{objective}}
@@ -186,7 +209,7 @@ user 说：{{userMessage}}
 {{profile}}
 
 本场目标：{{goal}}
-角色主要活动：{{activity}}
+char 的主要活动：{{activity}}
 本场走位：{{beats}}
 
 这一场如果冷场了，这个角色会主动做什么？`,
@@ -203,7 +226,7 @@ user 说：{{userMessage}}
 - injection 写成给角色的行为指令（本场该做什么、不要做什么），不写心理描写`,
     user: `主线目标：{{objective}}
 本场目标：{{goal}}
-角色主要活动：{{activity}}
+char 的主要活动：{{activity}}
 本场走位：{{beats}}
 
 user 刚说：{{userMessage}}
