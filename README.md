@@ -97,6 +97,22 @@ DirectorTime.debug.show()
 DirectorTime.store.saveSettings({ objective: '你的主目标', pacing: { min: 3, max: 8 } })
 ```
 
+## 用户意愿（让步程度）
+
+`will` 决定「你反对时 char 怎么反应」，默认 80（user 优先）：
+
+- **0~33 剧情优先** —— char 会坚持，你反对也不轻易改道
+- **34~66 平衡**
+- **67~100 user 优先** —— char 会让步；你反对得越明确，越可能直接作废本场、重生成后续
+
+你不需要配合剧本：明确反对时 char 会照着你的意思改道；说无关的话题时（高意愿档）剧情会跟着你暂停，不硬拉回来。卡住超过 3 轮自动放行，不会死锁。
+
+同样没有界面入口，控制台改（也可按阶段单独覆盖 `stage.will`）：
+
+```js
+DirectorTime.store.saveSettings({ will: 50 })
+```
+
 ## 常见问题
 
 **扩展菜单里没有「导演时间」入口**

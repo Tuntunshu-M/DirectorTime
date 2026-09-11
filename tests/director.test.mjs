@@ -94,6 +94,7 @@ await check('新阶段带 pacing / turnCount / initiative 占位（T-416）', ()
   assert.equal(stages[0].pacing, null, 'null 表示用全局 pacing');
   assert.equal(stages[0].turnCount, 0);
   assert.equal(stages[0].initiative, '', 'T-417 才填');
+  assert.equal(stages[0].will, null, 'null 表示用全局 will（T-405）');
 });
 
 await check('模型返回解析不了时 ok:false 且带 raw', async () => {

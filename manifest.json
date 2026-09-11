@@ -4,6 +4,6 @@
   "js": "index.js",
   "css": "style.css",
   "author": "",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "minimum_client_version": "1.18.0"
 }

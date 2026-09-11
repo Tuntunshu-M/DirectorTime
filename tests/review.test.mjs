@@ -36,6 +36,7 @@ function makeEnv() {
   let current = null;
   const registry = {
     register: (text) => { current = text || null; registered.push(text); return true; },
+    clear: () => { current = null; registered.push(''); return true; },
     getStatus: () => ({ registered: current !== null, length: current?.length ?? 0, text: current ?? '' }),
   };
   return { store, stages, registry, registered };
@@ -227,6 +228,116 @@ await check('force 也走推进，并把 reason 报给 onEvent', async () => {
   assert.equal(env.store.get().activeStageId, list[1].id);
   assert.equal(payload.action, 'force');
   assert.equal(payload.reason, '到点强制推进');
+});
+
+console.log('用户意愿矩阵（T-405）');
+
+await check('让步类动作跳过推进点判定（判据 1：Will=90 + 反对 → 作废并重生成）', async () => {
+  const env = makeEnv();
+  const list = seed(env);
+  let judged = false;
+  let topped = 0;
+  const service = createReviewService({
+    checkpoint: { judge: async () => { judged = true; return { action: 'advance' }; } },
+    will: { judge: async () => ({ ok: true, stance: 'reject', confidence: 0.95 }) },
+    topUp: async () => {
+      topped += 1;
+      const fresh = normalizeStages(
+        [{ goal: '换个方向', checkpoint: { criteria: 'c', antiCriteria: 'a' } }],
+        { startIndex: list.length + 1, activateFirst: false }
+      );
+      env.stages.append(fresh);
+      return { ok: true, stages: fresh };
+    },
+    stages: env.stages, registry: env.registry, store: env.store,
+    getSettings: () => ({ will: 90, stuckThreshold: 3 }),
+  });
+
+  const r = await service.run({ userMessage: '我不想去 D 市' });
+  assert.equal(judged, false, '让步类动作不该再跑推进点判定');
+  assert.equal(r.action, 'regenAfter');
+  assert.equal(env.store.get().stages[0].status, 'dropped', '当前场要作废');
+  assert.equal(topped, 1, '要重生成后续');
+  assert.ok(r.injected.includes('换个方向'), '新场要接上');
+});
+
+await check('hold：停留，状态不动，继续注入本阶段指令', async () => {
+  const env = makeEnv();
+  seed(env);
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'advance' }) },
+    will: { judge: async () => ({ ok: true, stance: 'hesitate', confidence: 0.9 }) },
+    stages: env.stages, registry: env.registry, store: env.store,
+    getSettings: () => ({ will: 50, stuckThreshold: 3 }),
+  });
+
+  const r = await service.run({ userMessage: '再想想吧' });
+  assert.equal(r.action, 'hold');
+  assert.equal(env.store.get().stages[0].status, 'active');
+  assert.ok(r.injected.includes('知道想不想去'), '继续注入本场指令');
+});
+
+await check('follow：剧情暂停，注入被清空（判据 3 高档）', async () => {
+  const env = makeEnv();
+  seed(env);
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'advance' }) },
+    will: { judge: async () => ({ ok: true, stance: 'irrelevant', confidence: 0.9 }) },
+    stages: env.stages, registry: env.registry, store: env.store,
+    getSettings: () => ({ will: 90, stuckThreshold: 3 }),
+  });
+
+  const r = await service.run({ userMessage: '今天天气不错' });
+  assert.equal(r.action, 'follow');
+  assert.equal(r.injected, '');
+  assert.equal(env.registered[env.registered.length - 1], '', '注入要被清空');
+});
+
+await check('态度判定置信不足 → 仍走推进点判定（判据 4）', async () => {
+  const env = makeEnv();
+  seed(env);
+  let judged = false;
+  const service = createReviewService({
+    checkpoint: { judge: async () => { judged = true; return { action: 'advance', reason: '达成' }; } },
+    will: { judge: async () => ({ ok: true, stance: 'reject', confidence: 0.3 }) },
+    stages: env.stages, registry: env.registry, store: env.store,
+    getSettings: () => ({ will: 90, stuckThreshold: 3 }),
+  });
+
+  const r = await service.run({ userMessage: '嗯' });
+  assert.equal(judged, true);
+  assert.equal(r.action, 'advance');
+});
+
+await check('regenAfter 重生成失败 → 只作废、不注入、不崩（判据 6）', async () => {
+  const env = makeEnv();
+  seed(env);
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'advance' }) },
+    will: { judge: async () => ({ ok: true, stance: 'redirect', confidence: 0.95 }) },
+    topUp: async () => null,
+    stages: env.stages, registry: env.registry, store: env.store,
+    getSettings: () => ({ will: 90, stuckThreshold: 3 }),
+  });
+
+  const r = await service.run({ userMessage: '我们换个方向' });
+  assert.equal(r.action, 'regenAfter');
+  assert.equal(env.store.get().stages[0].status, 'dropped');
+  assert.equal(env.store.get().activeStageId, null);
+  assert.equal(r.injected, '', '重生成失败就不注入任何内容');
+});
+
+await check('没有 will 服务时退化为原来的推进点路径（向后兼容）', async () => {
+  const env = makeEnv();
+  seed(env);
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'advance', reason: '达成' }) },
+    stages: env.stages, registry: env.registry, store: env.store,
+    getSettings: () => ({ will: 90 }),
+  });
+  const r = await service.run({ userMessage: '好啊' });
+  assert.equal(r.action, 'advance');
+  assert.equal(service.getLastTurn().stance, null);
 });
 
 await check('复盘后更新注入内容（供下一轮使用）', async () => {

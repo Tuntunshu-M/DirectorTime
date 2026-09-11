@@ -58,6 +58,8 @@ export function createDefaultSettings() {
     historyLimit: 200,
     stuckThreshold: 3,
     confidenceThreshold: 0.7,
+    // 用户意愿权重（T-405）：0~33 剧情优先 / 34~66 平衡 / 67~100 user 优先
+    will: 80,
     // 跑满这么多轮就自动清空剧本（可在配置里改）
     maxRounds: 15,
     // 生成新阶段后拿侧写做一致性自检（T-402 §六，可关）

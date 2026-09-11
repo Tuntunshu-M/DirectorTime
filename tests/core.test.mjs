@@ -80,6 +80,10 @@ check('默认设置含主目标与楼层节奏（T-416）', () => {
   assert.deepEqual(settings.pacing, { min: 3, max: 8 });
 });
 
+check('默认意愿权重为 80（T-405 高档：user 优先）', () => {
+  assert.equal(createDefaultSettings().will, 80);
+});
+
 check('旧数据缺字段时补齐，不崩', () => {
   const state = migrate({ stages: [], schemaVersion: 0 });
   assert.equal(state.schemaVersion, SCHEMA_VERSION);

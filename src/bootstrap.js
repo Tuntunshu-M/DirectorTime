@@ -10,6 +10,7 @@ import { createDirectorClient } from './llm/client.js';
 import { createStageService } from './director/stage.js';
 import { createOutlineService } from './director/outline.js';
 import { createBeatService } from './director/beats.js';
+import { createWillService } from './director/will.js';
 import { createCheckpointService } from './director/checkpoint.js';
 import { createReviewService } from './director/review.js';
 import { createPromptRegistry } from './inject/prompt-registry.js';
@@ -76,8 +77,13 @@ export function bootstrap({ ctx, store } = {}) {
     getConnection: () => settings().connection ?? {},
     getSettings: settings,
   });
+  const will = createWillService({
+    client,
+    getConnection: () => settings().connection ?? {},
+  });
   const review = createReviewService({
     checkpoint,
+    will,
     beats,
     topUp: topUpStages,
     getProfile: () => profile.read(),
@@ -406,7 +412,7 @@ export function bootstrap({ ctx, store } = {}) {
 
   const api = {
     client, stages, outline, beats, lorebook, profile, profileApi,
-    registry, checkpoint, review, debug,
+    registry, checkpoint, will, review, debug,
     generateScript, regenerateScript, topUpStages, resetScript, setEnabled,
     collectWorldSources, worldText, profileText,
     settingsPanel: settingsPanelApi, panel, unmountMenu,

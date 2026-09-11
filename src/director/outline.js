@@ -36,6 +36,8 @@ export function normalizeStages(rawStages = [], { startIndex = 1, activateFirst 
     // T-416：楼层节奏（null = 用全局 settings.pacing）
     pacing: stage.pacing ?? null,
     turnCount: 0,
+    // T-405：本场单独的意愿权重（null = 用全局 settings.will）
+    will: stage.will ?? null,
     // T-417 才填，先占位
     initiative: '',
     stuckCount: 0,
