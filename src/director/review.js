@@ -26,12 +26,16 @@ function isViolated(judgement, threshold) {
   return judgement?.status === 'violated' && Number(judgement?.confidence ?? 0) >= threshold;
 }
 
+import { resolveRecalled } from './foreshadow.js';
+import { matchHardLimits } from './hard-limits.js';
+
 export function createReviewService({
   checkpoint,
   beats,
   topUp,
   will,
   initiative,
+  speculate,
   getProfile,
   stages,
   registry,
@@ -44,10 +48,18 @@ export function createReviewService({
 
   function syncInjection() {
     const state = store?.get?.();
+    const settings = getSettings?.() ?? {};
     const active = state?.stages?.find((stage) => stage.id === state.activeStageId);
-    const pacing = active ? resolvePacing(active, getSettings?.() ?? {}) : null;
+    const pacing = active ? resolvePacing(active, settings) : null;
     const text = active
-      ? buildInstruction({ stage: active, outline: state.outline, profile: getProfile?.() ?? null, pacing })
+      ? buildInstruction({
+        stage: active,
+        outline: state.outline,
+        profile: getProfile?.() ?? null,
+        pacing,
+        // T-410：硬禁区每轮都要带上（角色回复端的约束）
+        hardLimits: settings.hardLimits ?? [],
+      })
       : '';
     registry?.register?.(text);
     return text;
@@ -155,6 +167,25 @@ export function createReviewService({
   }
 
   /**
+   * T-408：判定里报回来的已回收伏笔 → 销账、从待回收列表移除。
+   * 认不出来的编号直接忽略（模型可能编），失败的伏笔保持待回收。
+   */
+  function settleRecalled(judgement) {
+    const recalled = Array.isArray(judgement?.recalled) ? judgement.recalled : [];
+    if (!recalled.length) return [];
+
+    let resolved = [];
+    store?.update?.((draft) => {
+      const result = resolveRecalled(draft.outline, recalled);
+      resolved = result.resolved;
+      return { ...draft, outline: result.outline };
+    }, { track: false });
+
+    if (resolved.length) console.log(`[导演时间] 已回收伏笔 ${resolved.length} 条`);
+    return resolved;
+  }
+
+  /**
    * @param {{ userMessage?: string, charMessage?: string, type?: string }} input
    */
   async function run(input = {}) {
@@ -168,6 +199,12 @@ export function createReviewService({
 
     running = true;
     try {
+      // T-407：先结算上一轮的投机预测 —— 命中就认账，失手就静默降级（下面的 syncInjection 会重建常规注入）
+      const speculated = speculate?.settle?.(input.userMessage ?? '') ?? { hit: false, speculation: null };
+      if (speculated.speculation && !speculated.hit) {
+        console.log('[导演时间] 投机未命中，本轮起静默降级为常规剧本');
+      }
+
       // 本轮生成时实际生效的注入内容（上一轮复盘后注册的）
       const usedInjection = registry?.getStatus?.().text ?? '';
       const active = stages?.getActive?.();
@@ -175,6 +212,28 @@ export function createReviewService({
       const userMessage = input.userMessage ?? '';
       const charMessage = input.charMessage ?? '';
       const settings = getSettings?.() ?? {};
+
+      // 0) 硬禁区（T-410）：user 说了 / 角色回了沾边的内容 → 命中即停。
+      //    本地判定、不看 Will，强制爱也不覆盖（用户显式 > 一切 AI 行为）。
+      const limitHit = matchHardLimits(`${userMessage}\n${charMessage}`, settings.hardLimits);
+      if (limitHit) {
+        clearInjection();
+        lastTurn = {
+          userMessage,
+          charMessage,
+          usedInjection,
+          nextInjection: '',
+          speculation: null,
+          recalled: [],
+          judgement: null,
+          action: 'halt',
+          reason: `命中硬禁区「${limitHit}」`,
+          stageTitle: active?.title ?? '',
+          at: Date.now(),
+        };
+        onEvent?.('halt', { limit: limitHit });
+        return { action: 'halt', reason: lastTurn.reason, injected: '', limit: limitHit };
+      }
 
       // 1) 判 user 这一句的态度 → 意愿矩阵（T-405）
       let decision = null;
@@ -212,6 +271,9 @@ export function createReviewService({
           : { action: 'hold', reason: '没有进行中的阶段' }))
         : { action: decision.action, reason: decision.reason };
 
+      // T-408：判定顺手报回来的伏笔编号，在这里销账
+      const recalled = settleRecalled(result.judgement ?? preJudged?.judgement);
+
       await applyAction(result, { active, activeId, userMessage, charMessage, decision });
 
       // 推进后补足待演阶段，保证"永远有 1~2 条在等"（T-209）
@@ -235,6 +297,12 @@ export function createReviewService({
         charMessage,
         usedInjection,
         nextInjection: injected,
+        // T-407：这一轮用的是不是投机预测（Debug 显示命中率）
+        speculation: speculated.speculation
+          ? { hit: speculated.hit, guess: speculated.speculation.guess }
+          : null,
+        // T-408：这一轮回收掉的伏笔
+        recalled,
         judgement,
         raw: result.raw ?? preJudged?.raw ?? judgedTurn?.raw ?? '',
         // T-405：态度判定与矩阵决策（没判到时为 null）

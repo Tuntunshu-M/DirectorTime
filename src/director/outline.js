@@ -5,6 +5,7 @@
 
 import { buildMessages } from '../llm/prompts.js';
 import { parseDirectorResponse } from '../llm/schemas.js';
+import { normalizeForeshadows } from './foreshadow.js';
 
 let seq = 0;
 function nextId(prefix) {
@@ -76,7 +77,8 @@ export function createOutlineService({ client, getConnection, now = Date.now } =
         objective: data.objective,
         objectiveSource: vars.objective ? 'user' : 'ai',
         tone: vars.tone ?? null,
-        foreshadows: [],
+        // T-408：埋下的伏笔（回收后打标记，重生成时未回收的不丢）
+        foreshadows: normalizeForeshadows(data.foreshadows, { now: now() }),
         createdAt: now(),
         revision: 0,
         locked: false,

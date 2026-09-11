@@ -6,6 +6,7 @@
 // 两层可单独调权重（项目书 §F10 / 用户选定项）。
 
 import { usableInitiative } from '../director/initiative.js';
+import { hardLimitLine } from '../director/hard-limits.js';
 
 const PROACTIVE_HINT = '不要等 user 提问或回应。如果冷场，你就自己找一件事继续。';
 
@@ -81,12 +82,14 @@ export function buildCharacterLayer({ profile }) {
  * @returns {string} 空字符串表示没有可注入的内容
  */
 export function buildInstruction(input = {}) {
-  const director = buildDirectorLayer(input);
-  const character = buildCharacterLayer(input);
+  // 硬禁区放最前面：它是用户显式写的，优先级高于侧写禁忌（T-410）
+  const parts = [
+    hardLimitLine(input.hardLimits),
+    buildDirectorLayer(input),
+    buildCharacterLayer(input),
+  ].filter(Boolean);
 
-  const parts = [director, character].filter(Boolean);
-  if (!parts.length) return '';
-  // 没有侧写时只有导演层，也算完整指令
-  if (parts.length === 1 && !input.stage?.goal) return '';
+  // 阶段目标、侧写、硬禁区一个都没有 → 没有值得注入的内容
+  if (!input.stage?.goal && !input.profile && !input.hardLimits?.length) return '';
   return parts.join('\n\n');
 }

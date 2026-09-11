@@ -13,6 +13,9 @@ import { createBeatService } from './director/beats.js';
 import { createWillService } from './director/will.js';
 import { createInitiativeService, stampInitiative } from './director/initiative.js';
 import { resolveRules } from './director/rules.js';
+import { createSpeculationService } from './director/speculate.js';
+import { carryOver, foreshadowText, openForeshadows, resolveRecalled } from './director/foreshadow.js';
+import { hardLimitText } from './director/hard-limits.js';
 import { createDefaultRules } from './core/default-state.js';
 import { createCheckpointService } from './director/checkpoint.js';
 import { createReviewService } from './director/review.js';
@@ -79,6 +82,8 @@ export function bootstrap({ ctx, store } = {}) {
     stages,
     getConnection: () => settings().connection ?? {},
     getSettings: settings,
+    // T-408：判定时把待回收伏笔一起发过去，顺手销账
+    getOutline: () => store.get().outline,
   });
   const will = createWillService({
     client,
@@ -103,10 +108,16 @@ export function bootstrap({ ctx, store } = {}) {
     getConnection: () => settings().connection ?? {},
     stages,
   });
+  const speculate = createSpeculationService({
+    client,
+    getConnection: () => settings().connection ?? {},
+    store,
+  });
   const review = createReviewService({
     checkpoint,
     will,
     initiative,
+    speculate,
     beats,
     topUp: topUpStages,
     getProfile: () => profile.read(),
@@ -216,6 +227,10 @@ export function bootstrap({ ctx, store } = {}) {
         tone: toneText(),
         profile: profileText(profile.read()),
         world: await worldText(),
+        // T-410：硬禁区也约束剧情生成（用户显式 > 侧写禁忌）
+        hardLimits: hardLimitText(settings().hardLimits),
+        // T-408：把还没回收的伏笔告诉导演，别重复埋、能回收就回收
+        foreshadows: foreshadowText(store.get().outline),
         context: recentContext(),
       };
       let result = rememberRequest(await outline.generate(vars));
@@ -231,7 +246,8 @@ export function bootstrap({ ctx, store } = {}) {
 
       store.update((draft) => ({
         ...draft,
-        outline: result.outline,
+        // T-408：重生成剧本时，上一份**还没回收的伏笔不能丢**（验收判据 1）
+        outline: carryOver(store.get().outline, result.outline),
         // T-417：盖章记下这批 initiative 是按哪一版侧写推出来的
         stages: stampInitiative(result.stages, profile.read()),
         activeStageId: result.stages[0]?.id ?? null,
@@ -270,6 +286,39 @@ export function bootstrap({ ctx, store } = {}) {
     return rounds;
   }
 
+  /**
+   * T-407 投机执行：不等 user 开口，先猜下一句并提前写好指令。
+   * 任何失败都静默（吞掉异常、不提示），猜不中下一轮复盘时自动降级。
+   */
+  let speculating = false;
+  async function speculateNext() {
+    if (speculating) return null;
+    try {
+      if (settings().speculation === false) return null;
+      if (!settings().connection?.endpoint) return null;
+      const active = stages.getActive();
+      if (!active) return null;
+
+      speculating = true;
+      const { userMessage, charMessage } = lastTurnMessages(ctx.getMessages());
+      const record = await speculate.guess({
+        stage: active,
+        outline: store.get().outline,
+        userMessage,
+        charMessage,
+      });
+      if (!record) return null;
+      // 猜中就用：先一步把它注册成下一轮的注入（猜不中下轮复盘会静默降级）
+      registry.register(record.injection);
+      return record;
+    } catch (error) {
+      console.error('[导演时间] 投机执行失败（已静默降级）', error);
+      return null;
+    } finally {
+      speculating = false;
+    }
+  }
+
   /** 清空剧本与历史（保留设置、花费与偏好），并清空注入 */
   function resetScript(notice = '导演时间：剧本已清空') {
     store.update((draft) => ({
@@ -278,7 +327,8 @@ export function bootstrap({ ctx, store } = {}) {
       stages: [],
       activeStageId: null,
       history: [],
-      runtime: { ...draft.runtime, rounds: 0, promptRegistered: false },
+      // 投机预测跟着剧本一起作废
+      runtime: { ...draft.runtime, rounds: 0, promptRegistered: false, speculation: null },
     }), { track: false });
     registry.clear();
     ctx.showSystemMessage?.(notice);
@@ -313,6 +363,10 @@ export function bootstrap({ ctx, store } = {}) {
       tone: toneText(),
       profile: profileText(profile.read()),
       world: await worldText(),
+      // T-410：续写同样带上硬禁区
+      hardLimits: hardLimitText(settings().hardLimits),
+      // T-408：续写也要知道哪些坑还没填
+      foreshadows: foreshadowText(state.outline),
       history,
       context: recentContext(),
     };
@@ -351,6 +405,8 @@ export function bootstrap({ ctx, store } = {}) {
   ctx.on?.(CHAT_CHANGED, () => {
     store.load();
     registry.clear();
+    // 换了聊天，上一轮的投机预测作废（否则会拿别的聊天的预测去猜）
+    store.update((draft) => ({ ...draft, runtime: { ...draft.runtime, speculation: null } }), { track: false });
   });
 
   ctx.on?.(MESSAGE_RECEIVED, async () => {
@@ -361,6 +417,10 @@ export function bootstrap({ ctx, store } = {}) {
 
     try {
       const result = await review.run({ userMessage, charMessage, type: 'normal' });
+      // T-410：命中硬禁区就停下，并且要让用户知道为什么停
+      if (result?.action === 'halt') {
+        ctx.showSystemMessage?.(`导演时间：${result.reason}，已停止本轮注入`);
+      }
       // 把模型原始返回也喂给 Debug —— 云酒馆看不到控制台，只能靠面板
       const turn = review.getLastTurn();
       if (turn) debug.setLast({ ...turn, raw: turn.raw || (turn.judgement ? JSON.stringify(turn.judgement) : '') });
@@ -368,6 +428,9 @@ export function bootstrap({ ctx, store } = {}) {
       // 跑过上限就清空重来，避免剧本与历史无限膨胀（上限可在配置里改）
       if (!result?.skipped && shouldResetScript(countRound(), settings().maxRounds)) {
         resetScript(`导演时间：已超过 ${normalizeMaxRounds(settings().maxRounds)} 轮，剧本已清空，点「生成剧本」开新戏`);
+      } else if (!result?.skipped) {
+        // T-407 投机执行：给下一轮做功课。**不 await** —— 不该拖慢本轮
+        speculateNext();
       }
     } catch (error) {
       console.error('[导演时间] 复盘失败', error);
@@ -438,7 +501,20 @@ export function bootstrap({ ctx, store } = {}) {
 
   const api = {
     client, stages, outline, beats, lorebook, profile, profileApi,
-    registry, checkpoint, will, initiative, rules: rulesApi, review, debug,
+    registry, checkpoint, will, initiative, rules: rulesApi, speculate, review, debug,
+    // T-408：伏笔查看 / 手动销账（UI 未做，先用控制台）
+    foreshadows: {
+      list: () => openForeshadows(store.get().outline),
+      resolve: (id) => {
+        let resolved = [];
+        store.update((draft) => {
+          const result = resolveRecalled(draft.outline, [id]);
+          resolved = result.resolved;
+          return { ...draft, outline: result.outline };
+        });
+        return resolved;
+      },
+    },
     generateScript, regenerateScript, topUpStages, resetScript, setEnabled,
     collectWorldSources, worldText, profileText,
     settingsPanel: settingsPanelApi, panel, unmountMenu,

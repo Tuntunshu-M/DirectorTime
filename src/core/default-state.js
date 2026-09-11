@@ -75,6 +75,10 @@ export function createDefaultRuntime() {
     purgeCount: 0,
     // 本场戏已经跑了多少轮（每完成一次复盘 +1；超过上限就清空剧本）
     rounds: 0,
+    // T-407 投机执行：还没被验证的预测（{ guess, injection, at, stageId } | null）
+    speculation: null,
+    // 预测命中率（Debug 显示）
+    speculationStats: { hits: 0, misses: 0 },
   };
 }
 
@@ -119,6 +123,10 @@ export function createDefaultSettings() {
     pacing: { min: 3, max: 8 },
     // 规则引擎四词库（T-406）：默认一份，用户改的就是这份、直接持久化
     rules: createDefaultRules(),
+    // 投机执行（T-407）：开启后每轮多花一次导演 API 调用，换"下一轮零延迟"
+    speculation: true,
+    // 硬禁区（T-410）：用户显式填写的绝对禁区，优先级高于侧写禁忌；命中即停
+    hardLimits: [],
     // 世界书：勾选的条目（entryKey → true）与进 prompt 的条数上限（项目书 §F1 / 附录建议 20）
     worldSelection: {},
     worldLimit: 20,

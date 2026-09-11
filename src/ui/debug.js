@@ -5,6 +5,8 @@
 //
 // 状态计算抽成纯函数 buildDebugState，便于自动化测试；DOM 渲染单独一层。
 
+import { hitRate } from '../director/speculate.js';
+
 /** 纯函数：把当前状态整理成 Debug 需要的结构 */
 export function buildDebugState({ store, registry, last = null, capabilities = null, lastTurn = null, lastRequest = null } = {}) {
   const state = store?.get?.() ?? {};
@@ -29,6 +31,15 @@ export function buildDebugState({ store, registry, last = null, capabilities = n
       length: injection.length,
       text: injection.text ?? '',
     },
+    // T-407 投机执行：命中率 + 待验证的预测
+    speculation: {
+      ...hitRate(state.runtime?.speculationStats),
+      pending: state.runtime?.speculation?.guess ?? '',
+    },
+    // T-408 伏笔：还没回收的
+    foreshadows: (state.outline?.foreshadows ?? [])
+      .filter((item) => item?.status !== 'resolved')
+      .map((item) => item.text),
     lastJudgement: last?.judgement ?? null,
     lastAction: last?.action ?? null,
     lastReason: last?.reason ?? null,
@@ -73,6 +84,15 @@ export function createDebugPanel({ store, registry, getCapabilities, getLastTurn
     return `<div><span style="opacity:.6">${escapeHtml(label)}</span> ${escapeHtml(value)}</div>`;
   }
 
+  /** T-407：把命中率 / 待验证的预测压成一行 */
+  function speculationLine(spec) {
+    if (!spec) return '未启用';
+    const parts = [];
+    if (spec.total) parts.push(`命中 ${spec.hits}/${spec.total}（${Math.round(spec.rate * 100)}%）`);
+    if (spec.pending) parts.push(`待验「${spec.pending}」`);
+    return parts.length ? parts.join(' · ') : '未启用';
+  }
+
   function render() {
     const node = ensure();
     const s = buildDebugState({
@@ -94,6 +114,8 @@ export function createDebugPanel({ store, registry, getCapabilities, getLastTurn
         ${row('状态', `${s.stage.status} · 卡住 ${s.stage.stuckCount} 轮`)}
         ${row('注入', s.injection.registered ? `已注册 · ${s.injection.length} 字` : '未注册')}
         ${row('上次动作', s.lastAction ? `${s.lastAction}（${s.lastReason ?? ''}）` : '—')}
+        ${row('伏笔', s.foreshadows?.length ? `待回收 ${s.foreshadows.length}：${s.foreshadows.join(' / ')}` : '无')}
+        ${row('投机', speculationLine(s.speculation))}
         ${row('累计', `调用 ${s.cost.callCount} 次`)}
       </div>
       <details open style="margin-top:8px"><summary>本轮回放 · 跟随 user 输入发送了什么</summary>
@@ -102,6 +124,7 @@ export function createDebugPanel({ store, registry, getCapabilities, getLastTurn
           ${row('本轮注入', s.turn?.usedInjection ? `${s.turn.usedInjection.length} 字` : '（空）')}
           ${row('char 回', (s.turn?.charMessage || '—').slice(0, 100))}
           ${row('判定', s.turn ? `${s.turn.action}（${s.turn.reason}）` : '—')}
+          ${row('投机', s.turn?.speculation ? `${s.turn.speculation.hit ? '命中' : '失手'}（猜「${s.turn.speculation.guess}」）` : '—')}
         </div>
         <pre style="white-space:pre-wrap;margin:6px 0">${escapeHtml(s.turn?.usedInjection || '（本轮没有注入内容）')}</pre>
         <details><summary>下轮将注入</summary>

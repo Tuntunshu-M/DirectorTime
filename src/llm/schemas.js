@@ -97,6 +97,13 @@ export function isValidInitiative(data) {
   return Boolean(data) && typeof data === 'object' && typeof data.initiative === 'string';
 }
 
+/** 投机预测：{ guess, injection }（T-407；injection 必须有，否则这次投机作废） */
+export function isValidSpeculation(data) {
+  if (!data || typeof data !== 'object') return false;
+  if (typeof data.guess !== 'string') return false;
+  return typeof data.injection === 'string' && data.injection.trim().length > 0;
+}
+
 export function isValidJudgement(data) {
   if (!data || typeof data !== 'object') return false;
   if (!VALID_STATUSES.includes(data.status)) return false;
@@ -114,7 +121,7 @@ export function isValidStance(data) {
 /**
  * 统一入口：解析 + 校验。任何一步失败都返回 null。
  * @param {string} text 模型返回的原始文本
- * @param {'outline'|'stages'|'beats'|'profile'|'consistency'|'judgement'|'stance'|'initiative'} kind
+ * @param {'outline'|'stages'|'beats'|'profile'|'consistency'|'judgement'|'stance'|'initiative'|'speculation'} kind
  */
 export function parseDirectorResponse(text, kind) {
   const data = extractJson(text);
@@ -126,6 +133,7 @@ export function parseDirectorResponse(text, kind) {
   if (kind === 'profile') return isValidProfile(data) ? data : null;
   if (kind === 'consistency') return isValidConsistency(data) ? data : null;
   if (kind === 'initiative') return isValidInitiative(data) ? data : null;
+  if (kind === 'speculation') return isValidSpeculation(data) ? data : null;
   if (kind === 'judgement') return isValidJudgement(data) ? data : null;
   if (kind === 'stance') return isValidStance(data) ? data : null;
 

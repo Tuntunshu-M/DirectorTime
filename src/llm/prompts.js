@@ -18,6 +18,7 @@ const OUTLINE_SHAPE = `{
   "objective": "这个剧本最终要达成什么（一句话主目标）",
   "title": "剧本标题",
   "premise": "一句话前提",
+  "foreshadows": ["埋下的伏笔：一句设定或一个道具（1~3 条）"],
   "stages": [
     {
       "title": "阶段名",
@@ -49,6 +50,8 @@ ${OUTLINE_SHAPE}
 - beats 是角色的具体走位，2 到 4 条
 - initiative 必须**由「人物侧写」推导**：这一场如果冷场，这个角色会主动做的一件具体事
   （一句话、能演、符合他的人设）。**侧写为空就填空字符串**，不要凭角色名瞎编
+- foreshadows 是提前埋下的伏笔（一个道具、一句设定、一个约定），1 到 3 条、每条一句话。
+  不要和「已经埋下、还没回收」的伏笔重复
 
 推进点的写法（最关键，写错会导致剧情卡死）：
 - criteria 必须是**可观测行为**，禁止心理或状态描写
@@ -61,9 +64,11 @@ ${OUTLINE_SHAPE}
 - 用户想法：{{premise}}
 - 用户指定的主目标：{{objective}}
   （若为空：请你自己构思一个主目标，所有阶段必须服务于它）
+- 绝对禁区（用户显式设定，**优先于人物侧写里的任何禁忌**，一个都不许碰）：{{hardLimits}}
 - 剧情基调：{{tone}}
 - 人物侧写：{{profile}}
 - 世界书设定：{{world}}
+- 已经埋下、还没回收的伏笔：{{foreshadows}}
 - 近期对话：{{context}}
 
 请生成一份分场剧本。`,
@@ -77,7 +82,9 @@ ${OUTLINE_SHAPE}
 - 只有明确表达相反意图，才算 violated
 
 输出 JSON（不要解释）：
-{ "status": "achieved" | "partial" | "pending" | "violated", "confidence": 0到1之间的数, "reason": "一句话理由" }
+{ "status": "achieved" | "partial" | "pending" | "violated", "confidence": 0到1之间的数, "reason": "一句话理由", "recalled": ["这一轮回收了的伏笔编号"] }
+
+recalled：只填这一轮剧情里**真的回收/解答了**的伏笔编号（没有就留空数组），不要臆测。
 
 档位含义：
 - achieved：意图明确达成
@@ -89,11 +96,13 @@ confidence 填你的把握程度。**不确定就给低值** —— 系统对低
     user: `本场目标：{{goal}}
 达成条件：{{criteria}}
 反意图：{{antiCriteria}}
+待回收伏笔：
+{{foreshadows}}
 
 user 刚才说：{{userMessage}}
 角色回复：{{charMessage}}
 
-判断这一场是否达成。`,
+判断这一场是否达成，并列出这一轮回收掉的伏笔编号。`,
   },
 
   JUDGE_STANCE: {
@@ -146,6 +155,7 @@ user 说：{{userMessage}}
     user: `剧本：{{title}}
 前提：{{premise}}
 当前主目标：{{objective}}
+绝对禁区（用户显式设定，优先于人物侧写里的任何禁忌）：{{hardLimits}}
 剧情基调：{{tone}}
 人物侧写：{{profile}}
 世界书设定：{{world}}
@@ -177,6 +187,26 @@ user 说：{{userMessage}}
 本场走位：{{beats}}
 
 这一场如果冷场了，这个角色会主动做什么？`,
+  },
+
+  SPECULATE_NEXT: {
+    system: `你是电影导演。user 还没开口，你要先猜他下一句会说什么，
+并**提前把这一轮该怎么演的导演指令写好**。猜中就用，猜不中会被丢掉 —— 所以不要勉强。
+
+输出要求：
+- 只输出 JSON，不要解释，不要 markdown 代码块标记
+- 结构：{ "guess": "你猜 user 下一句会说的话", "injection": "如果猜中了，这一轮告诉角色该怎么演" }
+- guess 要短、像 user 本人会说的话（第一人称），不要复述角色台词
+- injection 写成给角色的行为指令（本场该做什么、不要做什么），不写心理描写`,
+    user: `主线目标：{{objective}}
+本场目标：{{goal}}
+角色主要活动：{{activity}}
+本场走位：{{beats}}
+
+user 刚说：{{userMessage}}
+角色刚回：{{charMessage}}
+
+猜猜 user 下一句会说什么，并写好对应的导演指令。`,
   },
 
   GEN_PROFILE: {

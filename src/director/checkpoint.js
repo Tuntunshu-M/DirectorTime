@@ -8,6 +8,7 @@
 
 import { buildMessages } from '../llm/prompts.js';
 import { parseDirectorResponse } from '../llm/schemas.js';
+import { foreshadowText } from './foreshadow.js';
 
 /**
  * 放行规则（项目书 §1 判定放行规则）。
@@ -82,7 +83,7 @@ export function resolvePacing(stage, settings = {}) {
   };
 }
 
-export function createCheckpointService({ client, stages, getConnection, getSettings } = {}) {
+export function createCheckpointService({ client, stages, getConnection, getSettings, getOutline } = {}) {
   /**
    * 判定当前阶段是否推进。
    * @returns {Promise<{ action: string, reason: string, judgement?: object, raw?: string }>}
@@ -96,6 +97,8 @@ export function createCheckpointService({ client, stages, getConnection, getSett
       goal: active.goal ?? '',
       criteria: active.checkpoint?.criteria ?? '',
       antiCriteria: active.checkpoint?.antiCriteria ?? '',
+      // T-408：顺手让模型回答"这一轮回收了哪几条伏笔"，不额外花一次调用
+      foreshadows: foreshadowText(getOutline?.() ?? null),
       userMessage,
       charMessage,
     });
