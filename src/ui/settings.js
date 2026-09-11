@@ -9,7 +9,8 @@
 //   2. 独立浮层 createSettingsPanel —— 传 onClose，自带关闭按钮
 
 const PANEL_STYLE = `
-  position:absolute; top:60px; left:20px; width:340px; max-height:76vh;
+  position:fixed; top:60px; left:20px; width:340px; max-width:calc(100vw - 40px);
+  max-height:calc(100vh - 80px); max-height:calc(100dvh - 80px);
   overflow:auto; z-index:9999; padding:12px 14px;
   background:var(--dt-card,#f5efe1); color:var(--dt-ink,#2b2721);
   border:1px solid var(--dt-rule,rgba(43,39,33,.28)); border-radius:6px;

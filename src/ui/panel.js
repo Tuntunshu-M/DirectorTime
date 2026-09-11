@@ -10,14 +10,23 @@
 import { buildDebugState } from './debug.js';
 import { renderSettingsForm } from './settings.js';
 
+// 遮罩钉在视口上：fixed + 100dvh（移动端地址栏会改变可视高度，用 dvh 而非 vh）
+// overflow:auto 兜底 —— 面板再高，整层也能滚，绝不出现"一半在屏幕外且够不到"
 const OVERLAY_STYLE = [
-  'position:fixed; inset:0; z-index:10000; display:none;',
-  'align-items:center; justify-content:center; padding:20px;',
+  'position:fixed; top:0; left:0; right:0; bottom:0;',
+  'width:100vw; height:100vh; height:100dvh;',
+  'z-index:10000; display:none;',
+  'align-items:flex-start; justify-content:center;',
+  'overflow:auto; box-sizing:border-box; padding:16px;',
   'background:rgba(0,0,0,.45);',
+  '-webkit-overflow-scrolling:touch;',
 ].join('');
 
+// margin:auto —— 放得下就在视口居中，放不下就顶部对齐、交给遮罩滚动
 const CARD_STYLE = [
-  'width:min(560px,94vw); max-height:84vh; overflow:auto; box-sizing:border-box; padding:14px 16px;',
+  'margin:auto; width:min(560px,100%); max-width:100%; box-sizing:border-box;',
+  'max-height:calc(100vh - 32px); max-height:calc(100dvh - 32px);',
+  'overflow:auto; padding:14px 16px;',
   'background:var(--dt-card,#f5efe1); color:var(--dt-ink,#2b2721);',
   'border:1px solid var(--dt-rule,rgba(43,39,33,.28)); border-radius:6px;',
   'font-family:var(--dt-font-mono,ui-monospace,monospace); font-size:12px; line-height:1.7;',

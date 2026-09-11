@@ -41,7 +41,8 @@ export function buildDebugState({ store, registry, last = null, capabilities = n
 }
 
 const PANEL_STYLE = `
-  position:absolute; top:60px; right:20px; width:360px; max-height:70vh;
+  position:fixed; top:60px; right:20px; width:360px; max-width:calc(100vw - 40px);
+  max-height:calc(100vh - 80px); max-height:calc(100dvh - 80px);
   overflow:auto; z-index:9999; padding:12px 14px;
   background:var(--dt-card,#f5efe1); color:var(--dt-ink,#2b2721);
   border:1px solid var(--dt-rule,rgba(43,39,33,.28)); border-radius:6px;
