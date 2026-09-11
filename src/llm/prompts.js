@@ -29,7 +29,8 @@ const OUTLINE_SHAPE = `{
         "antiCriteria": "明确的反意图（必填）"
       },
       "beats": ["步骤一", "步骤二"],
-      "initiative": "如果冷场，这个角色会主动做的一件事"
+      "initiative": "如果冷场，这个角色会主动做的一件事",
+      "actorId": "这一场由哪个主角主导（填主角列表里的名字；只有一个主角就填空字符串）"
     }
   ]
 }`;
@@ -64,6 +65,7 @@ ${OUTLINE_SHAPE}
 - 用户想法：{{premise}}
 - 用户指定的主目标：{{objective}}
   （若为空：请你自己构思一个主目标，所有阶段必须服务于它）
+- 主角（可能不止一个，每个阶段用 actorId 指明是谁的戏）：{{protagonists}}
 - 绝对禁区（用户显式设定，**优先于人物侧写里的任何禁忌**，一个都不许碰）：{{hardLimits}}
 - 剧情基调：{{tone}}
 - 人物侧写：{{profile}}
@@ -148,13 +150,14 @@ user 说：{{userMessage}}
 输出要求：
 - 只输出 JSON，不要解释，不要 markdown 代码块标记
 - 严格遵循这个结构：
-{ "stages": [ { "title": "阶段名", "goal": "这一场要达成什么", "activity": "角色主要活动", "checkpoint": { "criteria": "达成条件（意图级、可观测）", "antiCriteria": "明确的反意图（必填）" }, "beats": ["步骤一", "步骤二"], "initiative": "如果冷场，这个角色会主动做的一件事" } ] }
+{ "stages": [ { "title": "阶段名", "goal": "这一场要达成什么", "activity": "角色主要活动", "checkpoint": { "criteria": "达成条件（意图级、可观测）", "antiCriteria": "明确的反意图（必填）" }, "beats": ["步骤一", "步骤二"], "initiative": "如果冷场，这个角色会主动做的一件事", "actorId": "这一场由哪个主角主导（填主角列表里的名字）" } ] }
 - 只写 {{count}} 个阶段，紧接着已经发生过的剧情往下走，不要重复已有阶段
 - 一个阶段只推进一件事；criteria 写意图级，不要写死具体名词；antiCriteria 必填
 - initiative 由「人物侧写」推导（同 GEN_OUTLINE）：侧写为空就填空字符串，不要瞎编`,
     user: `剧本：{{title}}
 前提：{{premise}}
 当前主目标：{{objective}}
+主角（可能不止一个，每个阶段用 actorId 指明是谁的戏）：{{protagonists}}
 绝对禁区（用户显式设定，优先于人物侧写里的任何禁忌）：{{hardLimits}}
 剧情基调：{{tone}}
 人物侧写：{{profile}}

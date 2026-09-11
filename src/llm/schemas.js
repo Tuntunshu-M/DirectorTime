@@ -3,6 +3,8 @@
 // T-202。禁则 G5：JSON 解析失败一律返回 null，调用方必须降级为「本轮不动作」，
 // 绝不能把解析不出来的东西注入进 prompt。
 
+import { extractPlot } from './break-filter.js';
+
 /** 从模型返回文本里抠出 JSON。兼容纯 JSON、```json 代码块、前后夹带废话三种情况。 */
 export function extractJson(text) {
   if (typeof text !== 'string' || !text.trim()) return null;
@@ -124,7 +126,8 @@ export function isValidStance(data) {
  * @param {'outline'|'stages'|'beats'|'profile'|'consistency'|'judgement'|'stance'|'initiative'|'speculation'} kind
  */
 export function parseDirectorResponse(text, kind) {
-  const data = extractJson(text);
+  // T-411 清洗：开了破限词时模型会把剧情包进 <plot>…</plot>，标签外（可能混着破限指令残渣）一律丢弃
+  const data = extractJson(extractPlot(text));
   if (data === null) return null;
 
   if (kind === 'outline') return isValidOutline(data) ? data : null;

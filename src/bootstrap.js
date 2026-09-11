@@ -13,15 +13,21 @@ import { createBeatService } from './director/beats.js';
 import { createWillService } from './director/will.js';
 import { createInitiativeService, stampInitiative } from './director/initiative.js';
 import { resolveRules } from './director/rules.js';
+import { createBreakFilterService, normalizeBreakFilter } from './llm/break-filter.js';
 import { createSpeculationService } from './director/speculate.js';
 import { carryOver, foreshadowText, openForeshadows, resolveRecalled } from './director/foreshadow.js';
 import { hardLimitText } from './director/hard-limits.js';
+import { normalizeProtagonists, protagonistText } from './world/cast.js';
+import { gate, setLevel, normalizeAutomation } from './core/automation.js';
+import { createReviewQueue } from './core/review-queue.js';
+import { toneText as coreToneText, rebalanceTone, normalizeTone, TONE_KEYS } from './core/tone.js';
 import { createDefaultRules } from './core/default-state.js';
+import { exportCopy, previewCopy, applyCopy } from './core/portable.js';
 import { createCheckpointService } from './director/checkpoint.js';
 import { createReviewService } from './director/review.js';
 import { createPromptRegistry } from './inject/prompt-registry.js';
 import { createLorebookService } from './world/lorebook.js';
-import { createProfileService, profileText } from './world/character.js';
+import { createProfileService, profileText, PROFILE_FIELDS } from './world/character.js';
 import { createDebugPanel } from './ui/debug.js';
 import { createSettingsPanel } from './ui/settings.js';
 import { createMainPanel } from './ui/panel.js';
@@ -60,7 +66,14 @@ export function shouldResetScript(rounds, maxRounds, defaultLimit = 15) {
 export function bootstrap({ ctx, store } = {}) {
   const settings = () => store.getSettings();
 
-  const client = createDirectorClient();
+  // T-411 破限词：只影响导演 API 请求（client.js 的 getBreakText 是唯一出口）
+  // 「跟随酒馆预设」需要一个预设读取接口，那个由 T-418 负责探测与封装；未接上前预设部分为空
+  const breakFilter = createBreakFilterService({
+    getFilter: () => settings().breakFilter,
+    getPresetText: () => '',
+  });
+
+  const client = createDirectorClient({ getBreakText: () => breakFilter.text() });
   const stages = createStageService({ store });
   const outline = createOutlineService({
     client,
@@ -113,6 +126,9 @@ export function bootstrap({ ctx, store } = {}) {
     getConnection: () => settings().connection ?? {},
     store,
   });
+  // T-414：L1 档的待审核队列（存 state.pendingReview，切页面不丢）
+  const queue = createReviewQueue({ store });
+
   const review = createReviewService({
     checkpoint,
     will,
@@ -120,7 +136,13 @@ export function bootstrap({ ctx, store } = {}) {
     speculate,
     beats,
     topUp: topUpStages,
+    queue,
     getProfile: () => profile.read(),
+    // T-412 多人卡：当前生成者是谁
+    getSpeaker: () => ({
+      id: ctx.getCharacterId?.() ?? '',
+      name: ctx.getCharacterData?.()?.name ?? '',
+    }),
     stages,
     registry,
     store,
@@ -141,13 +163,9 @@ export function bootstrap({ ctx, store } = {}) {
 
   let generating = false;
 
-  /** 剧情占比 → 可读文本，喂给 GEN_OUTLINE 的 {{tone}} */
+  /** 剧情占比 → 可读文本，喂给 GEN_OUTLINE 的 {{tone}}（T-415 起走 core/tone） */
   function toneText() {
-    const labels = { daily: '日常', crisis: '危机', intimate: '亲密' };
-    return Object.entries(store.get().tone ?? {})
-      .filter(([, value]) => Number(value) > 0)
-      .map(([key, value]) => `${labels[key] ?? key} ${value}%`)
-      .join(' / ');
+    return coreToneText(store.get().tone);
   }
 
   /** 近期对话 → {{context}}；人物侧写 / 世界书（T-401 / T-402）未做，留空 */
@@ -193,6 +211,9 @@ export function bootstrap({ ctx, store } = {}) {
   async function ensureConsistent(result, regenerate) {
     if (settings().consistencyCheck === false) return result;
     if (!profileText(profile.read())) return result;
+    // T-414：一致性自检档位 —— L0 不自动跑
+    const consistencyGate = gate(settings().automation, 'consistency');
+    if (!consistencyGate.auto) return result;
 
     let current = result;
     for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -201,6 +222,16 @@ export function bootstrap({ ctx, store } = {}) {
       console.log(`[导演时间] 阶段与人设不符，重生成（第 ${attempt} 次）：${verdict.reason}`);
       const retry = rememberRequest(await regenerate());
       if (!retry.ok || !retry.stages?.length) return current;
+
+      // T-414：L1 → 不自作主张换成重生成版本，先问用户
+      if (consistencyGate.queue) {
+        queue.add({
+          feature: 'consistency',
+          payload: { stages: retry.stages },
+          summary: `自检认为不符人设（${verdict.reason}），建议换成重生成版本`,
+        });
+        return current;
+      }
       current = retry;
     }
     return current;
@@ -227,6 +258,8 @@ export function bootstrap({ ctx, store } = {}) {
         tone: toneText(),
         profile: profileText(profile.read()),
         world: await worldText(),
+        // T-412：主角列表（多个主角时，每个阶段用 actorId 指明是谁的戏）
+        protagonists: protagonistText(settings().protagonists),
         // T-410：硬禁区也约束剧情生成（用户显式 > 侧写禁忌）
         hardLimits: hardLimitText(settings().hardLimits),
         // T-408：把还没回收的伏笔告诉导演，别重复埋、能回收就回收
@@ -244,13 +277,28 @@ export function bootstrap({ ctx, store } = {}) {
       // 一致性自检（默认开，T-402 §六）：不合人设最多重生成 2 次
       result = await ensureConsistent(result, () => outline.generate(vars));
 
-      store.update((draft) => ({
-        ...draft,
+      const loaded = {
         // T-408：重生成剧本时，上一份**还没回收的伏笔不能丢**（验收判据 1）
         outline: carryOver(store.get().outline, result.outline),
         // T-417：盖章记下这批 initiative 是按哪一版侧写推出来的
         stages: stampInitiative(result.stages, profile.read()),
-        activeStageId: result.stages[0]?.id ?? null,
+      };
+
+      // T-414：大纲档位 L1 → 生成完先进待审核队列，确认后才装载
+      if (gate(settings().automation, 'outline').queue) {
+        queue.add({
+          feature: 'outline',
+          payload: loaded,
+          summary: `剧本《${result.outline.title}》，${result.stages.length} 个阶段`,
+        });
+        ctx.showSystemMessage?.(`导演时间：剧本《${result.outline.title}》已生成，等你在面板确认后生效（大纲档位 L1）`);
+        return { ok: true, pending: true, outline: result.outline, stages: result.stages };
+      }
+
+      store.update((draft) => ({
+        ...draft,
+        ...loaded,
+        activeStageId: loaded.stages[0]?.id ?? null,
       }), { label: '生成剧本' });
       review.syncInjection();
       ctx.showSystemMessage?.(`导演时间：剧本《${result.outline.title}》已生成，共 ${result.stages.length} 个阶段`);
@@ -363,6 +411,8 @@ export function bootstrap({ ctx, store } = {}) {
       tone: toneText(),
       profile: profileText(profile.read()),
       world: await worldText(),
+      // T-412：续写也要知道主角是谁
+      protagonists: protagonistText(settings().protagonists),
       // T-410：续写同样带上硬禁区
       hardLimits: hardLimitText(settings().hardLimits),
       // T-408：续写也要知道哪些坑还没填
@@ -381,6 +431,20 @@ export function bootstrap({ ctx, store } = {}) {
     const result = await ensureConsistent(generated, () => outline.extend(vars));
     // T-417：同样盖章
     const fresh = stampInitiative(result.stages, profile.read());
+
+    // T-414：阶段重生成档位 —— L0 不自动续写（手动点「续写」仍可用）；L1 先进队列
+    const regenGate = gate(settings().automation, 'stageRegen');
+    if (!force && !regenGate.auto) return null;
+    if (!force && regenGate.queue) {
+      queue.add({
+        feature: 'stageRegen',
+        payload: { stages: fresh },
+        summary: `续写 ${fresh.length} 个阶段：${fresh.map((stage) => stage.title).join('、')}`,
+      });
+      console.log('[导演时间] 续写结果进入待审核队列（L1）');
+      return null;
+    }
+
     stages.append(fresh);
     // 极端情况：剧本只有一场、演完才续写 —— 补位激活第一条，别让导演停摆
     if (!store.get().activeStageId) stages.activate(fresh[0].id);
@@ -449,10 +513,61 @@ export function bootstrap({ ctx, store } = {}) {
         const ok = await ctx.showConfirm?.(`有 ${lockedCount} 个字段已锁定，重新生成不会覆盖它们。继续？`);
         if (!ok) return { ok: false, error: '已取消' };
       }
+      // T-414：侧写档位 L1 → 生成完先进队列，确认后才写入
+      if (gate(settings().automation, 'profile').queue) {
+        const generated = await profile.generate({ world: await worldText(), context: recentContext() });
+        if (!generated.ok) return generated;
+        const fields = { ...generated.fields };
+        for (const key of PROFILE_FIELDS) {
+          if (current.locked?.[key] && String(current.fields?.[key] ?? '').trim()) fields[key] = current.fields[key];
+        }
+        queue.add({
+          feature: 'profile',
+          payload: { profile: { ...current, fields, source: 'ai' } },
+          summary: '重新生成的侧写（确认后覆盖，锁定字段不受影响）',
+        });
+        return { ok: true, pending: true, fields };
+      }
+
       const result = await profile.regenerate({ world: await worldText(), context: recentContext() });
       if (result.ok) review.syncInjection();
       return result;
     },
+  };
+
+  /** T-414：待审核条目的落地动作（按 feature 查表，队列里只存数据不存函数） */
+  const queueHandlers = {
+    outline: (payload) => {
+      const stages = payload?.stages ?? [];
+      store.update((draft) => ({
+        ...draft, outline: payload?.outline ?? null, stages, activeStageId: stages[0]?.id ?? null,
+      }), { label: '确认大纲' });
+      review.syncInjection();
+      return true;
+    },
+    stageRegen: (payload) => {
+      const fresh = payload?.stages ?? [];
+      if (!fresh.length) return false;
+      stages.append(fresh);
+      if (!store.get().activeStageId) stages.activate(fresh[0].id);
+      review.syncInjection();
+      return true;
+    },
+    consistency: (payload) => {
+      const fresh = payload?.stages ?? [];
+      if (!fresh.length) return false;
+      store.update((draft) => ({ ...draft, stages: fresh, activeStageId: fresh[0]?.id ?? draft.activeStageId }), { label: '确认重生成' });
+      review.syncInjection();
+      return true;
+    },
+    profile: (payload) => {
+      if (!payload?.profile) return false;
+      profile.save(payload.profile);
+      review.syncInjection();
+      return true;
+    },
+    stanceJudge: (payload) => review.applyConfirmed(payload),
+    checkpointJudge: (payload) => review.applyConfirmed(payload),
   };
 
   // 测试用配置面板：没有它就没法填 API（控制台 DirectorTime.settingsPanel.show() 仍可用）
@@ -502,6 +617,70 @@ export function bootstrap({ ctx, store } = {}) {
   const api = {
     client, stages, outline, beats, lorebook, profile, profileApi,
     registry, checkpoint, will, initiative, rules: rulesApi, speculate, review, debug,
+    // T-415：剧情占比（三条线联动配平，和恒为 100）—— UI 未做，先用控制台
+    tone: {
+      get: () => normalizeTone(store.get().tone),
+      keys: () => [...TONE_KEYS],
+      set: (key, value) => {
+        const next = rebalanceTone(store.get().tone, key, value);
+        store.update((draft) => ({ ...draft, tone: next }), { label: '调整剧情占比' });
+        return next;
+      },
+      text: () => coreToneText(store.get().tone),
+    },
+    // T-414：三级自动化档位 + 待审核队列（UI 未做，先用控制台）
+    automation: {
+      get: () => normalizeAutomation(settings().automation),
+      set: (feature, level) => {
+        store.saveSettings({ automation: setLevel(settings().automation, feature, level) });
+        return normalizeAutomation(settings().automation);
+      },
+    },
+    queue: {
+      list: () => queue.list(),
+      approve: (id) => queue.approve(id, queueHandlers),
+      reject: (id) => queue.reject(id),
+      clear: () => queue.clear(),
+    },
+    // T-413 副本迁移：整个副本搬走 / 搬回来
+    copy: {
+      export: () => exportCopy({ state: store.get(), settings: settings(), profile: profile.read() }),
+      preview: (copy) => previewCopy(copy),
+      import: async (copy) => {
+        const preview = previewCopy(copy);
+        if (!preview.ok) return { ok: false, error: preview.error, warnings: preview.warnings };
+
+        const lines = [
+          `剧本：《${preview.summary.title || '未命名'}》 · ${preview.summary.stages} 个阶段`,
+          ...preview.warnings,
+          '导入会覆盖当前剧本与相关设置（导演 API 连接不受影响）。继续？',
+        ];
+        if (ctx.capabilities?.confirmation && !(await ctx.showConfirm?.(lines.join('\n')))) {
+          return { ok: false, error: '已取消', warnings: preview.warnings };
+        }
+
+        const result = applyCopy(copy, { store, writeProfile: (next) => profile.save(next) });
+        if (result.ok) review.syncInjection();
+        return result;
+      },
+    },
+    // T-412：主角设置（可多选、持久化）—— UI 未做，先用控制台
+    cast: {
+      get: () => normalizeProtagonists(settings().protagonists),
+      set: (list) => {
+        store.saveSettings({ protagonists: normalizeProtagonists(list) });
+        review.syncInjection(); // 改完主角立刻重算注入（不是他的戏就别注入）
+        return normalizeProtagonists(settings().protagonists);
+      },
+    },
+    // T-411：破限词模式（off / preset / custom / append）—— UI 未做，先用控制台
+    breakFilter: {
+      get: () => normalizeBreakFilter(settings().breakFilter),
+      set: (next) => {
+        store.saveSettings({ breakFilter: normalizeBreakFilter(next) });
+        return normalizeBreakFilter(settings().breakFilter);
+      },
+    },
     // T-408：伏笔查看 / 手动销账（UI 未做，先用控制台）
     foreshadows: {
       list: () => openForeshadows(store.get().outline),

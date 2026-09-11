@@ -9,6 +9,8 @@
 //   3. finish_reason === 'length' 单独识别为截断
 //   4. AbortController 超时
 
+import { prependToSystem } from './break-filter.js';
+
 const DEFAULT_TIMEOUT_MS = 30000;
 const DEFAULT_TEMPERATURE = 0.7;
 const DEFAULT_MAX_TOKENS = 2000;
@@ -107,7 +109,12 @@ function authHeaders(apiKey) {
 
 // ---------- 客户端 ----------
 
-export function createDirectorClient({ fetchImpl = globalThis.fetch, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+export function createDirectorClient({
+  fetchImpl = globalThis.fetch,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  // T-411：破限词只在这里加 —— 导演 API 请求的唯一出口，角色回复端拿不到
+  getBreakText = null,
+} = {}) {
   if (typeof fetchImpl !== 'function') {
     throw createError('DirectorConfigError', 'fetch 不可用');
   }
@@ -131,13 +138,21 @@ export function createDirectorClient({ fetchImpl = globalThis.fetch, timeoutMs =
     const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? timeoutMs);
     const secrets = [apiKey, ...hostVariants(endpoint)].filter(Boolean);
 
+    let breakText = '';
+    try {
+      breakText = typeof getBreakText === 'function' ? String(getBreakText() ?? '') : '';
+    } catch {
+      breakText = ''; // 破限词出错不该阻断导演调用
+    }
+    const outgoing = prependToSystem(messages ?? [], breakText);
+
     try {
       const response = await fetchImpl(chatCompletionsUrl(endpoint), {
         method: 'POST',
         headers: authHeaders(apiKey),
         body: JSON.stringify({
           model,
-          messages,
+          messages: outgoing,
           temperature: Number(temperature ?? DEFAULT_TEMPERATURE),
           max_tokens: Number(maxTokens ?? DEFAULT_MAX_TOKENS),
         }),

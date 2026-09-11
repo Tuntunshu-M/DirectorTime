@@ -28,6 +28,8 @@ function isViolated(judgement, threshold) {
 
 import { resolveRecalled } from './foreshadow.js';
 import { matchHardLimits } from './hard-limits.js';
+import { shouldInject } from '../world/cast.js';
+import { gate } from '../core/automation.js';
 
 export function createReviewService({
   checkpoint,
@@ -37,6 +39,10 @@ export function createReviewService({
   initiative,
   speculate,
   getProfile,
+  // T-412：当前要生成的角色（多人卡里用来判断"这场戏是不是他的"）
+  getSpeaker,
+  // T-414：L1 档的待审核队列
+  queue,
   stages,
   registry,
   store,
@@ -50,6 +56,17 @@ export function createReviewService({
     const state = store?.get?.();
     const settings = getSettings?.() ?? {};
     const active = state?.stages?.find((stage) => stage.id === state.activeStageId);
+
+    // T-412 多人卡：当前生成者不是主角、或这一场不是他的戏 → 不注入，并且要把旧的清干净
+    if (active && !shouldInject({
+      stage: active,
+      speaker: getSpeaker?.() ?? null,
+      protagonists: settings.protagonists,
+    })) {
+      registry?.clear?.();
+      return '';
+    }
+
     const pacing = active ? resolvePacing(active, settings) : null;
     const text = active
       ? buildInstruction({
@@ -242,7 +259,12 @@ export function createReviewService({
       const forceAffection = Boolean(settings.forceAffection);
       const threshold = settings.confidenceThreshold ?? 0.7;
 
-      if (active && will?.judge) {
+      // T-414：两个判定点各自的档位（L0 不自动跑 / L1 结果先进队列 / L2 直接生效）
+      const automation = settings.automation ?? {};
+      const stanceGate = gate(automation, 'stanceJudge');
+      const cpGate = gate(automation, 'checkpointJudge');
+
+      if (active && will?.judge && stanceGate.auto) {
         judgedTurn = await will.judge({ stage: active, userMessage });
 
         // 强制爱开着且 user 明确拒绝 → 先确认没触及硬禁区（硬禁区不被强制爱覆盖，§七）
@@ -265,11 +287,30 @@ export function createReviewService({
       if (activeId) stages?.bumpTurn?.(activeId);
 
       // 2/3) accept → 推进点判定；其它 stance → 就地执行矩阵动作，跳过判定（拍板 b）
-      const result = shouldRunCheckpoint(decision)
+      const fromCheckpoint = shouldRunCheckpoint(decision);
+      let result = fromCheckpoint
         ? (preJudged ?? (active
-          ? await checkpoint.judge({ userMessage, charMessage })
+          ? (cpGate.auto
+            ? await checkpoint.judge({ userMessage, charMessage })
+            : { action: 'hold', reason: '推进点判定是 L0（全手动），本轮不自动判定' })
           : { action: 'hold', reason: '没有进行中的阶段' }))
         : { action: decision.action, reason: decision.reason };
+
+      // T-414 L1：判定照跑，但结果先进待审核队列，本轮按最保守动作（保持不动）
+      let queued = null;
+      const judgeGate = fromCheckpoint ? cpGate : stanceGate;
+      if (judgeGate.queue && result.action !== 'hold') {
+        queued = queue?.add?.({
+          feature: judgeGate.feature,
+          payload: { action: result.action, reason: result.reason ?? '', judgement: result.judgement ?? null },
+          summary: `建议动作「${result.action}」：${result.reason ?? ''}`,
+        }) ?? null;
+        result = {
+          action: 'hold',
+          reason: `判定为 ${judgeGate.level}（待确认）：「${queued?.payload?.action ?? ''}」已进队列，确认后才生效`,
+          judgement: result.judgement ?? null,
+        };
+      }
 
       // T-408：判定顺手报回来的伏笔编号，在这里销账
       const recalled = settleRecalled(result.judgement ?? preJudged?.judgement);
@@ -303,6 +344,8 @@ export function createReviewService({
           : null,
         // T-408：这一轮回收掉的伏笔
         recalled,
+        // T-414：L1 档下这一轮判定进队了
+        queued: queued ? { id: queued.id, feature: queued.feature } : null,
         judgement,
         raw: result.raw ?? preJudged?.raw ?? judgedTurn?.raw ?? '',
         // T-405：态度判定与矩阵决策（没判到时为 null）
@@ -336,5 +379,17 @@ export function createReviewService({
     }
   }
 
-  return { run, syncInjection, getLastTurn: () => lastTurn };
+  /** T-414：待审核条目被确认后，把当时判定的动作真正落地 */
+  async function applyConfirmed(payload = {}) {
+    const active = stages?.getActive?.();
+    await applyAction(
+      { action: payload.action, reason: payload.reason || '确认后应用' },
+      { active, activeId: active?.id, userMessage: '', charMessage: '' }
+    );
+    if ((payload.action === 'advance' || payload.action === 'force') && topUp) await topUp();
+    syncInjection();
+    return true;
+  }
+
+  return { run, syncInjection, applyConfirmed, getLastTurn: () => lastTurn };
 }

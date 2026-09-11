@@ -85,6 +85,36 @@ DirectorTime.debug.show()
 
 侧写存在角色卡上（换聊天不用重生成，换角色才需要），并同时作用于两端：剧情生成的输入，以及每轮注入指令里的「角色动机层」。
 
+## 更多开关（暂时都要走控制台）
+
+正式界面还没做（AGENTS G4），下面这些现在用控制台改，改完立刻生效、重启不丢：
+
+```js
+// 三级自动化档位：大纲 / 阶段重生成 / 侧写 / 立场判定 / 推进点判定 / 一致性自检
+DirectorTime.automation.set('outline', 'L2')   // L0 全手动 / L1 待确认 / L2 全自动
+DirectorTime.queue.list()                      // L1 档下待你确认的东西
+DirectorTime.queue.approve('pr_xxx')           // 确认后才生效
+
+// 剧情占比（三条线联动，和恒为 100）
+DirectorTime.tone.set('daily', 60)
+
+// 硬禁区：命中即停，优先于侧写禁忌
+DirectorTime.store.saveSettings({ hardLimits: ['自杀', '自残'] })
+
+// 破限词：off / preset（跟随酒馆预设）/ custom / append
+DirectorTime.breakFilter.set({ mode: 'custom', custom: '……' })
+
+// 主角（多人卡，可多选）
+DirectorTime.cast.set([{ name: '爱丽丝' }, { name: '鲍勃' }])
+
+// 伏笔 / 副本
+DirectorTime.foreshadows.list()
+const copy = DirectorTime.copy.export()        // 存成 JSON 就能搬走
+await DirectorTime.copy.import(copy)           // 导入前会给你看概览与警告
+```
+
+投机执行（默认开）每轮多花一次导演 API 调用，换成"下一轮零延迟"；关掉：`DirectorTime.store.saveSettings({ speculation: false })`。
+
 ## 态度词库（规则引擎）
 
 判断你的态度**先走本地规则**（免费、即时），规则拿不准才去问导演 API。所以像「好」「我不要」这种明确表态，不会产生任何 API 调用。
