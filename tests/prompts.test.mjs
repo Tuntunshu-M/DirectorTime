@@ -30,8 +30,8 @@ check('缺失变量渲染为空，不抛错', () => {
   assert.equal(renderTemplate('a{{x}}b', {}), 'ab');
 });
 
-check('三份模板都能组装出 system + user', () => {
-  for (const name of ['GEN_OUTLINE', 'JUDGE_CHECKPOINT', 'JUDGE_STANCE']) {
+check('所有模板都能组装出 system + user', () => {
+  for (const name of Object.keys(PROMPTS)) {
     const messages = buildMessages(name, { goal: 'g' });
     assert.equal(messages.length, 2);
     assert.equal(messages[0].role, 'system');
@@ -119,6 +119,15 @@ check('parseDirectorResponse 对非法内容返回 null', () => {
 check('parseDirectorResponse 正常返回数据', () => {
   const data = parseDirectorResponse('{"status":"achieved","confidence":0.9}', 'judgement');
   assert.equal(data.status, 'achieved');
+});
+
+check('parseDirectorResponse 支持 beats 与 stages（T-205④ / 续写）', () => {
+  assert.deepEqual(parseDirectorResponse('{"beats":["a","b"]}', 'beats').beats, ['a', 'b']);
+  assert.equal(parseDirectorResponse('{"beats":[]}', 'beats'), null, '空 beats 判非法');
+  assert.equal(parseDirectorResponse('{"beats":[" "]}/x', 'beats'), null, '空白 beat 判非法');
+  const stages = parseDirectorResponse('{"stages":[{"goal":"g","checkpoint":{"criteria":"c","antiCriteria":"a"}}]}', 'stages');
+  assert.equal(stages.stages.length, 1);
+  assert.equal(parseDirectorResponse('{"stages":[]}', 'stages'), null);
 });
 
 console.log(`\n通过 ${passed} 项`);

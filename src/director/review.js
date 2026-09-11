@@ -14,6 +14,7 @@ const SKIP_TYPES = ['regenerate', 'swipe', 'impersonate', 'quiet'];
 
 export function createReviewService({
   checkpoint,
+  beats,
   stages,
   registry,
   store,
@@ -66,10 +67,23 @@ export function createReviewService({
         case 'retry':
           if (activeId) stages?.bumpStuck?.(activeId);
           break;
-        case 'rewrite':
-          // 部分达成：重置卡住计数，换条走位再试（重写 beats 由后续任务接入）
+        case 'rewrite': {
+          // 部分达成：本场停留，但**换一组走位**再试（T-205 验收④）
           if (activeId) stages?.resetStuck?.(activeId);
+          if (active && beats?.rewrite) {
+            const rewritten = await beats.rewrite({
+              stage: active,
+              userMessage: input.userMessage ?? '',
+              charMessage: input.charMessage ?? '',
+              reason: result.reason ?? '',
+            });
+            // 重写失败就保持原走位（G5：解析不出来就不改任何东西）
+            if (rewritten.ok && rewritten.beats?.length) {
+              stages?.update?.(activeId, { beats: rewritten.beats });
+            }
+          }
           break;
+        }
         case 'redirect':
           // 明确违背：交给意愿矩阵决定让步还是坚持（T-405 之前先保持不动）
           if (activeId) stages?.bumpStuck?.(activeId);

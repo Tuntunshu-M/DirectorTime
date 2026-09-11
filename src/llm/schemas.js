@@ -43,20 +43,36 @@ export function extractJson(text) {
 const VALID_STATUSES = ['achieved', 'partial', 'pending', 'violated'];
 const VALID_STANCES = ['accept', 'reject', 'hesitate', 'irrelevant', 'redirect'];
 
+/** 单个阶段的结构校验：goal + checkpoint 正反条件必填 */
+export function isValidStage(stage) {
+  if (!stage || typeof stage !== 'object') return false;
+  if (typeof stage.goal !== 'string' || !stage.goal.trim()) return false;
+  if (!stage.checkpoint || typeof stage.checkpoint !== 'object') return false;
+  // antiCriteria 是硬性要求：没有反向判定就会掉进灰色死循环
+  if (typeof stage.checkpoint.criteria !== 'string' || !stage.checkpoint.criteria.trim()) return false;
+  if (typeof stage.checkpoint.antiCriteria !== 'string' || !stage.checkpoint.antiCriteria.trim()) return false;
+  return true;
+}
+
 export function isValidOutline(data) {
   if (!data || typeof data !== 'object') return false;
   if (typeof data.title !== 'string' || !data.title.trim()) return false;
   if (!Array.isArray(data.stages) || data.stages.length === 0) return false;
+  return data.stages.every(isValidStage);
+}
 
-  return data.stages.every((stage) => {
-    if (!stage || typeof stage !== 'object') return false;
-    if (typeof stage.goal !== 'string' || !stage.goal.trim()) return false;
-    if (!stage.checkpoint || typeof stage.checkpoint !== 'object') return false;
-    // antiCriteria 是硬性要求：没有反向判定就会掉进灰色死循环
-    if (typeof stage.checkpoint.criteria !== 'string' || !stage.checkpoint.criteria.trim()) return false;
-    if (typeof stage.checkpoint.antiCriteria !== 'string' || !stage.checkpoint.antiCriteria.trim()) return false;
-    return true;
-  });
+/** 续写阶段：只有 stages，没有 title */
+export function isValidStages(data) {
+  if (!data || typeof data !== 'object') return false;
+  if (!Array.isArray(data.stages) || data.stages.length === 0) return false;
+  return data.stages.every(isValidStage);
+}
+
+/** 走位重写：{ beats: ["..."] }（T-205 验收④） */
+export function isValidBeats(data) {
+  if (!data || typeof data !== 'object') return false;
+  if (!Array.isArray(data.beats) || data.beats.length === 0) return false;
+  return data.beats.every((beat) => typeof beat === 'string' && beat.trim());
 }
 
 export function isValidJudgement(data) {
@@ -76,13 +92,15 @@ export function isValidStance(data) {
 /**
  * 统一入口：解析 + 校验。任何一步失败都返回 null。
  * @param {string} text 模型返回的原始文本
- * @param {'outline'|'judgement'|'stance'} kind
+ * @param {'outline'|'stages'|'beats'|'judgement'|'stance'} kind
  */
 export function parseDirectorResponse(text, kind) {
   const data = extractJson(text);
   if (data === null) return null;
 
   if (kind === 'outline') return isValidOutline(data) ? data : null;
+  if (kind === 'stages') return isValidStages(data) ? data : null;
+  if (kind === 'beats') return isValidBeats(data) ? data : null;
   if (kind === 'judgement') return isValidJudgement(data) ? data : null;
   if (kind === 'stance') return isValidStance(data) ? data : null;
 

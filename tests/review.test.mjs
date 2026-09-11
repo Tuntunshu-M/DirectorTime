@@ -124,6 +124,41 @@ await check('判定 rewrite 时重置卡住计数', async () => {
   assert.equal(env.store.get().stages[0].stuckCount, 0);
 });
 
+await check('判定 rewrite 时换一组走位（T-205④）', async () => {
+  const env = makeEnv();
+  seed(env);
+  const before = env.store.get().stages[0].beats.join('|');
+  let asked = null;
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'rewrite', reason: '部分达成' }) },
+    beats: { rewrite: async (input) => { asked = input; return { ok: true, beats: ['新走位一', '新走位二'] }; } },
+    stages: env.stages, registry: env.registry, store: env.store, getSettings: () => ({}),
+  });
+  await service.run({ userMessage: '也许吧', charMessage: '再想想' });
+
+  const after = env.store.get().stages[0].beats.join('|');
+  assert.notEqual(after, before);
+  assert.equal(after, '新走位一|新走位二');
+  assert.equal(asked.stage.goal, '知道想不想去');
+  assert.equal(asked.reason, '部分达成');
+  // 下一轮注入要换成新走位
+  assert.ok(env.registered[env.registered.length - 1].includes('新走位一'));
+});
+
+await check('走位重写失败时保持原走位，仍注入当前阶段（G5）', async () => {
+  const env = makeEnv();
+  seed(env);
+  const before = env.store.get().stages[0].beats.join('|');
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'rewrite', reason: '部分达成' }) },
+    beats: { rewrite: async () => ({ ok: false, error: '解析失败' }) },
+    stages: env.stages, registry: env.registry, store: env.store, getSettings: () => ({}),
+  });
+  await service.run({ userMessage: '也许吧' });
+  assert.equal(env.store.get().stages[0].beats.join('|'), before);
+  assert.ok(env.registered[env.registered.length - 1].includes('做饭 → 开口'));
+});
+
 await check('复盘后更新注入内容（供下一轮使用）', async () => {
   const env = makeEnv();
   seed(env);

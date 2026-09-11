@@ -9,6 +9,7 @@
 import { createDirectorClient } from './llm/client.js';
 import { createStageService } from './director/stage.js';
 import { createOutlineService } from './director/outline.js';
+import { createBeatService } from './director/beats.js';
 import { createCheckpointService } from './director/checkpoint.js';
 import { createReviewService } from './director/review.js';
 import { createPromptRegistry } from './inject/prompt-registry.js';
@@ -46,6 +47,10 @@ export function bootstrap({ ctx, store } = {}) {
     getConnection: () => settings().connection ?? {},
   });
   const registry = createPromptRegistry({ ctx, store, getSettings: settings });
+  const beats = createBeatService({
+    client,
+    getConnection: () => settings().connection ?? {},
+  });
   const checkpoint = createCheckpointService({
     client,
     stages,
@@ -54,6 +59,7 @@ export function bootstrap({ ctx, store } = {}) {
   });
   const review = createReviewService({
     checkpoint,
+    beats,
     stages,
     registry,
     store,
@@ -211,7 +217,7 @@ export function bootstrap({ ctx, store } = {}) {
   };
 
   const api = {
-    client, stages, outline, registry, checkpoint, review, debug, generateScript, setEnabled,
+    client, stages, outline, beats, registry, checkpoint, review, debug, generateScript, setEnabled,
     settingsPanel: settingsPanelApi, panel, unmountMenu,
   };
 
