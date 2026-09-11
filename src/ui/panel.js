@@ -180,7 +180,7 @@ export function createMainPanel({
           || entry.name.toLowerCase().includes(keyword)
           || entry.content.toLowerCase().includes(keyword));
         if (!entries.length && !book.error) return '';
-        const head = `<div style="margin:6px 0 2px;opacity:.75">▸ ${escapeHtml(book.name)}${book.error ? `（${escapeHtml(book.error)}）` : `　${all.length} 条`}</div>`;
+        const head = `<label style="display:block;margin:6px 0 2px;opacity:.75"><input type="checkbox" data-world-book="${escapeHtml(book.name)}" ${all.length && all.every((entry) => selection[entry.key]) ? 'checked' : ''}> ▸ ${escapeHtml(book.name)}${book.error ? `（${escapeHtml(book.error)}）` : `　${all.length} 条`}</label>`;
         const items = entries.map((entry) => `
           <label style="display:block;margin-left:14px">
             <input type="checkbox" data-world-key="${escapeHtml(entry.key)}" ${selection[entry.key] ? 'checked' : ''}> ${escapeHtml(entry.name)}${entry.enabled ? '' : '<span style="opacity:.6">（禁用）</span>'}${entry.constant ? '<span style="opacity:.6">（常驻）</span>' : ''}
@@ -225,6 +225,25 @@ export function createMainPanel({
         const stat = body.querySelector('#dt-world-stat');
         if (stat) stat.textContent = statText();
         refreshWorldPreview(body);
+      });
+    });
+
+    // 整书勾选 / 取消（项目书 §F1「树形勾选整书或单条目」）
+    body.querySelectorAll('input[data-world-book]').forEach((bookBox) => {
+      bookBox.addEventListener('change', () => {
+        const target = bookBox.dataset.worldBook;
+        const next = { ...(getWorldSelection?.() ?? {}) };
+        for (const source of worldSources ?? []) {
+          for (const book of source.books ?? []) {
+            if (book.name !== target) continue;
+            for (const entry of book.entries ?? []) {
+              if (bookBox.checked) next[entry.key] = true;
+              else delete next[entry.key];
+            }
+          }
+        }
+        saveWorldSelection?.(next);
+        render();
       });
     });
 
