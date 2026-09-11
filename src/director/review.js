@@ -248,6 +248,9 @@ export function createReviewService({
             action: decision.action,
             reason: decision.reason,
             ok: judgedTurn?.ok ?? false,
+            // T-406：这一轮的态度是本地规则判的，还是问了 LLM
+            source: judgedTurn?.source ?? '',
+            matched: judgedTurn?.matched ?? judgedTurn?.rule?.matched ?? [],
             violated: isViolated(judgement, threshold),
           }
           : null,

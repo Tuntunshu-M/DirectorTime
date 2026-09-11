@@ -185,12 +185,16 @@ function makeStage(goal = '知道 user 想不想去') {
 }
 
 await check('判出态度时返回 stance 与 confidence', async () => {
+  let called = 0;
   const service = createWillService({
-    client: { request: async () => '{"stance":"reject","confidence":0.85}' },
+    client: { request: async () => { called += 1; return '{"stance":"reject","confidence":0.85}'; } },
     getConnection: () => ({}),
   });
-  const r = await service.judge({ stage: makeStage(), userMessage: '我不去' });
+  // 挑一句规则引擎判不了的（T-406 起强词会先被本地规则接管）
+  const r = await service.judge({ stage: makeStage(), userMessage: '这件事你怎么看' });
+  assert.equal(called, 1, '规则判不了才问 LLM');
   assert.equal(r.ok, true);
+  assert.equal(r.source, 'llm');
   assert.equal(r.stance, 'reject');
   assert.equal(r.confidence, 0.85);
   assert.equal(resolve({ stance: r.stance, confidence: r.confidence, will: 90 }).action, 'regenAfter');

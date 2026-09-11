@@ -18,6 +18,7 @@
 
 import { buildMessages } from '../llm/prompts.js';
 import { parseDirectorResponse } from '../llm/schemas.js';
+import { judgeByRules } from './rules.js';
 
 export const DEFAULT_WILL = 80;
 export const WILL_LOW_MAX = 33; // 0~33   剧情优先
@@ -125,14 +126,28 @@ export function shouldRunCheckpoint(decision) {
   return !decision || decision.stance === 'accept';
 }
 
-export function createWillService({ client, getConnection } = {}) {
+export function createWillService({ client, getConnection, getRules } = {}) {
   /**
-   * 判 user 这一句的态度（JUDGE_STANCE）。
+   * 判 user 这一句的态度。
+   * 顺序（T-406）：**先本地规则，够准就不花 API；不够准再问 JUDGE_STANCE**。
    * 调用失败 / 解析失败一律降级为 accept：拿不准就当接受，让流程照常走推进点判定（禁则 G5）。
    */
   async function judge({ stage, userMessage = '' } = {}) {
     if (!stage) return { ok: false, stance: 'accept', confidence: 0, reason: '没有进行中的阶段' };
 
+    // 1) 规则引擎（本地、免费、不会解析失败）
+    const local = judgeByRules(userMessage, getRules?.() ?? null);
+    if (!local.needsLlm && local.stance) {
+      return {
+        ok: true,
+        source: 'rules',
+        stance: local.stance,
+        confidence: local.confidence,
+        matched: local.matched,
+      };
+    }
+
+    // 2) 规则不够准 → 老实交给 LLM（复用已有的 JUDGE_STANCE，不新写 prompt）
     const messages = buildMessages('JUDGE_STANCE', {
       goal: stage.goal ?? '',
       userMessage,
@@ -142,15 +157,22 @@ export function createWillService({ client, getConnection } = {}) {
     try {
       raw = await client.request({ ...getConnection?.(), messages, maxTokens: 300 });
     } catch (error) {
-      return { ok: false, stance: 'accept', confidence: 0, reason: error?.message ?? '导演 API 调用失败' };
+      return { ok: false, stance: 'accept', confidence: 0, reason: error?.message ?? '导演 API 调用失败', rule: local };
     }
 
     const data = parseDirectorResponse(raw, 'stance');
     if (!data) {
-      return { ok: false, stance: 'accept', confidence: 0, reason: '态度判定无法解析，按接受处理', raw };
+      return { ok: false, stance: 'accept', confidence: 0, reason: '态度判定无法解析，按接受处理', raw, rule: local };
     }
 
-    return { ok: true, stance: data.stance, confidence: data.confidence, raw };
+    return {
+      ok: true,
+      source: 'llm',
+      stance: data.stance,
+      confidence: data.confidence,
+      raw,
+      rule: local,
+    };
   }
 
   return { judge };

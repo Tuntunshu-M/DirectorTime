@@ -12,6 +12,8 @@ import { createOutlineService } from './director/outline.js';
 import { createBeatService } from './director/beats.js';
 import { createWillService } from './director/will.js';
 import { createInitiativeService, stampInitiative } from './director/initiative.js';
+import { resolveRules } from './director/rules.js';
+import { createDefaultRules } from './core/default-state.js';
 import { createCheckpointService } from './director/checkpoint.js';
 import { createReviewService } from './director/review.js';
 import { createPromptRegistry } from './inject/prompt-registry.js';
@@ -81,7 +83,21 @@ export function bootstrap({ ctx, store } = {}) {
   const will = createWillService({
     client,
     getConnection: () => settings().connection ?? {},
+    getRules: () => settings().rules,
   });
+
+  // T-406：词库编辑入口（判据 1 —— 增删改都直接落进 settings，重启仍在）
+  const rulesApi = {
+    get: () => resolveRules(settings().rules),
+    set: (next) => {
+      store.saveSettings({ rules: next });
+      return resolveRules(settings().rules);
+    },
+    reset: () => {
+      store.saveSettings({ rules: createDefaultRules() });
+      return resolveRules(settings().rules);
+    },
+  };
   const initiative = createInitiativeService({
     client,
     getConnection: () => settings().connection ?? {},
@@ -422,7 +438,7 @@ export function bootstrap({ ctx, store } = {}) {
 
   const api = {
     client, stages, outline, beats, lorebook, profile, profileApi,
-    registry, checkpoint, will, initiative, review, debug,
+    registry, checkpoint, will, initiative, rules: rulesApi, review, debug,
     generateScript, regenerateScript, topUpStages, resetScript, setEnabled,
     collectWorldSources, worldText, profileText,
     settingsPanel: settingsPanelApi, panel, unmountMenu,

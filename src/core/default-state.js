@@ -21,6 +21,53 @@ export function createDefaultTone() {
   return { daily: 70, crisis: 30, intimate: 0 };
 }
 
+/**
+ * 规则引擎的四词库（T-406）。全部可编辑：用户改的就是这一份，直接持久化。
+ * - strong / weak：带归属标签，指向哪个 stance
+ * - negation：否定词，会反转其后紧邻的情感词
+ * - irrelevant：「转向 / 无关」词。**转折词（不过 / 但是 / 可是）也放这里** ——
+ *   它把态度转向反面，和强词同时出现时属于自相矛盾，规则引擎会老实转 LLM。
+ */
+export function createDefaultRules() {
+  return {
+    strong: [
+      { word: '好', stance: 'accept' },
+      { word: '好啊', stance: 'accept' },
+      { word: '走', stance: 'accept' },
+      { word: '走吧', stance: 'accept' },
+      { word: '答应', stance: 'accept' },
+      { word: '同意', stance: 'accept' },
+      { word: '愿意', stance: 'accept' },
+      { word: '没问题', stance: 'accept' },
+      { word: '就这么定了', stance: 'accept' },
+      { word: '定了', stance: 'accept' },
+      { word: '听你的', stance: 'accept' },
+      { word: '不想去', stance: 'reject' },
+      { word: '不想', stance: 'reject' },
+      { word: '不愿意', stance: 'reject' },
+      { word: '不要', stance: 'reject' },
+      { word: '不去', stance: 'reject' },
+      { word: '不行', stance: 'reject' },
+      { word: '拒绝', stance: 'reject' },
+      { word: '反对', stance: 'reject' },
+      { word: '别烦', stance: 'reject' },
+      { word: '滚', stance: 'reject' },
+      { word: '讨厌', stance: 'reject' },
+    ],
+    weak: [
+      { word: '嗯', stance: 'hesitate' },
+      { word: '吧', stance: 'hesitate' },
+      { word: '也许', stance: 'hesitate' },
+      { word: '再说吧', stance: 'hesitate' },
+      { word: '再说', stance: 'hesitate' },
+      { word: '随便', stance: 'hesitate' },
+      { word: '大概', stance: 'hesitate' },
+    ],
+    negation: ['不', '没', '无', '别', '非', '未曾', '没有'],
+    irrelevant: ['天气', '对了', '换个话题', '先不说这个', '不过', '但是', '可是'],
+  };
+}
+
 export function createDefaultRuntime() {
   return {
     promptRegistered: false,
@@ -70,6 +117,8 @@ export function createDefaultSettings() {
     objective: '',
     // 楼层节奏：每场最少 / 最多聊几楼（T-416；阶段自己的 pacing 可覆盖）
     pacing: { min: 3, max: 8 },
+    // 规则引擎四词库（T-406）：默认一份，用户改的就是这份、直接持久化
+    rules: createDefaultRules(),
     // 世界书：勾选的条目（entryKey → true）与进 prompt 的条数上限（项目书 §F1 / 附录建议 20）
     worldSelection: {},
     worldLimit: 20,
