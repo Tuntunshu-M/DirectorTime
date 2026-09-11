@@ -81,7 +81,10 @@ export function createDebugPanel({ store, registry, getCapabilities, getLastTurn
     });
 
     node.innerHTML = `
-      <div style="font-size:13px;margin-bottom:8px">◆ 导演时间 · 调试</div>
+      <div style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:8px">
+        <span style="flex:1">◆ 导演时间 · 调试</span>
+        <button id="dt-debug-close" type="button" aria-label="关闭调试面板" title="关闭" style="font:inherit;padding:3px 8px;cursor:pointer">✕</button>
+      </div>
       <hr style="border:none;border-top:1px dashed var(--dt-rule,rgba(43,39,33,.28))">
       <div style="margin:8px 0">
         ${row('阶段', `${s.stage.index}/${s.stage.total} ${s.stage.title}`)}
@@ -115,6 +118,7 @@ export function createDebugPanel({ store, registry, getCapabilities, getLastTurn
       <div style="margin-top:10px"><button id="dt-debug-export" style="font:inherit;padding:4px 10px">导出状态 JSON</button></div>
     `;
 
+    node.querySelector('#dt-debug-close')?.addEventListener('click', hide);
     node.querySelector('#dt-debug-export')?.addEventListener('click', exportJson);
     return s;
   }

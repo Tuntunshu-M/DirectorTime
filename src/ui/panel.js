@@ -4,35 +4,14 @@
 // 主页面 = 运行状态（UI 设计 §3 场记板 + §9 调试的简化版，数据复用 debug.js 的纯函数）；
 // 导演 API 配置收进右上角「配置」，随用随关。
 //
+// 尺寸 / 定位跟随酒馆页面：样式在 style.css 的 #dt-panel（fixed + 100dvh + calc 限宽限高），
+// 与旧仓库 just-do-it-char 的 .stpd-overlay / .stpd-modal 同一套做法 ——
+// 手机、缩小的小窗口都不会超出视口，头部（含关闭按钮）永远可见，内容在内部滚动。
+//
 // G4：本文件只做结构与交互，不做视觉美化（无斜纹 / 旋转 / 印章 / 装饰纹理）。
-// 正式六分类界面按《UI设计-完全版.md》在 UI 阶段重写。
 
 import { buildDebugState } from './debug.js';
 import { renderSettingsForm } from './settings.js';
-
-// 遮罩钉在视口上：fixed + 100dvh（移动端地址栏会改变可视高度，用 dvh 而非 vh）
-// overflow:auto 兜底 —— 面板再高，整层也能滚，绝不出现"一半在屏幕外且够不到"
-const OVERLAY_STYLE = [
-  'position:fixed; top:0; left:0; right:0; bottom:0;',
-  'width:100vw; height:100vh; height:100dvh;',
-  'z-index:10000; display:none;',
-  'align-items:flex-start; justify-content:center;',
-  'overflow:auto; box-sizing:border-box; padding:16px;',
-  'background:rgba(0,0,0,.45);',
-  '-webkit-overflow-scrolling:touch;',
-].join('');
-
-// margin:auto —— 放得下就在视口居中，放不下就顶部对齐、交给遮罩滚动
-const CARD_STYLE = [
-  'margin:auto; width:min(560px,100%); max-width:100%; box-sizing:border-box;',
-  'max-height:calc(100vh - 32px); max-height:calc(100dvh - 32px);',
-  'overflow:auto; padding:14px 16px;',
-  'background:var(--dt-card,#f5efe1); color:var(--dt-ink,#2b2721);',
-  'border:1px solid var(--dt-rule,rgba(43,39,33,.28)); border-radius:6px;',
-  'font-family:var(--dt-font-mono,ui-monospace,monospace); font-size:12px; line-height:1.7;',
-].join('');
-
-const BUTTON_STYLE = 'font:inherit;padding:4px 10px;cursor:pointer';
 
 function escapeHtml(text) {
   return String(text ?? '').replace(/[&<>"']/g, (ch) => (
@@ -61,16 +40,14 @@ export function createMainPanel({
     if (el) return el;
     el = document.createElement('div');
     el.id = 'dt-panel';
-    el.style.cssText = OVERLAY_STYLE;
     el.innerHTML = `
-      <section role="dialog" aria-modal="true" aria-label="导演时间" style="${CARD_STYLE}">
-        <header style="display:flex;align-items:center;gap:8px">
-          <strong id="dt-panel-title" style="font-size:14px;flex:1">导演时间</strong>
-          <button id="dt-panel-config" type="button" style="${BUTTON_STYLE}" title="导演 API 配置">配置</button>
-          <button id="dt-panel-close" type="button" style="${BUTTON_STYLE}" aria-label="关闭导演时间" title="关闭">✕</button>
+      <section class="dt-card" role="dialog" aria-modal="true" aria-label="导演时间">
+        <header class="dt-head">
+          <strong class="dt-title" id="dt-panel-title">导演时间</strong>
+          <button class="dt-btn" id="dt-panel-config" type="button" title="导演 API 配置">配置</button>
+          <button class="dt-btn" id="dt-panel-close" type="button" aria-label="关闭导演时间" title="关闭">✕</button>
         </header>
-        <hr style="border:none;border-top:1px dashed var(--dt-rule,rgba(43,39,33,.28));margin:8px 0">
-        <div id="dt-panel-body"></div>
+        <div class="dt-body" id="dt-panel-body"></div>
       </section>
     `;
     document.body.appendChild(el);
@@ -90,7 +67,7 @@ export function createMainPanel({
   }
 
   function isOpen() {
-    return el?.style.display === 'flex';
+    return Boolean(el?.classList.contains('dt-open'));
   }
 
   function renderStatus(body) {
@@ -118,7 +95,7 @@ export function createMainPanel({
       ${row('累计', `调用 ${status.cost.callCount} 次`)}
       ${tip}
       <div style="margin-top:10px">
-        <button id="dt-panel-debug" type="button" style="${BUTTON_STYLE}">打开调试面板</button>
+        <button id="dt-panel-debug" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">打开调试面板</button>
       </div>
     `;
     body.querySelector('#dt-panel-debug')?.addEventListener('click', () => onOpenDebug?.());
@@ -145,14 +122,14 @@ export function createMainPanel({
 
   function open() {
     const node = ensure();
-    node.style.display = 'flex';
+    node.classList.add('dt-open');
     view = 'status';
     render();
     return node;
   }
 
   function close() {
-    if (el) el.style.display = 'none';
+    el?.classList.remove('dt-open');
   }
 
   function toggle() {
@@ -166,5 +143,5 @@ export function createMainPanel({
     el = null;
   }
 
-  return { open, close, toggle, render, setView, destroy };
+  return { open, close, toggle, render, setView, destroy, isOpen };
 }

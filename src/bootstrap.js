@@ -88,6 +88,13 @@ export function bootstrap({ ctx, store } = {}) {
     onSave: () => registry.sync(),
   });
 
+  // 同一时刻只允许一个面板在场：开哪个，就把另外两个收起来
+  function openOnly(target) {
+    if (target !== 'panel') panel?.close();
+    if (target !== 'debug') debug.hide();
+    if (target !== 'settings') settingsPanel.hide();
+  }
+
   // 主页面：运行状态 + 配置；由菜单栏入口打开
   const panel = createMainPanel({
     store,
@@ -96,13 +103,22 @@ export function bootstrap({ ctx, store } = {}) {
     getLast: () => review.getLastTurn(),
     onTest: () => client.testConnection(settings().connection ?? {}),
     onSave: () => registry.sync(),
-    onOpenDebug: () => { panel.close(); debug.show(); },
+    onOpenDebug: () => { openOnly('debug'); debug.show(); },
   });
 
   // 入口挂在酒馆扩展菜单（#extensionsMenu）。点开是主页面，不再自动弹配置
-  const unmountMenu = mountMenuEntry({ onOpen: () => panel.open() });
+  const unmountMenu = mountMenuEntry({ onOpen: () => { openOnly('panel'); panel.open(); } });
 
-  const api = { client, stages, registry, checkpoint, review, debug, settingsPanel, panel, unmountMenu };
+  // 控制台入口也走互斥，避免出现第二个面板
+  const settingsPanelApi = {
+    ...settingsPanel,
+    show: () => { openOnly('settings'); return settingsPanel.show(); },
+  };
+
+  const api = {
+    client, stages, registry, checkpoint, review, debug,
+    settingsPanel: settingsPanelApi, panel, unmountMenu,
+  };
 
   if (typeof window !== 'undefined') {
     window.DirectorTime = { ...(window.DirectorTime ?? {}), ...api };
