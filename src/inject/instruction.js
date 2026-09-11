@@ -20,11 +20,14 @@ export function buildDirectorLayer({ stage, outline }) {
 
 export function buildCharacterLayer({ profile }) {
   if (!profile) return '';
+  // 兼容两种形状：侧写对象（profile.fields，T-402）与旧的扁平写法
+  const fields = profile.fields ?? profile;
   const lines = ['[角色此刻的动机]'];
-  if (profile.desire) lines.push(`他想要：${profile.desire}`);
-  if (profile.conflictStyle) lines.push(`他处理冲突的方式：${profile.conflictStyle}`);
-  if (profile.speech) lines.push(`他说话的方式：${profile.speech}`);
-  if (profile.taboo) lines.push(`他绝不会：${profile.taboo}`);
+  const desire = fields.coreDesire ?? fields.desire;
+  if (desire) lines.push(`他想要：${desire}`);
+  if (fields.conflictStyle) lines.push(`他处理冲突的方式：${fields.conflictStyle}`);
+  if (fields.speech) lines.push(`他说话的方式：${fields.speech}`);
+  if (fields.taboo) lines.push(`他绝不会：${fields.taboo}`);
   return lines.length > 1 ? lines.join('\n') : '';
 }
 

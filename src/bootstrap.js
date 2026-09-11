@@ -14,6 +14,7 @@ import { createCheckpointService } from './director/checkpoint.js';
 import { createReviewService } from './director/review.js';
 import { createPromptRegistry } from './inject/prompt-registry.js';
 import { createLorebookService } from './world/lorebook.js';
+import { createProfileService, profileText } from './world/character.js';
 import { createDebugPanel } from './ui/debug.js';
 import { createSettingsPanel } from './ui/settings.js';
 import { createMainPanel } from './ui/panel.js';
@@ -60,6 +61,11 @@ export function bootstrap({ ctx, store } = {}) {
   });
   const registry = createPromptRegistry({ ctx, store, getSettings: settings });
   const lorebook = createLorebookService({ ctx });
+  const profile = createProfileService({
+    ctx,
+    client,
+    getConnection: () => settings().connection ?? {},
+  });
   const beats = createBeatService({
     client,
     getConnection: () => settings().connection ?? {},
@@ -74,6 +80,7 @@ export function bootstrap({ ctx, store } = {}) {
     checkpoint,
     beats,
     topUp: topUpStages,
+    getProfile: () => profile.read(),
     stages,
     registry,
     store,
@@ -140,6 +147,26 @@ export function bootstrap({ ctx, store } = {}) {
   }
 
   /**
+   * 生成结果一致性自检（T-402 §六）：不合人设就重生成，最多 2 次，超过用最后一次。
+   * 自检关掉 / 没有侧写 / 重生成失败 → 直接用原结果。
+   */
+  async function ensureConsistent(result, regenerate) {
+    if (settings().consistencyCheck === false) return result;
+    if (!profileText(profile.read())) return result;
+
+    let current = result;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const verdict = await profile.checkConsistency({ profile: profile.read(), stages: current.stages });
+      if (verdict.ok) return current;
+      console.log(`[导演时间] 阶段与人设不符，重生成（第 ${attempt} 次）：${verdict.reason}`);
+      const retry = rememberRequest(await regenerate());
+      if (!retry.ok || !retry.stages?.length) return current;
+      current = retry;
+    }
+    return current;
+  }
+
+  /**
    * 生成并装载一份分场剧本。显式调用，不自动跑。
    * 失败一律只提示、不注入（禁则 G5）；未配置导演 API 时只提示。
    * @returns {Promise<{ok: boolean, error?: string}>}
@@ -154,19 +181,23 @@ export function bootstrap({ ctx, store } = {}) {
     generating = true;
     ctx.showSystemMessage?.('导演时间：正在生成剧本…');
     try {
-      const result = rememberRequest(await outline.generate({
+      const vars = {
         premise,
         tone: toneText(),
-        profile: '',
+        profile: profileText(profile.read()),
         world: await worldText(),
         context: recentContext(),
-      }));
+      };
+      let result = rememberRequest(await outline.generate(vars));
 
       if (!result.ok || !result.stages?.length) {
         const reason = result.error ?? '模型没有产出可用阶段';
         ctx.showSystemMessage?.(`导演时间：生成剧本失败（${reason}）`);
         return { ok: false, error: reason };
       }
+
+      // 一致性自检（默认开，T-402 §六）：不合人设最多重生成 2 次
+      result = await ensureConsistent(result, () => outline.generate(vars));
 
       store.update((draft) => ({
         ...draft,
@@ -242,22 +273,25 @@ export function bootstrap({ ctx, store } = {}) {
       .map((stage) => `- [${marks[stage.status] ?? stage.status}] ${stage.title}：${stage.goal}`)
       .join('\n');
 
-    const result = rememberRequest(await outline.extend({
+    const vars = {
       count: need,
       startIndex: list.length + 1,
       outline: state.outline,
       tone: toneText(),
-      profile: '',
+      profile: profileText(profile.read()),
       world: await worldText(),
       history,
       context: recentContext(),
-    }));
+    };
+    const generated = rememberRequest(await outline.extend(vars));
 
-    if (!result.ok || !result.stages?.length) {
-      console.warn('[导演时间] 续写阶段失败', result.error);
+    if (!generated.ok || !generated.stages?.length) {
+      console.warn('[导演时间] 续写阶段失败', generated.error);
       return null;
     }
 
+    // 一致性自检（默认开，T-402 §六）
+    const result = await ensureConsistent(generated, () => outline.extend(vars));
     stages.append(result.stages);
     // 极端情况：剧本只有一场、演完才续写 —— 补位激活第一条，别让导演停摆
     if (!store.get().activeStageId) stages.activate(result.stages[0].id);
@@ -305,9 +339,28 @@ export function bootstrap({ ctx, store } = {}) {
     }
   });
 
+  // 侧写读写接口（T-402）：给设置面板的折叠区用
+  const profileApi = {
+    read: () => profile.read(),
+    edit: (field, value) => profile.edit(field, value),
+    unlock: (field) => profile.unlock(field),
+    regenerate: async () => {
+      const current = profile.read();
+      const lockedCount = Object.values(current.locked ?? {}).filter(Boolean).length;
+      if (lockedCount && ctx.capabilities?.confirmation) {
+        const ok = await ctx.showConfirm?.(`有 ${lockedCount} 个字段已锁定，重新生成不会覆盖它们。继续？`);
+        if (!ok) return { ok: false, error: '已取消' };
+      }
+      const result = await profile.regenerate({ world: await worldText(), context: recentContext() });
+      if (result.ok) review.syncInjection();
+      return result;
+    },
+  };
+
   // 测试用配置面板：没有它就没法填 API（控制台 DirectorTime.settingsPanel.show() 仍可用）
   const settingsPanel = createSettingsPanel({
     store,
+    profile: profileApi,
     onTest: () => client.testConnection(settings().connection ?? {}),
     onSave: () => review.syncInjection(),
   });
@@ -323,6 +376,7 @@ export function bootstrap({ ctx, store } = {}) {
   const panel = createMainPanel({
     store,
     registry,
+    profile: profileApi,
     getCapabilities: () => ctx.capabilities,
     getLast: () => review.getLastTurn(),
     onTest: () => client.testConnection(settings().connection ?? {}),
@@ -348,9 +402,10 @@ export function bootstrap({ ctx, store } = {}) {
   };
 
   const api = {
-    client, stages, outline, beats, lorebook, registry, checkpoint, review, debug,
+    client, stages, outline, beats, lorebook, profile, profileApi,
+    registry, checkpoint, review, debug,
     generateScript, regenerateScript, topUpStages, resetScript, setEnabled,
-    collectWorldSources, worldText,
+    collectWorldSources, worldText, profileText,
     settingsPanel: settingsPanelApi, panel, unmountMenu,
   };
 

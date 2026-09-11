@@ -29,6 +29,7 @@ export function createMainPanel({
   onSave,
   onGenerate,
   onExtend,
+  profile,
   loadWorldSources,
   getWorldSelection,
   saveWorldSelection,
@@ -266,7 +267,7 @@ export function createMainPanel({
 
     const body = node.querySelector('#dt-panel-body');
     if (view === 'config') {
-      renderSettingsForm({ container: body, store, onTest, onSave });
+      renderSettingsForm({ container: body, store, onTest, onSave, profile });
     } else if (view === 'world') {
       renderWorld(body);
     } else {

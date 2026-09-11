@@ -60,6 +60,8 @@ export function createDefaultSettings() {
     confidenceThreshold: 0.7,
     // 跑满这么多轮就自动清空剧本（可在配置里改）
     maxRounds: 15,
+    // 生成新阶段后拿侧写做一致性自检（T-402 §六，可关）
+    consistencyCheck: true,
     // 世界书：勾选的条目（entryKey → true）与进 prompt 的条数上限（项目书 §F1 / 附录建议 20）
     worldSelection: {},
     worldLimit: 20,

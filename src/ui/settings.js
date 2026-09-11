@@ -8,6 +8,8 @@
 //   1. 主面板（src/ui/panel.js）的「配置」页 —— 不传 onClose，关闭交给主面板
 //   2. 独立浮层 createSettingsPanel —— 传 onClose，自带关闭按钮
 
+import { PROFILE_FIELDS, PROFILE_FIELD_LABELS } from '../world/character.js';
+
 const PANEL_STYLE = `
   position:fixed; top:60px; left:20px; width:340px; max-width:calc(100vw - 40px);
   max-height:calc(100vh - 80px); max-height:calc(100dvh - 80px);
@@ -22,8 +24,39 @@ function fieldStyle() {
     + 'background:rgba(255,255,255,.4);color:inherit;border:1px solid var(--dt-rule,rgba(43,39,33,.3));border-radius:3px';
 }
 
+function escapeAttr(text) {
+  return String(text ?? '').replace(/[&<>"']/g, (ch) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]
+  ));
+}
+
+/** 人物侧写折叠区（T-402 §九：放进设置面板的折叠区，不单独开视图） */
+function profileSection(profile) {
+  const data = profile.read?.() ?? {};
+  const fields = data.fields ?? {};
+  const locked = data.locked ?? {};
+
+  const rows = PROFILE_FIELDS.map((key) => `
+    <div style="margin-top:6px">
+      <div>${PROFILE_FIELD_LABELS[key]}<span class="dt-profile-lock">${locked[key] ? ` 🔒 <button type="button" data-profile-unlock="${key}" style="font:inherit;padding:0 5px;cursor:pointer">解锁</button>` : ''}</span></div>
+      <input data-profile-field="${key}" style="${fieldStyle()}" value="${escapeAttr(fields[key] ?? '')}">
+    </div>`).join('');
+
+  return `
+    <details style="margin-top:12px">
+      <summary style="cursor:pointer">人物侧写（${escapeAttr(data.charName || '当前角色')}）</summary>
+      <div style="font-size:11px;opacity:.7;margin-top:4px">手改过的字段会锁定，AI 不再覆盖（存在角色卡上，跨聊天复用）</div>
+      ${rows}
+      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+        <button id="dt-profile-regen" type="button" style="font:inherit;padding:5px 12px">重新生成侧写</button>
+        <button id="dt-profile-unlock-all" type="button" style="font:inherit;padding:5px 12px">全部解锁</button>
+      </div>
+      <div id="dt-profile-msg" style="margin-top:6px;opacity:.75">—</div>
+    </details>`;
+}
+
 /** 把配置表单渲染进指定容器；传了 onClose 才显示右上角关闭按钮 */
-export function renderSettingsForm({ container, store, onTest, onSave, onClose } = {}) {
+export function renderSettingsForm({ container, store, onTest, onSave, onClose, profile } = {}) {
   const node = container;
   const s = store.getSettings();
   const c = s.connection ?? {};
@@ -59,6 +92,7 @@ export function renderSettingsForm({ container, store, onTest, onSave, onClose }
       <button id="dt-refresh" style="font:inherit;padding:5px 12px">刷新模型列表</button>
     </div>
     <div id="dt-msg" style="margin-top:8px;opacity:.75">—</div>
+    ${profile ? profileSection(profile) : ''}
   `;
 
   node.querySelector('#dt-settings-close')?.addEventListener('click', () => onClose?.());
@@ -100,10 +134,54 @@ export function renderSettingsForm({ container, store, onTest, onSave, onClose }
     }
   });
 
+  // ---------- 人物侧写折叠区（T-402）----------
+  if (profile) {
+    const profileMsg = () => node.querySelector('#dt-profile-msg');
+
+    node.querySelectorAll('input[data-profile-field]').forEach((input) => {
+      input.addEventListener('change', () => {
+        profile.edit?.(input.dataset.profileField, input.value);
+        const msg = profileMsg();
+        if (msg) msg.textContent = '已保存（该字段已锁定）';
+      });
+    });
+
+    node.querySelectorAll('button[data-profile-unlock]').forEach((button) => {
+      button.addEventListener('click', () => {
+        profile.unlock?.(button.dataset.profileUnlock);
+        button.closest('.dt-profile-lock')?.replaceChildren();
+        const msg = profileMsg();
+        if (msg) msg.textContent = '已解锁';
+      });
+    });
+
+    node.querySelector('#dt-profile-unlock-all')?.addEventListener('click', () => {
+      profile.unlock?.(null);
+      node.querySelectorAll('.dt-profile-lock').forEach((marker) => marker.replaceChildren());
+      const msg = profileMsg();
+      if (msg) msg.textContent = '已全部解锁';
+    });
+
+    node.querySelector('#dt-profile-regen')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      button.textContent = '生成中…';
+      try {
+        const result = await profile.regenerate?.();
+        const msg = profileMsg();
+        if (msg) msg.textContent = result?.ok ? '侧写已重新生成（已锁定字段保持不变）' : `失败：${result?.error ?? '未知'}`;
+        if (result?.ok) renderSettingsForm({ container: node, store, onTest, onSave, onClose, profile });
+      } finally {
+        button.disabled = false;
+        button.textContent = '重新生成侧写';
+      }
+    });
+  }
+
   return node;
 }
 
-export function createSettingsPanel({ store, onTest, onSave } = {}) {
+export function createSettingsPanel({ store, onTest, onSave, profile } = {}) {
   let el = null;
 
   function ensure() {
@@ -117,7 +195,7 @@ export function createSettingsPanel({ store, onTest, onSave } = {}) {
 
   function render() {
     const node = ensure();
-    return renderSettingsForm({ container: node, store, onTest, onSave, onClose: hide });
+    return renderSettingsForm({ container: node, store, onTest, onSave, onClose: hide, profile });
   }
 
   function show() { ensure().style.display = 'block'; return render(); }

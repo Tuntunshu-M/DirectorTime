@@ -88,6 +88,30 @@ export function createSillyTavernContext(contextProvider = defaultProvider) {
       return host.characters?.[host.characterId] ?? null;
     },
 
+    getCharacterId() {
+      return getHost().characterId ?? null;
+    },
+
+    /** 读角色卡扩展字段（T-402 侧写存在 characters[i].data.extensions[director_time]） */
+    getCharacterField(key, charId = null) {
+      const host = getHost();
+      const id = charId ?? host.characterId;
+      return host.characters?.[id]?.data?.extensions?.[key] ?? null;
+    },
+
+    /** 写角色卡扩展字段；优先用 ST 的 writeExtensionField（它会自己触发保存） */
+    writeCharacterField(key, value, charId = null) {
+      const host = getHost();
+      const id = charId ?? host.characterId;
+      if (hasFunction(host.writeExtensionField)) return host.writeExtensionField(id, key, value);
+
+      const character = host.characters?.[id];
+      if (!character) return null;
+      character.data = { ...(character.data ?? {}) };
+      character.data.extensions = { ...(character.data.extensions ?? {}), [key]: value };
+      return value;
+    },
+
     getCurrentChatKey() {
       const host = getHost();
       return host.chatId ?? host.chatMetadata?.chat_id ?? null;

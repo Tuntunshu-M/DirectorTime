@@ -16,6 +16,7 @@ export function createReviewService({
   checkpoint,
   beats,
   topUp,
+  getProfile,
   stages,
   registry,
   store,
@@ -28,7 +29,7 @@ export function createReviewService({
   function syncInjection() {
     const state = store?.get?.();
     const active = state?.stages?.find((stage) => stage.id === state.activeStageId);
-    const text = active ? buildInstruction({ stage: active, outline: state.outline, profile: null }) : '';
+    const text = active ? buildInstruction({ stage: active, outline: state.outline, profile: getProfile?.() ?? null }) : '';
     registry?.register?.(text);
     return text;
   }

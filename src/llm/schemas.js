@@ -68,6 +68,21 @@ export function isValidStages(data) {
   return data.stages.every(isValidStage);
 }
 
+/** 人物侧写八字段（T-402） */
+export function isValidProfile(data) {
+  if (!data || typeof data !== 'object') return false;
+  const required = ['coreDesire', 'fear', 'speech', 'attitudeToUser',
+    'conflictStyle', 'proactivity', 'intimacy', 'taboo'];
+  return required.every((key) => typeof data[key] === 'string' && data[key].trim());
+}
+
+/** 一致性自检：{ ok: boolean, reason: string }（T-402 §六） */
+export function isValidConsistency(data) {
+  if (!data || typeof data !== 'object') return false;
+  if (typeof data.ok !== 'boolean') return false;
+  return typeof data.reason === 'string';
+}
+
 /** 走位重写：{ beats: ["..."] }（T-205 验收④） */
 export function isValidBeats(data) {
   if (!data || typeof data !== 'object') return false;
@@ -92,7 +107,7 @@ export function isValidStance(data) {
 /**
  * 统一入口：解析 + 校验。任何一步失败都返回 null。
  * @param {string} text 模型返回的原始文本
- * @param {'outline'|'stages'|'beats'|'judgement'|'stance'} kind
+ * @param {'outline'|'stages'|'beats'|'profile'|'consistency'|'judgement'|'stance'} kind
  */
 export function parseDirectorResponse(text, kind) {
   const data = extractJson(text);
@@ -101,6 +116,8 @@ export function parseDirectorResponse(text, kind) {
   if (kind === 'outline') return isValidOutline(data) ? data : null;
   if (kind === 'stages') return isValidStages(data) ? data : null;
   if (kind === 'beats') return isValidBeats(data) ? data : null;
+  if (kind === 'profile') return isValidProfile(data) ? data : null;
+  if (kind === 'consistency') return isValidConsistency(data) ? data : null;
   if (kind === 'judgement') return isValidJudgement(data) ? data : null;
   if (kind === 'stance') return isValidStance(data) ? data : null;
 
