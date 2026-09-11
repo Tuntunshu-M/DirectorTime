@@ -13,6 +13,8 @@ import { createReviewService } from './director/review.js';
 import { createPromptRegistry } from './inject/prompt-registry.js';
 import { createDebugPanel } from './ui/debug.js';
 import { createSettingsPanel } from './ui/settings.js';
+import { createMainPanel } from './ui/panel.js';
+import { mountMenuEntry } from './ui/menu.js';
 
 const MESSAGE_RECEIVED = 'message_received';
 const CHAT_CHANGED = 'chat_id_changed';
@@ -79,23 +81,28 @@ export function bootstrap({ ctx, store } = {}) {
     }
   });
 
-  // 测试用配置面板：没有它就没法填 API
+  // 测试用配置面板：没有它就没法填 API（控制台 DirectorTime.settingsPanel.show() 仍可用）
   const settingsPanel = createSettingsPanel({
     store,
     onTest: () => client.testConnection(settings().connection ?? {}),
     onSave: () => registry.sync(),
   });
 
-  const api = { client, stages, registry, checkpoint, review, debug, settingsPanel };
+  // 主页面：运行状态 + 配置；由菜单栏入口打开
+  const panel = createMainPanel({
+    store,
+    registry,
+    getCapabilities: () => ctx.capabilities,
+    getLast: () => review.getLastTurn(),
+    onTest: () => client.testConnection(settings().connection ?? {}),
+    onSave: () => registry.sync(),
+    onOpenDebug: () => { panel.close(); debug.show(); },
+  });
 
-  // 还没填端点就自动弹出配置面板 —— 云酒馆不方便开控制台
-  if (!settings().connection?.endpoint) {
-    try {
-      settingsPanel.show();
-    } catch {
-      /* DOM 未就绪时忽略 */
-    }
-  }
+  // 入口挂在酒馆扩展菜单（#extensionsMenu）。点开是主页面，不再自动弹配置
+  const unmountMenu = mountMenuEntry({ onOpen: () => panel.open() });
+
+  const api = { client, stages, registry, checkpoint, review, debug, settingsPanel, panel, unmountMenu };
 
   if (typeof window !== 'undefined') {
     window.DirectorTime = { ...(window.DirectorTime ?? {}), ...api };

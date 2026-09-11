@@ -54,3 +54,32 @@ body.dark {
   --dt-rule-soft: rgba(232, 223, 208, 0.14);
   --dt-tint: rgba(232, 223, 208, 0.06);
 }
+
+/* 菜单栏入口（#extensionsMenu）—— 只做布局对齐，不做美化（禁则 G4） */
+#dt-menu-entry {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 5px;
+  min-width: 0;
+  cursor: pointer;
+  white-space: nowrap;
+  writing-mode: horizontal-tb;
+}
+
+#dt-menu-entry .dt-menu-icon,
+#dt-menu-entry .dt-menu-label {
+  display: inline-block;
+  flex: 0 0 auto;
+  writing-mode: horizontal-tb;
+}
+
+#dt-menu-entry .dt-menu-icon {
+  inline-size: 18px;
+  text-align: center;
+}
+
+#dt-menu-entry .dt-menu-label {
+  white-space: nowrap;
+}

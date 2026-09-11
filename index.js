@@ -7,6 +7,7 @@ import { createSillyTavernContext } from './src/core/context.js';
 import { createEventBus } from './src/core/event-bus.js';
 import { createStateStore } from './src/core/state.js';
 import { bootstrap, lastTurnMessages } from './src/bootstrap.js';
+import { checkForUpdate } from './src/core/update-check.js';
 
 export const MODULE_NAME = 'director_time';
 
@@ -26,13 +27,24 @@ function boot() {
   const api = bootstrap({ ctx, store });
   console.log('[导演时间] 已加载', ctx.capabilities);
   bus.emit('boot', { capabilities: ctx.capabilities, api });
+  // 方便测试：检测到扩展更新就提示并刷新（失败静默，不影响主流程）
+  checkForUpdate({
+    ctx,
+    store,
+    manifestUrl: new URL('./manifest.json?t=' + Date.now(), import.meta.url).href,
+    sessionStore: globalThis.sessionStorage,
+  });
 }
 
 // 正常路径：等酒馆就绪
 ctx.on(APP_READY, boot);
 
-// 兜底：扩展晚加载时事件已错过，能力探测里没有事件源就直接跑
+// 兜底 1：没有事件源的环境（非酒馆）直接启动
 if (!ctx.capabilities.events) boot();
+
+// 兜底 2：app_ready 可能在扩展模块执行前就已抛过（云酒馆 / 高 loading_order / 模块晚执行），
+// 错过就永远不 boot —— 菜单入口和面板都不会出现。2 秒后仍未启动就强制启动。
+setTimeout(() => { if (!booted) boot(); }, 2000);
 
 window.DirectorTime = { ctx, bus, store, MODULE_NAME };
 
