@@ -8,6 +8,7 @@
 
 import { createDirectorClient } from './llm/client.js';
 import { createStageService } from './director/stage.js';
+import { createOutlineService } from './director/outline.js';
 import { createCheckpointService } from './director/checkpoint.js';
 import { createReviewService } from './director/review.js';
 import { createPromptRegistry } from './inject/prompt-registry.js';
@@ -40,6 +41,10 @@ export function bootstrap({ ctx, store } = {}) {
 
   const client = createDirectorClient();
   const stages = createStageService({ store });
+  const outline = createOutlineService({
+    client,
+    getConnection: () => settings().connection ?? {},
+  });
   const registry = createPromptRegistry({ ctx, store, getSettings: settings });
   const checkpoint = createCheckpointService({
     client,
@@ -61,6 +66,78 @@ export function bootstrap({ ctx, store } = {}) {
     getLastTurn: () => review.getLastTurn(),
   });
 
+  // ---------- 剧本生成 ----------
+  // T-203 的接线：清单里漏了"首次生成剧本"这一步，不接上就永远不会自动生成
+  // （之前 review.run 拿不到 active 阶段，只会 hold）。
+
+  let generating = false;
+  let autoGenerateTried = false;
+
+  /** 剧情占比 → 可读文本，喂给 GEN_OUTLINE 的 {{tone}} */
+  function toneText() {
+    const labels = { daily: '日常', crisis: '危机', intimate: '亲密' };
+    return Object.entries(store.get().tone ?? {})
+      .filter(([, value]) => Number(value) > 0)
+      .map(([key, value]) => `${labels[key] ?? key} ${value}%`)
+      .join(' / ');
+  }
+
+  /** 近期对话 → {{context}}；人物侧写 / 世界书（T-401 / T-402）未做，留空 */
+  function recentContext(limit = 8) {
+    return ctx.getMessages()
+      .slice(-limit)
+      .map((message) => `${message?.is_user ? 'user' : 'char'}：${message?.mes ?? ''}`)
+      .filter((line) => line.replace(/^(user|char)：/, '').trim().length > 0)
+      .join('\n');
+  }
+
+  /**
+   * 生成并装载一份分场剧本。
+   * 失败一律只提示、不注入（禁则 G5）；未配置导演 API 时只提示。
+   * @returns {Promise<{ok: boolean, error?: string}>}
+   */
+  async function generateScript({ premise = '' } = {}) {
+    if (generating) return { ok: false, error: '正在生成中' };
+    if (!settings().connection?.endpoint) {
+      ctx.showSystemMessage?.('导演时间：还没配置导演 API，先打开面板点「配置」');
+      return { ok: false, error: '未配置导演 API' };
+    }
+
+    generating = true;
+    ctx.showSystemMessage?.('导演时间：正在生成剧本…');
+    try {
+      const result = await outline.generate({
+        premise,
+        tone: toneText(),
+        profile: '',
+        world: '',
+        context: recentContext(),
+      });
+
+      if (!result.ok || !result.stages?.length) {
+        const reason = result.error ?? '模型没有产出可用阶段';
+        ctx.showSystemMessage?.(`导演时间：生成剧本失败（${reason}）`);
+        return { ok: false, error: reason };
+      }
+
+      store.update((draft) => ({
+        ...draft,
+        outline: result.outline,
+        stages: result.stages,
+        activeStageId: result.stages[0]?.id ?? null,
+      }), { label: '生成剧本' });
+      review.syncInjection();
+      ctx.showSystemMessage?.(`导演时间：剧本《${result.outline.title}》已生成，共 ${result.stages.length} 个阶段`);
+      return result;
+    } catch (error) {
+      console.error('[导演时间] 生成剧本异常', error);
+      ctx.showSystemMessage?.(`导演时间：生成剧本异常（${error?.message ?? '未知错误'}）`);
+      return { ok: false, error: error?.message ?? '未知错误' };
+    } finally {
+      generating = false;
+    }
+  }
+
   // 切聊天必须清空，否则会把上一个对话的指令带过去
   registry.installLifecycle();
   ctx.on?.(CHAT_CHANGED, () => {
@@ -72,6 +149,15 @@ export function bootstrap({ ctx, store } = {}) {
     if (!settings().enabled) return;
     const { userMessage, charMessage } = lastTurnMessages(ctx.getMessages());
     try {
+      // 还没有剧本：先让导演生成一份（每个页面生命周期只自动试一次，失败用面板里的按钮重试）
+      if (!store.get().stages?.length) {
+        if (!autoGenerateTried) {
+          autoGenerateTried = true;
+          await generateScript({ premise: userMessage });
+        }
+        return;
+      }
+
       const result = await review.run({ userMessage, charMessage, type: 'normal' });
       // 把模型原始返回也喂给 Debug —— 云酒馆看不到控制台，只能靠面板
       const turn = review.getLastTurn();
@@ -95,7 +181,7 @@ export function bootstrap({ ctx, store } = {}) {
     if (target !== 'settings') settingsPanel.hide();
   }
 
-  // 主页面：运行状态 + 配置；由菜单栏入口打开
+  // 主页面：运行状态 + 配置 + 生成剧本；由菜单栏入口打开
   const panel = createMainPanel({
     store,
     registry,
@@ -103,6 +189,7 @@ export function bootstrap({ ctx, store } = {}) {
     getLast: () => review.getLastTurn(),
     onTest: () => client.testConnection(settings().connection ?? {}),
     onSave: () => registry.sync(),
+    onGenerate: () => generateScript({}),
     onOpenDebug: () => { openOnly('debug'); debug.show(); },
   });
 
@@ -116,7 +203,7 @@ export function bootstrap({ ctx, store } = {}) {
   };
 
   const api = {
-    client, stages, registry, checkpoint, review, debug,
+    client, stages, outline, registry, checkpoint, review, debug, generateScript,
     settingsPanel: settingsPanelApi, panel, unmountMenu,
   };
 

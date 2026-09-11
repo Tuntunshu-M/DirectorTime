@@ -28,6 +28,7 @@ export function createMainPanel({
   registry,
   onTest,
   onSave,
+  onGenerate,
   onOpenDebug,
   getCapabilities,
   getLast,
@@ -94,10 +95,21 @@ export function createMainPanel({
       ${row('上次动作', status.lastAction ? `${status.lastAction}（${status.lastReason ?? ''}）` : '—')}
       ${row('累计', `调用 ${status.cost.callCount} 次`)}
       ${tip}
-      <div style="margin-top:10px">
+      <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
+        ${noStage ? '<button id="dt-panel-generate" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">生成剧本</button>' : ''}
         <button id="dt-panel-debug" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">打开调试面板</button>
       </div>
     `;
+    body.querySelector('#dt-panel-generate')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      button.textContent = '生成中…';
+      try {
+        await onGenerate?.();
+      } finally {
+        render();
+      }
+    });
     body.querySelector('#dt-panel-debug')?.addEventListener('click', () => onOpenDebug?.());
   }
 
