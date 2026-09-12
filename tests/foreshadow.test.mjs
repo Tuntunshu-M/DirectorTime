@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 import {
-  normalizeForeshadows, openForeshadows, carryOver, resolveRecalled, foreshadowText,
+  normalizeForeshadows, openForeshadows, carryOver, resolveRecalled, foreshadowText, isPaidOff,
 } from '../src/director/foreshadow.js';
 import { createCheckpointService } from '../src/director/checkpoint.js';
 import { createReviewService } from '../src/director/review.js';
@@ -31,15 +31,34 @@ await check('归一化：模型给的字符串数组 → 带 id / 状态的记�
   const list = normalizeForeshadows(['抽屉里的旧照片', '', null, '一张没寄出的信'], { now: 1000 });
   assert.equal(list.length, 2, '空条目要丢掉');
   assert.equal(list[0].text, '抽屉里的旧照片');
-  assert.equal(list[0].status, 'open');
+  assert.equal(list[0].status, 'planted');
   assert.equal(list[0].plantedAt, 1000);
   assert.ok(list[0].id && list[1].id && list[0].id !== list[1].id, '每条要有独立 id');
+});
+
+await check('词表按《清单》§0.3 约定写回：planted / paidoff', () => {
+  const [fresh] = normalizeForeshadows([{ id: 'a', text: 'A' }]);
+  assert.equal(fresh.status, 'planted');
+  const { outline } = resolveRecalled(outlineOf([fresh]), ['a'], { now: 5 });
+  assert.equal(outline.foreshadows[0].status, 'paidoff');
+});
+
+await check('老存档（open / resolved）照样认得，不会因为改词表就丢进度', () => {
+  const [open, done] = normalizeForeshadows([
+    { id: 'x', text: 'A', status: 'open' },
+    { id: 'y', text: 'B', status: 'resolved' },
+  ]);
+  assert.equal(open.status, 'planted', '老词 open → planted');
+  assert.equal(done.status, 'paidoff', '老词 resolved → paidoff');
+  assert.equal(isPaidOff(done), true);
+  assert.equal(isPaidOff(open), false);
+  assert.deepEqual(openForeshadows({ foreshadows: [open, done] }).map((item) => item.id), ['x']);
 });
 
 await check('已经是记录的（重生成时带过来的）保留原 id 与埋设时间', () => {
   const [item] = normalizeForeshadows([{ id: 'fs_keep', text: '旧钥匙', status: 'resolved', plantedAt: 7, resolvedAt: 9 }]);
   assert.equal(item.id, 'fs_keep');
-  assert.equal(item.status, 'resolved');
+  assert.equal(item.status, 'paidoff');
   assert.equal(item.plantedAt, 7);
   assert.equal(item.resolvedAt, 9);
 });
@@ -164,7 +183,7 @@ await check('判定报回编号 → 自动销账（review 接线）', async () =
 
   await review.run({ userMessage: '我把抽屉里的照片拿出来了', charMessage: '……' });
   const foreshadows = env.store.get().outline.foreshadows;
-  assert.equal(foreshadows[0].status, 'resolved', '要标成已回收');
+  assert.equal(foreshadows[0].status, 'paidoff', '要标成已回收');
   assert.ok(foreshadows[0].resolvedAt > 0);
   assert.equal(openForeshadows(env.store.get().outline).length, 0, '待回收列表要清空');
   assert.equal(review.getLastTurn().recalled.length, 1, '回放里要能看到');

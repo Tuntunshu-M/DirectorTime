@@ -12,6 +12,18 @@ function nextId() {
   return `fs_${Date.now().toString(36)}_${seq}`;
 }
 
+/**
+ * 状态词表按《AI 执行清单》§0.3 的约定：`planted | paidoff | abandoned`。
+ * 早期版本写的是 `open` / `resolved`，**读的时候两套都认**（老存档不能因为改词表就丢进度），
+ * 写回去统一用约定里的词。
+ */
+const PAID_OFF_WORDS = ['paidoff', 'resolved'];
+
+/** 这条伏笔回收了没有（兼容旧词表） */
+export function isPaidOff(item) {
+  return PAID_OFF_WORDS.includes(String(item?.status ?? '').trim());
+}
+
 /** 模型给的一律是字符串数组（也可能已经是对象），统一成记录 */
 export function normalizeForeshadows(list, { now = Date.now(), stageId = '' } = {}) {
   if (!Array.isArray(list)) return [];
@@ -22,7 +34,7 @@ export function normalizeForeshadows(list, { now = Date.now(), stageId = '' } = 
       return {
         id: typeof item?.id === 'string' && item.id ? item.id : nextId(),
         text,
-        status: item?.status === 'resolved' ? 'resolved' : 'open',
+        status: isPaidOff(item) ? 'paidoff' : 'planted',
         stageId: item?.stageId ?? stageId,
         plantedAt: Number(item?.plantedAt) || now,
         resolvedAt: Number(item?.resolvedAt) || 0,
@@ -33,7 +45,7 @@ export function normalizeForeshadows(list, { now = Date.now(), stageId = '' } = 
 
 /** 还没回收的 */
 export function openForeshadows(outline) {
-  return (outline?.foreshadows ?? []).filter((item) => item?.status !== 'resolved');
+  return (outline?.foreshadows ?? []).filter((item) => !isPaidOff(item));
 }
 
 /**
@@ -59,9 +71,9 @@ export function resolveRecalled(outline, recalled, { now = Date.now() } = {}) {
 
   const resolved = [];
   const foreshadows = (outline?.foreshadows ?? []).map((item) => {
-    if (item.status === 'resolved' || !ids.has(String(item.id))) return item;
+    if (isPaidOff(item) || !ids.has(String(item.id))) return item;
     resolved.push(item);
-    return { ...item, status: 'resolved', resolvedAt: now };
+    return { ...item, status: 'paidoff', resolvedAt: now };
   });
 
   return { outline: { ...outline, foreshadows }, resolved };

@@ -6,6 +6,7 @@
 // 状态计算抽成纯函数 buildDebugState，便于自动化测试；DOM 渲染单独一层。
 
 import { hitRate } from '../director/speculate.js';
+import { openForeshadows } from '../director/foreshadow.js';
 import { automationText } from '../core/automation.js';
 
 /**
@@ -83,10 +84,8 @@ export function buildDebugState({
       ...hitRate(state.runtime?.speculationStats),
       pending: state.runtime?.speculation?.guess ?? '',
     },
-    // T-408 伏笔：还没回收的
-    foreshadows: (state.outline?.foreshadows ?? [])
-      .filter((item) => item?.status !== 'resolved')
-      .map((item) => item.text),
+    // T-408 伏笔：还没回收的（词表判断收在 foreshadow.js，别在这里重复写死状态词）
+    foreshadows: openForeshadows(state.outline).map((item) => item.text),
     lastJudgement: last?.judgement ?? null,
     lastAction: last?.action ?? null,
     // T-414：当前档位一行看完 —— 排查时先确认"是不是档位设错了"

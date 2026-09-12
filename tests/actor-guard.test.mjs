@@ -240,6 +240,12 @@ await check('c：判定口径与 criteria 一致（看 char 做到没有）', ()
   assert.ok(PROMPTS.JUDGE_CHECKPOINT.system.includes('不是 user 有没有配合'));
 });
 
+await check('§九 后半句：user 完全没回应仍判 pending（防一路空转）', () => {
+  const system = PROMPTS.JUDGE_CHECKPOINT.system;
+  assert.ok(system.includes('完全没回应'), system);
+  assert.ok(system.includes('不要求 user 说什么，但要求 user 有在说'), system);
+});
+
 console.log('§七c · 本地兜底：criteria 要 user 配合 = 剧情会卡死');
 
 await check('"user 与 char 面对面" 被抓出来，并归到 criteria 依赖 user', () => {
