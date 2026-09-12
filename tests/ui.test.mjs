@@ -237,19 +237,24 @@ check('style.css 不许再用 `inset` 简写（旧引擎不认 → 定位失效 
   assert.deepEqual(usesInset, [], `这些地方要改成 top/right/bottom/left 四件套：\n${usesInset.join('\n')}`);
 });
 
-check('几何兜底：定位/居中/弹层都打 !important（酒馆宿主样式会抢）', () => {
+check('几何用的是"旧版实机验证过的那套配方"（grid 居中，不是 block 居中）', () => {
   const css = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8');
-  assert.ok(css.includes('position:fixed !important'), '面板定位必须 !important');
-  assert.ok(css.includes('top:0 !important'), '四件套要 !important');
-  assert.ok(css.includes('#dt-panel .dt-card{width:100% !important;max-width:440px !important'), '卡片要限宽居中且不被覆盖');
-  assert.ok(css.includes('#dt-panel .dt-layer{position:absolute !important'), '弹层也要四件套兜底');
+  assert.ok(css.includes('place-items:center'), '居中必须靠 place-items:center');
+  assert.ok(css.includes('#dt-panel.dt-open{display:grid}'), '打开时是 display:grid（不是 block —— 曾经因此塌成一条）');
+  assert.equal(/#dt-panel\.dt-open\{display:block/.test(css), false, '不许再写 display:block');
+  assert.ok(css.includes('z-index:10000'), 'z-index 必须是 10000（酒馆自己的层能到几千）');
+  assert.ok(css.includes('height:100vh'), '高度要写 100vh');
+  assert.ok(css.includes('height:100dvh'), '移动端补 100dvh');
+  assert.ok(css.includes('#dt-panel .dt-card{width:100%;max-width:440px;max-height:calc(100vh - 24px)'), '卡片要限宽 + 限高');
 });
 
 check('骨架几何写在 JS 内联样式里（外链样式没加载也不能塌）', () => {
   const code = fs.readFileSync(new URL('../src/ui/panel.js', import.meta.url), 'utf8');
   assert.ok(code.includes('el.style.cssText'), '根节点要有内联几何');
-  assert.ok(code.includes('position:fixed;top:0;right:0;bottom:0;left:0'), '内联几何要用四件套');
-  assert.ok(code.includes("el.style.display = 'block'"), '显隐也要走内联（不依赖外链 CSS）');
+  assert.ok(code.includes('place-items:center'), '内联几何也要 grid 居中');
+  assert.ok(code.includes('z-index:10000'), '内联 z-index 也要 10000');
+  assert.ok(code.includes("el.style.display = 'grid'"), '显隐走内联，而且是 grid（居中才行）');
+  assert.ok(code.includes('UI_VERSION'), '要有界面版本号（用来判断跑的是不是旧代码）');
 });
 
 check('面板自带 diagnose()（实机排障：一行看出样式到底有没有生效）', () => {
@@ -268,9 +273,11 @@ check('style.css 里不许出现 `#dt-panel :root`（那是永远匹配不到的
 check('预览生成器带 #dt-panel 壳（少这层壳 = 黑底黑字）', async () => {
   const { buildPreviewHtml } = await import('../tools/make-ui-preview.mjs');
   const html = buildPreviewHtml();
-  assert.ok(html.includes('<div id="dt-panel" data-palette="a">'), '预览页必须自己带 #dt-panel 壳');
+  assert.ok(html.includes('id="dt-panel"'), '预览页必须自己带 #dt-panel 壳');
+  assert.ok(html.includes('class="dt-open"'), '预览页要是打开态（否则看不到卡片）');
   assert.ok(html.includes('class="dt-card"'), '壳里要有卡片');
   assert.ok(html.includes('#dt-panel .dt-card'), '要带上真实 style.css');
+  assert.ok(html.includes('place-items:center'), '预览页也要带上 grid 居中的配方');
 });
 
 check('界面里不出现 emoji（定稿 §7：图标用 SVG）', () => {

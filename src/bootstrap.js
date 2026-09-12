@@ -43,7 +43,7 @@ import { createPromptRegistry } from './inject/prompt-registry.js';
 import { createLorebookService } from './world/lorebook.js';
 import { createProfileService, profileText, PROFILE_FIELDS, PROFILE_FIELD_LABELS } from './world/character.js';
 import { buildDebugState } from './ui/debug.js';
-import { createMainPanel } from './ui/panel.js';
+import { createMainPanel, UI_VERSION } from './ui/panel.js';
 import { mountMenuEntry } from './ui/menu.js';
 
 const MESSAGE_RECEIVED = 'message_received';
@@ -1041,6 +1041,8 @@ export function bootstrap({ ctx, store } = {}) {
     registry, checkpoint, will, initiative, rules: rulesApi, speculate: speculateApi, review,
     // T-427：界面那份读写口 + 调试面板（现在是主面板里的弹层）
     ui: uiApi,
+    // 界面代码版本：控制台 `DirectorTime.uiVersion` 读不到 = 跑的是旧代码（浏览器/酒馆缓存住了）
+    uiVersion: UI_VERSION,
     // 界面上这几个动作走 api 顶层（界面只认 api.xxx）——
     // tests/ui.test.mjs 会扫界面源码里的 api.xxx，对不上就报错（这些漏过一次）
     saveSettings: (patch) => uiApi.saveSettings(patch),

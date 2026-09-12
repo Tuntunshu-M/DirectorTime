@@ -158,10 +158,11 @@ export function buildPreviewHtml({ cssPath = path.join(repoRoot, 'style.css') } 
 ${css}
 /* 预览页专用：模拟酒馆里那层遮罩（插件里由 panel.js 的 ensure() 负责） */
 body{margin:0;background:#111;font-family:sans-serif}
-#dt-panel{display:block}
+/* 打开态：插件里由 panel.js 给 .dt-open + display:grid，这里同样给上，保证预览与实装一致 */
+#dt-panel{display:grid}
 </style></head>
 <body>
-<div id="dt-panel" data-palette="a">
+<div id="dt-panel" class="dt-open" data-palette="a">
 ${html}
 </div>
 <script>

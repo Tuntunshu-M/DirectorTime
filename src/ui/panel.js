@@ -26,6 +26,9 @@ const TABS = [
   { view: 'cast', label: '人物' },
 ];
 
+/** 界面版本号：控制台 `DirectorTime.uiVersion` 一看就知道跑的是不是新代码（旧代码没有这个键） */
+export const UI_VERSION = '0.9.2';
+
 const PALETTE_KEY = 'dt-palette';
 const LAYER_NAMES = { world: '世界书', prompt: '提示词', settings: '设置', debug: '调试面板' };
 const BASE_NAME = '场记';
@@ -270,11 +273,12 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
     el.dataset.palette = uiState.palette;
     // 骨架几何**写死在内联样式上**：酒馆的全局样式会抢外链 CSS，样式万一没加载也不能塌
     // （2026-09-12 实机反馈：面板变成页面里一条 = 定位没生效）
-    el.style.cssText = 'position:fixed;top:0;right:0;bottom:0;left:0;z-index:1000;box-sizing:border-box;'
-      + 'display:none;overflow:auto;padding:24px 14px;background:rgba(0,0,0,.5);';
+    // 内联几何 = 旧版那套"实机验证过"的配方：grid + place-items:center 居中 + 100vw/100dvh + z-index 10000
+    el.style.cssText = 'position:fixed;top:0;right:0;bottom:0;left:0;width:100vw;height:100vh;z-index:10000;'
+      + 'display:none;place-items:center;box-sizing:border-box;overflow:auto;padding:12px;background:rgba(24,20,15,.5);';
     card = doc.createElement('div');
     card.className = 'dt-card-holder';
-    card.style.cssText = 'width:100%;max-width:440px;margin:0 auto;';
+    card.style.cssText = 'width:100%;max-width:440px;max-height:calc(100vh - 24px);box-sizing:border-box;';
     el.append(card);
     doc.body.appendChild(el);
 
@@ -289,6 +293,7 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
       else hide();
     };
     doc.addEventListener('keydown', escapeHandler);
+    console.log(`[导演时间] 界面已挂载（UI ${UI_VERSION}）—— 控制台可跑 DirectorTime.panel.diagnose() 自检`);
     render();
     return el;
   }
@@ -302,7 +307,8 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
     ensure();
     if (!el) return null;
     el.classList.add('dt-open');
-    el.style.display = 'block'; // 不依赖外链 CSS（见 ensure 的注释）
+    // grid（不是 block）—— 居中靠 place-items:center，与旧版一致
+    el.style.display = 'grid'; // 不依赖外链 CSS（见 ensure 的注释）
     render();
     if (!uiState.worldSources) loadWorld(false);
     return el;
@@ -335,6 +341,22 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
      */
     diagnose: () => {
       const style = el && globalThis.getComputedStyle ? globalThis.getComputedStyle(el) : null;
+      if (!el) {
+        return {
+          uiVersion: UI_VERSION,
+          exists: false,
+          open: false,
+          position: '(面板还没创建过)',
+          display: '',
+          zIndex: '',
+          cssLoaded: false,
+          cardWidth: 0,
+          cardHeight: 0,
+          viewport: { w: globalThis.innerWidth ?? 0, h: globalThis.innerHeight ?? 0 },
+          palette: uiState.palette,
+          hint: '面板还没创建过（先点扩展菜单打开一次）；如果连 DirectorTime.uiVersion 都读不到，说明跑的还是旧代码 → 重启酒馆',
+        };
+      }
       const cardNode = card?.firstElementChild ?? card ?? null;
       const box = cardNode?.getBoundingClientRect?.();
       return {
