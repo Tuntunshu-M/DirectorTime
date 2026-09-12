@@ -365,4 +365,98 @@ await acheck('L1 档位：进待审核队列的提示带上原因（用户能看
   }
 });
 
+console.log('T-430 · 自动检查更新（GitHub 有新版本要能看到）');
+
+/** 造一个"本地 manifest + GitHub manifest 各自可控"的 fetch 桩 */
+function stubUpdateFetch({ local = '0.10.0', remote = '0.11.0' } = {}) {
+  const original = globalThis.fetch;
+  const urls = [];
+  globalThis.fetch = async (url) => {
+    const text = String(url);
+    urls.push(text);
+    // 本地那份：带 homepage（远程地址由它推出来）；远程那份：raw.githubusercontent
+    if (text.includes('raw.githubusercontent.com')) {
+      if (remote === null) return { ok: false, status: 500 };
+      return { ok: true, json: async () => ({ version: remote }) };
+    }
+    return { ok: true, json: async () => ({ version: local, homepage: 'https://github.com/Tuntunshu-M/DirectorTime' }) };
+  };
+  return { urls, restore: () => { globalThis.fetch = original; } };
+}
+
+await acheck('checkRemoteUpdate：远程更新 → hasUpdate + 缓存进 runtime + 提示一次（同版本不重复提示）', async () => {
+  const stub = stubUpdateFetch({ local: '0.10.0', remote: '0.11.0' });
+  try {
+    const env = makeBootEnv();
+    const messages = [];
+    env.ctx.showSystemMessage = (text) => messages.push(text);
+    const api = bootstrap({ ctx: env.ctx, store: env.store });
+
+    const result = await api.checkRemoteUpdate({ notify: true });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.local, '0.10.0');
+    assert.equal(result.remote, '0.11.0');
+    assert.equal(result.hasUpdate, true, '0.11.0 > 0.10.0 必须判为有新版本');
+    assert.ok(stub.urls.some((url) => url.includes('raw.githubusercontent.com')), '必须真去查 GitHub');
+
+    // 缓存进 runtime（面板一打开就能看到，不用先点检查）
+    const cached = env.store.get().runtime.update;
+    assert.equal(cached.remote, '0.11.0');
+    assert.ok(cached.checkedAt > 0);
+
+    // 提示一次
+    assert.equal(messages.length, 1, messages.join(' | '));
+    assert.ok(messages[0].includes('0.11.0'), messages[0]);
+    assert.equal(env.store.getSettings().updateNotifiedVersion, '0.11.0');
+
+    // 同一个版本再查一次 → 不再提示（不然每 15 秒轮询就弹一次）
+    await api.checkRemoteUpdate({ notify: true });
+    assert.equal(messages.length, 1, '同一版本只提示一次');
+  } finally {
+    stub.restore();
+  }
+});
+
+await acheck('checkRemoteUpdate：本地与远程一致 → hasUpdate=false，且不提示', async () => {
+  const stub = stubUpdateFetch({ local: '0.10.0', remote: '0.10.0' });
+  try {
+    const env = makeBootEnv();
+    const messages = [];
+    env.ctx.showSystemMessage = (text) => messages.push(text);
+    const api = bootstrap({ ctx: env.ctx, store: env.store });
+
+    const result = await api.checkRemoteUpdate({ notify: true });
+    assert.equal(result.hasUpdate, false);
+    assert.equal(messages.length, 0, '没新版本不该提示');
+  } finally {
+    stub.restore();
+  }
+});
+
+await acheck('checkRemoteUpdate：查不到远程 → ok:false（不假装"已是最新"）', async () => {
+  const stub = stubUpdateFetch({ remote: null });
+  try {
+    const env = makeBootEnv();
+    const api = bootstrap({ ctx: env.ctx, store: env.store });
+    const result = await api.checkRemoteUpdate();
+    assert.equal(result.ok, false, '不能报成功');
+    assert.ok(env.store.get().runtime.update.reason, '要存下失败原因');
+  } finally {
+    stub.restore();
+  }
+});
+
+await acheck('api.ui.read() 里带着最近一次远程检查结果（面板状态行用它）', async () => {
+  const stub = stubUpdateFetch({ local: '0.10.0', remote: '0.11.0' });
+  try {
+    const env = makeBootEnv();
+    const api = bootstrap({ ctx: env.ctx, store: env.store });
+    assert.equal(api.ui.read().update.checked, null, '还没查过就是 null');
+    await api.checkRemoteUpdate();
+    assert.equal(api.ui.read().update.checked.remote, '0.11.0');
+  } finally {
+    stub.restore();
+  }
+});
+
 console.log(`\n通过 ${passed} 项`);

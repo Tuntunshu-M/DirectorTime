@@ -142,6 +142,8 @@ export function createDefaultSettings() {
     modelPreset: { kind: 'off', custom: { claude: '', gemini: '' } },
     // 一键更新：上次试成功的扩展路径（T-420），下次先试它
     updatePath: null,
+    // 自动检查更新（T-430）：已提示过的远程版本号 —— 同一个版本只提示一次，别每次轮询都弹
+    updateNotifiedVersion: null,
     // 文本清洗（T-425）：内置两条 thinking 规则 + 用户自定义正则；只作用于本插件消费的文本
     sanitizeEnabled: true,
     sanitizeRules: [],

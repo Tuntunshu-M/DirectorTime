@@ -734,13 +734,42 @@ export function bootstrap({ ctx, store } = {}) {
   });
   // T-420 追加（用户反馈 13）：要**真去查**有没有新版本，不能只报"更新成功"
   const checker = createUpdateChecker({ manifestUrl: MANIFEST_URL });
+
+  /**
+   * T-430：**真去 GitHub 查一次**，结果存进 runtime（面板一打开就能看到有没有新版本）。
+   *
+   * 与 `checkForUpdate` 的分工（以前两件事被混成一件，导致"永远最新"）：
+   *   · 这个 = 远程 vs 本地（GitHub 上有没有更新的）→ 给用户看、由用户决定更不更
+   *   · `checkForUpdate` = 本地文件 vs 上次记录（酒馆点 Update 后文件变了）→ 自动刷新页面
+   *
+   * @param {{notify?: boolean}} options notify=true 时，发现新版本会提示一次（**每个版本只提示一次**，
+   *   不然每 15 秒轮询一次就会反复弹）
+   */
+  async function checkRemoteUpdate({ notify = false } = {}) {
+    const result = await checker.check();
+    store.update((draft) => ({
+      ...draft,
+      runtime: { ...draft.runtime, update: { ...result, checkedAt: Date.now() } },
+    }), { track: false });
+
+    if (notify && result.ok && result.hasUpdate && settings().updateNotifiedVersion !== result.remote) {
+      store.saveSettings({ updateNotifiedVersion: result.remote });
+      ctx.showSystemMessage?.(
+        `导演时间：有新版本 v${result.remote}（当前 v${result.local}）。打开面板 → 设置 → 底部点「更新插件」即可。`,
+      );
+    }
+    return result;
+  }
+
   const updateApi = {
     folder: () => updater.folder,
     path: () => settings().updatePath ?? null,
     version: () => settings().loadedVersion ?? '',
     /** 比本地与远程版本：{ ok, local, remote, hasUpdate, message } */
-    check: () => checker.check(),
+    check: () => checkRemoteUpdate(),
     apply: () => updater.apply(),
+    /** 最近一次远程检查结果（面板/调试面板直接读，不用再查一遍） */
+    last: () => store.get().runtime?.update ?? null,
   };
 
   // T-414：档位与待确认队列的读写口（面板与配置页共用）
@@ -975,7 +1004,12 @@ export function bootstrap({ ctx, store } = {}) {
         profile,
         profileFields: PROFILE_FIELDS.map((key) => ({ key, label: PROFILE_FIELD_LABELS[key] ?? key })),
         world: { sources: [], selection: { ...(state.worldSelection ?? {}) } },
-        update: { version: updateApi.version(), path: updateApi.path() },
+        update: {
+          version: updateApi.version(),
+          path: updateApi.path(),
+          // T-430：最近一次远程检查结果（面板一打开就能看到"有没有新版本"，不用先点检查）
+          checked: updateApi.last(),
+        },
         debug: buildDebugState({
           store,
           registry,
@@ -1014,13 +1048,12 @@ export function bootstrap({ ctx, store } = {}) {
       refreshInjection();
       return ok;
     },
-    /** T-420：手动查一次远程版本（查到新版本会走既有的刷新流程） */
-    checkUpdate: () => checkForUpdate({
-      ctx,
-      store,
-      manifestUrl: `${MANIFEST_URL}?t=${Date.now()}`,
-      sessionStore: globalThis.sessionStorage,
-    }),
+    /**
+     * T-430：手动查一次远程版本（GitHub）。
+     * 以前这里走的是 `checkForUpdate`（本地文件 vs 上次记录）—— 那条永远相等，
+     * 所以按钮无论 GitHub 多新都说"已是最新版"。现在真去比远程。
+     */
+    checkUpdate: () => checkRemoteUpdate(),
     loadWorldSources: (force) => collectWorldSources(force),
     saveWorldSelection: (selection) => {
       store.update((draft) => ({ ...draft, worldSelection: { ...selection } }), { label: '勾选世界书' });
@@ -1123,6 +1156,8 @@ export function bootstrap({ ctx, store } = {}) {
     // T-408：伏笔查看 / 手动销账
     foreshadows: foreshadowApi,
     generateScript, regenerateScript, topUpStages, resetScript, setEnabled,
+    // T-430：启动/轮询时自动查一次 GitHub（index.js 调它，有新版本会提示一次）
+    checkRemoteUpdate,
     collectWorldSources, worldText, profileText,
     settingsPanel: settingsPanelApi, panel, unmountMenu,
   };

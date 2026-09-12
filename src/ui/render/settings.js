@@ -11,6 +11,23 @@
 //     这些能配但定稿界面里没有位置，先留在控制台（已列进待办清单）
 
 import { esc, seg, toggle, tokensOf, fmtNumber } from '../dom.js';
+import { describeRemoteCheck } from '../../core/update-check.js';
+
+/**
+ * T-430：更新区那一行状态 —— 有新版本就明写在面板上（一打开就能看到，不用先点「检查更新」）。
+ * 显示的是**最近一次远程检查的结果**（bootstrap 存在 runtime.update 里）。
+ */
+function updateStatusLine(checked) {
+  if (!checked) return '';
+  const view = describeRemoteCheck(checked);
+  if (view.state === 'update') {
+    return `<span class="dt-note" style="margin:0;color:var(--accent)">有新版本 v${esc(checked.remote)}</span>`;
+  }
+  if (view.state === 'error') {
+    return `<span class="dt-note" style="margin:0">上次没查到（${esc(checked.reason ?? '原因未知')}）</span>`;
+  }
+  return '';
+}
 
 const INTENSITY_OPTIONS = [
   { value: 'restrained', label: '克制' },
@@ -219,7 +236,7 @@ export function render(state, ctxState) {
         <button class="dt-icon" type="button" data-act="layer.close" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="M18.3 5.7 12 12l6.3 6.3-1.4 1.4L10.6 13.4 12 12 5.7 5.7 7.1 4.3 13.4 10.6 12 12l1.4 1.4 6.3 6.3-1.4 1.4z"/></svg></button>
       </div>
       <div class="dt-layer-body">${body}</div>
-      <div class="dt-layer-foot"><span>v${esc(state.version ?? '—')}</span><span class="spacer"></span>
+      <div class="dt-layer-foot"><span>v${esc(state.version ?? '—')}</span>${updateStatusLine(state.update?.checked)}<span class="spacer"></span>
         <button class="dt-mini" type="button" data-act="update.check">检查更新</button>
         <button class="dt-mini" type="button" data-act="update.apply">更新插件</button>
         <span data-flash="update" hidden></span>
@@ -385,12 +402,17 @@ export function render(state, ctxState) {
           ctx.flash('copy', `导入失败：${error?.message ?? '不是合法的 JSON'}`);
         }
       },
+      /**
+       * T-430：检查更新 = **真去 GitHub 比版本**。
+       * 以前这里读的是"本地文件有没有变"那套，两者永远相等 → 无论 GitHub 多新都显示"已是最新版"。
+       * 现在三态如实报：有新版本 / 已是最新 / **查不到（写清原因，绝不假装最新）**。
+       */
       'update.check': async (el, { api, ctx }) => {
-        ctx.flash('update', '检查中…', true);
+        ctx.flash('update', '正在查 GitHub…', true);
         const result = await api.checkUpdate?.();
-        ctx.flash('update', result?.action === 'reload'
-          ? '有新版本，正在刷新页面…'
-          : (result?.action === 'prompt' ? `有新版本（${result.version ?? ''}）→ 点「更新插件」` : '已是最新版'), true);
+        const view = describeRemoteCheck(result);
+        ctx.flash('update', view.message, true);
+        if (view.state !== 'error') ctx.refresh(); // 底部的状态行跟着变
       },
       'update.apply': async (el, { api, ctx }) => {
         ctx.flash('update', '更新中…', true);

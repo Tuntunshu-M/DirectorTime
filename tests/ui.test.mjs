@@ -661,6 +661,59 @@ check('panel.js 里必须用约定签名（不许再写回 handler(target, ctx()
   assert.ok(code.includes('handler(target, { ctx: context, api:'), '约定：handler(元素, { ctx, api, state }, 事件)');
 });
 
+console.log('T-430 · 检查更新的三态（不许再说"已是最新"骗人）');
+
+await acheck('update.check：远程有新版本 → 提示点「更新插件」，并刷新状态行', async () => {
+  const { actions } = renderPanel(fakeState(), { worldSources });
+  const flashes = [];
+  let refreshed = 0;
+  const ctx = { ...fakeCtx(), flash: (key, text) => flashes.push(text), refresh: () => { refreshed += 1; } };
+  await actions['update.check'](fakeElement('update.check'), {
+    ctx,
+    api: { checkUpdate: async () => ({ ok: true, local: '0.10.0', remote: '0.11.0', hasUpdate: true }) },
+    state: fakeState(),
+  });
+  assert.ok(flashes.at(-1).includes('新版本 v0.11.0'), flashes.join(' | '));
+  assert.ok(flashes.at(-1).includes('更新插件'), flashes.at(-1));
+  assert.equal(refreshed, 1, '状态行要跟着刷');
+});
+
+await acheck('update.check：确实最新 → 说已是最新', async () => {
+  const { actions } = renderPanel(fakeState(), { worldSources });
+  const flashes = [];
+  const ctx = { ...fakeCtx(), flash: (key, text) => flashes.push(text) };
+  await actions['update.check'](fakeElement('update.check'), {
+    ctx,
+    api: { checkUpdate: async () => ({ ok: true, local: '0.10.0', remote: '0.10.0', hasUpdate: false }) },
+    state: fakeState(),
+  });
+  assert.ok(flashes.at(-1).includes('已是最新'), flashes.at(-1));
+});
+
+await acheck('update.check：查不到远程 → 如实说原因，**不能**显示已是最新', async () => {
+  const { actions } = renderPanel(fakeState(), { worldSources });
+  const flashes = [];
+  const ctx = { ...fakeCtx(), flash: (key, text) => flashes.push(text) };
+  await actions['update.check'](fakeElement('update.check'), {
+    ctx,
+    api: { checkUpdate: async () => ({ ok: false, reason: 'network', message: '连不上 GitHub，查不到有没有新版本 · 当前 v0.10.0' }) },
+    state: fakeState(),
+  });
+  assert.equal(flashes.at(-1).includes('已是最新'), false, `查不到却说最新：${flashes.at(-1)}`);
+  assert.ok(flashes.at(-1).includes('GitHub'), flashes.at(-1));
+});
+
+check('设置层底部：有远程检查结果时显示状态行（有新版本明写出来）', () => {
+  const update = renderPanel(fakeState({ update: { checked: { ok: true, local: '0.10.0', remote: '0.11.0', hasUpdate: true } } }), { layer: 'settings' }).html;
+  assert.ok(update.includes('有新版本 v0.11.0'), '有新版本要在面板上明写');
+
+  const latest = renderPanel(fakeState({ update: { checked: { ok: true, local: '0.10.0', remote: '0.10.0', hasUpdate: false } } }), { layer: 'settings' }).html;
+  assert.equal(latest.includes('有新版本'), false, '最新就别写着有新版本');
+
+  const failed = renderPanel(fakeState({ update: { checked: { ok: false, reason: 'network' } } }), { layer: 'settings' }).html;
+  assert.ok(failed.includes('上次没查到'), '查不到要如实说，不能装作没事');
+});
+
 console.log('版本号一致性（防再次漂移）');
 
 check('UI_VERSION === manifest.version === package.json version', () => {

@@ -43,13 +43,39 @@ function pollUpdate({ log = false } = {}) {
   });
 }
 
+// T-430：远程（GitHub）检查要**节流** —— 15 秒一次去打 raw.githubusercontent 会被限流，
+// 也没必要时时查；10 分钟一次足够。手动点「检查更新」和打开面板都不受这个限制。
+const REMOTE_CHECK_MS = 10 * 60 * 1000;
+let remoteCheckedAt = 0;
+
+/**
+ * T-430：自动查一次 GitHub，有新版本会**提示一次**（每个版本只提示一次，见 bootstrap）。
+ * 这是用户要的"GitHub 更新了 → 酒馆里自己冒出来说一句"。
+ */
+function checkRemote({ notify = false, force = false } = {}) {
+  const api = globalThis.window?.DirectorTime;
+  if (!booted || typeof api?.checkRemoteUpdate !== 'function') return Promise.resolve(null);
+  if (!force && Date.now() - remoteCheckedAt < REMOTE_CHECK_MS) return Promise.resolve(null);
+  remoteCheckedAt = Date.now();
+  return Promise.resolve(api.checkRemoteUpdate({ notify })).catch((error) => {
+    console.warn('[导演时间] 远程更新检查异常', error);
+    return null;
+  });
+}
+
 /** 轮询 + 回到前台时各查一次，覆盖"点了 Update 但页面没刷新"的情况 */
 function startUpdatePolling() {
   if (updateTimer || typeof setInterval !== 'function') return;
-  updateTimer = setInterval(() => { pollUpdate(); }, UPDATE_POLL_MS);
+  updateTimer = setInterval(() => {
+    pollUpdate();
+    checkRemote({ notify: true }); // 内部有 10 分钟节流，这里可以放心每 15 秒叫一次
+  }, UPDATE_POLL_MS);
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') pollUpdate();
+      if (document.visibilityState === 'visible') {
+        pollUpdate();
+        checkRemote({ notify: true });
+      }
     });
   }
 }
@@ -67,6 +93,8 @@ function boot() {
   bus.emit('boot', { capabilities: ctx.capabilities, api });
   pollUpdate({ log: true });
   startUpdatePolling();
+  // T-430：启动后 3 秒自动查一次 GitHub（错开启动高峰），有新版本提示一次
+  setTimeout(() => { checkRemote({ notify: true, force: true }); }, 3000);
 }
 
 // 正常路径：等酒馆就绪

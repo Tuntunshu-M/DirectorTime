@@ -183,6 +183,29 @@ export function createUpdateChecker({ manifestUrl, homepage, fetchImpl, branch }
 }
 
 /**
+ * T-430：远程检查结果 → 界面用的三态。
+ *
+ * 为什么单独抽出来：以前界面上"检查更新"读的是**本地那套刷新检查**，
+ * 两者相等就落进 else 分支显示"已是最新版" —— 于是**查不到远程时也说已是最新**，
+ * 用户看到的就是"永远最新"。这里把三态写死：有新版本 / 已是最新 / **查不到（如实说原因）**。
+ */
+export function describeRemoteCheck(result) {
+  if (!result?.ok) {
+    return {
+      state: 'error',
+      message: result?.message ?? `查不到远程版本（${result?.reason ?? 'unknown'}）`,
+    };
+  }
+  if (result.hasUpdate) {
+    return {
+      state: 'update',
+      message: `有新版本 v${result.remote}（当前 v${result.local}）→ 点「更新插件」`,
+    };
+  }
+  return { state: 'latest', message: `已是最新版（v${result.local}）` };
+}
+
+/**
  * 一键更新：调酒馆的接口把扩展更新到最新，成功后刷新页面（T-420）。
  *
  * 失败时**不刷新、不假装成功**，返回一句能照做的话（去扩展面板手动点更新）。

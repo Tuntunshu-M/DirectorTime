@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import {
   decideUpdate, extensionFolderFromUrl, extensionCandidates, createExtensionUpdater, checkForUpdate,
-  createUpdateChecker, compareVersion, remoteManifestUrls,
+  createUpdateChecker, compareVersion, remoteManifestUrls, describeRemoteCheck,
 } from '../src/core/update-check.js';
 import { createSillyTavernContext } from '../src/core/context.js';
 
@@ -223,6 +223,47 @@ await check('连点两下：第二下拒绝，不会并发拉两份', async () =
   assert.equal(second.reason, 'busy');
   release();
   assert.equal((await first).ok, true);
+});
+
+console.log('T-430 · 三态文案（不许把"查不到"说成"已是最新"）');
+
+await check('有新版本 → update + 文案带上远端与当前版本', () => {
+  const view = describeRemoteCheck({ ok: true, local: '0.10.0', remote: '0.11.0', hasUpdate: true });
+  assert.equal(view.state, 'update');
+  assert.ok(view.message.includes('0.11.0') && view.message.includes('0.10.0'), view.message);
+  assert.ok(view.message.includes('更新插件'));
+});
+
+await check('确实是最新 → latest', () => {
+  const view = describeRemoteCheck({ ok: true, local: '0.10.0', remote: '0.10.0', hasUpdate: false });
+  assert.equal(view.state, 'latest');
+  assert.ok(view.message.includes('已是最新'));
+});
+
+await check('查不到远程 → error，且**绝不能**显示"已是最新"', () => {
+  for (const result of [
+    { ok: false, reason: 'network', message: '连不上 GitHub，查不到有没有新版本 · 当前 v0.10.0' },
+    { ok: false, reason: 'no-homepage' },
+    undefined,
+  ]) {
+    const view = describeRemoteCheck(result);
+    assert.equal(view.state, 'error', JSON.stringify(result));
+    assert.equal(view.message.includes('已是最新'), false, `失败不能说已是最新：${view.message}`);
+    assert.ok(view.message.length > 0, '要给一句能照做的话');
+  }
+});
+
+await check('checker.check 在远程拿不到时也不报"最新"（真实取数路径）', async () => {
+  const checker = createUpdateChecker({
+    manifestUrl: 'https://host/manifest.json',
+    // 本地读得到，远程两个分支都失败（模拟 GitHub 连不上）
+    fetchImpl: async (url) => (String(url).includes('host')
+      ? { ok: true, json: async () => ({ version: '0.10.0', homepage: 'https://github.com/x/y' }) }
+      : { ok: false, status: 500 }),
+  });
+  const result = await checker.check();
+  assert.equal(result.ok, false);
+  assert.equal(describeRemoteCheck(result).state, 'error');
 });
 
 console.log('T-420 · 版本检测（补上此前缺失的覆盖）');
