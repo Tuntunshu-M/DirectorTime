@@ -30,6 +30,16 @@ export const USER_PRESCRIBING_IN_ANTI = [
 ];
 
 /**
+ * §七c：criteria 必须**char 单方面就能完成**。
+ * "user 与 char 面对面""user 答应出行"这种要 user 配合的条件，user 不配合就永远达不成 → 剧情卡死。
+ * 只抓"user 当主语"的痕迹：合格写法（"char 已把话挑明，user 无法回避"）里 user 不出现在主语位，不会误伤。
+ */
+export const USER_SUBJECT_CRITERIA = [
+  /^\s*(?:user|用户)/i,
+  /(?:让|使)\s*(?:user|用户)\s*[与和跟]/i,
+];
+
+/**
  * "不让 user 回避" / "不要让 user 被晾着" 是**禁止**预设 user —— 恰恰是我们要的写法，
  * 不能误判。所以先把"否定 + 让 user"这种片段抹掉再查。
  */
@@ -37,22 +47,44 @@ function stripNegatedPrescribing(text) {
   return String(text ?? '').replace(/[不别勿莫没]要?\s*让\s*(?:user|用户)/gi, '');
 }
 
-function scan(text, patterns, field, stageIndex, issues) {
+function scan(text, patterns, field, stageIndex, issues, kind = 'user-directive') {
   const value = String(text ?? '');
   if (!value.trim()) return;
   const probe = stripNegatedPrescribing(value);
   for (const pattern of patterns) {
     const hit = probe.match(pattern);
     if (hit) {
-      issues.push({ stageIndex, field, text: value, pattern: String(pattern), hit: hit[0] });
+      issues.push({ stageIndex, field, text: value, pattern: String(pattern), hit: hit[0], kind });
       return; // 一个字段报一次就够
     }
   }
 }
 
+/** criteria 专项：先查"要 user 配合"，查到了就不再当成一般的"替 user 做决定"重复报 */
+function scanCriteria(value, stageIndex, issues) {
+  const text = String(value ?? '');
+  if (!text.trim()) return false;
+  const probe = stripNegatedPrescribing(text);
+  for (const pattern of USER_SUBJECT_CRITERIA) {
+    const hit = probe.match(pattern);
+    if (hit) {
+      issues.push({
+        stageIndex,
+        field: 'checkpoint.criteria',
+        text,
+        pattern: String(pattern),
+        hit: hit[0].trim(),
+        kind: 'criteria-depends-on-user',
+      });
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * 找出"在指挥 user"的字段。
- * @returns {Array<{stageIndex: number, field: string, text: string, pattern: string, hit: string}>}
+ * @returns {Array<{stageIndex: number, field: string, text: string, pattern: string, hit: string, kind: string}>}
  */
 export function findUserDirectives(stages = []) {
   const issues = [];
@@ -61,7 +93,11 @@ export function findUserDirectives(stages = []) {
     scan(stage?.activity, USER_PRESCRIBING, 'activity', stageIndex, issues);
     scan(stage?.initiative, USER_PRESCRIBING, 'initiative', stageIndex, issues);
     (stage?.beats ?? []).forEach((beat, index) => scan(beat, USER_PRESCRIBING, `beats[${index}]`, stageIndex, issues));
-    scan(stage?.checkpoint?.criteria, USER_PRESCRIBING, 'checkpoint.criteria', stageIndex, issues);
+    // §七c：criteria 先按"要不要 user 配合"查（这条更致命），没查到再看有没有替 user 做决定
+    const criteria = stage?.checkpoint?.criteria;
+    if (!scanCriteria(criteria, stageIndex, issues)) {
+      scan(criteria, USER_PRESCRIBING, 'checkpoint.criteria', stageIndex, issues);
+    }
     scan(stage?.checkpoint?.antiCriteria, USER_PRESCRIBING_IN_ANTI, 'checkpoint.antiCriteria', stageIndex, issues);
   });
   return issues;
@@ -108,6 +144,8 @@ export function findFinishedLines(stages = []) {
 /** 报警文案（控制台用） */
 export function describeIssues(issues = []) {
   return issues
-    .map((issue) => `阶段${issue.stageIndex + 1}.${issue.field} 写了 user 的戏：「${issue.hit}」→ ${issue.text}`)
+    .map((issue) => (issue.kind === 'criteria-depends-on-user'
+      ? `阶段${issue.stageIndex + 1}.${issue.field} 的达成条件要 user 配合（user 不配合就永远过不了，剧情会卡死）：「${issue.hit}」→ ${issue.text}`
+      : `阶段${issue.stageIndex + 1}.${issue.field} 写了 user 的戏：「${issue.hit}」→ ${issue.text}`))
     .join('\n');
 }

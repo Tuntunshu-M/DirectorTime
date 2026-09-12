@@ -41,13 +41,19 @@ export function prependToSystem(messages, text) {
   return [{ ...first, content: `${body}\n\n${first.content ?? ''}` }, ...rest];
 }
 
+/** 标签里的字符都是字面量，转义一下再拼正则（以后改标签名只需改上面两个常量） */
+function escapeTag(tag) {
+  return String(tag).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
  * 清洗：只取 `<plot>…</plot>` 里的内容。
  * **没有标签就原样返回** —— 没开破限模式下模型不会用标签，老行为必须不变。
  */
 export function extractPlot(text) {
   const raw = String(text ?? '');
-  const match = raw.match(/<plot>([\s\S]*?)<\/plot>/i);
+  const pattern = new RegExp(`${escapeTag(PLOT_OPEN)}([\\s\\S]*?)${escapeTag(PLOT_CLOSE)}`, 'i');
+  const match = raw.match(pattern);
   return match ? match[1].trim() : raw;
 }
 

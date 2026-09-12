@@ -59,10 +59,10 @@ function boot() {
   booted = true;
   store.load();
   const api = bootstrap({ ctx, store });
-  // 挂到 window —— 那些"还没有界面入口、先用控制台"的功能（剧情占比 / 主角 / 伏笔销账 / 副本迁移）
-  // 全靠这个 api 才够得着。注意用合并式赋值：boot 可能在模块末尾那行之前就跑起来，
-  // 整体覆盖会把这里挂的 api 冲掉（冒烟抓到过）。
-  window.DirectorTime = { ...(window.DirectorTime ?? {}), api };
+  // 挂到 window —— README 里那些控制台命令（DirectorTime.debug / .automation / .tone / .cast …）
+  // 全靠这一步才够得着；只挂 api 的话它们全是 undefined。这里摊平 + 保留 api 两种写法都行。
+  // 注意用合并式赋值：boot 可能在模块末尾那行之前就跑起来，整体覆盖会把这里挂的东西冲掉（冒烟抓到过）。
+  window.DirectorTime = { ...(window.DirectorTime ?? {}), ...api, api };
   console.log('[导演时间] 已加载', ctx.capabilities);
   bus.emit('boot', { capabilities: ctx.capabilities, api });
   pollUpdate({ log: true });

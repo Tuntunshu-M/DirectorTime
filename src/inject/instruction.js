@@ -42,7 +42,7 @@ export function buildDirectorLayer({ stage, outline, pacing, profile }) {
     const initiative = usableInitiative(stage, profile);
     if (initiative) lines.push(`如果冷场，你就${initiative}`);
     // §七b：否定指令（"不要复述"）模型遵循率低，改成肯定说法
-  lines.push('用你自己的话和方式，把上面的意图演出来。');
+    lines.push('用你自己的话和方式，把上面的意图演出来。');
     return lines.join('\n');
   }
 

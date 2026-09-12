@@ -1,7 +1,7 @@
 // P0 修正测试：剧本只能指挥 char（prompt 约束 + 注入语气 + 本地兜底检查）
 
 import assert from 'node:assert/strict';
-import { buildMessages } from '../src/llm/prompts.js';
+import { buildMessages, PROMPTS } from '../src/llm/prompts.js';
 import { buildInstruction, buildDirectorLayer } from '../src/inject/instruction.js';
 import { findUserDirectives, findFinishedLines, describeIssues } from '../src/director/actor-guard.js';
 
@@ -208,6 +208,73 @@ await check('§七b：复述那句否定指令换成肯定说法', () => {
   const text = buildInstruction({ stage: STAGE });
   assert.equal(text.includes('不要直接复述'), false, '否定指令要去掉');
   assert.ok(text.includes('用你自己的话和方式，把上面的意图演出来'), '改成肯定说法');
+});
+
+console.log('§七 三条 prompt 修正');
+
+await check('a：GEN_OUTLINE 与 EXTEND_OUTLINE 都带【演员界定】', () => {
+  for (const key of ['GEN_OUTLINE', 'EXTEND_OUTLINE']) {
+    assert.ok(PROMPTS[key].system.includes('【演员界定'), `${key} 缺演员界定`);
+    assert.ok(PROMPTS[key].system.includes('严禁出现这些写法'), `${key} 缺"禁止给人写戏"的清单`);
+  }
+});
+
+await check('b：注入指令开头声明"不是台词"，并用肯定式说法', () => {
+  const layer = buildDirectorLayer({
+    stage: { goal: '知道想不想去', activity: '主动问一句', beats: ['先发消息'], checkpoint: { criteria: 'c', antiCriteria: 'a' } },
+  });
+  assert.ok(layer.startsWith('以下是导演给你的指示，不是台词'), layer.slice(0, 40));
+  assert.ok(layer.includes('用你自己的话和方式，把上面的意图演出来'), layer);
+  assert.equal(layer.includes('不要复述'), false, '§七b：否定式说法已改成肯定式');
+});
+
+await check('c：criteria 的例子不许把 user 当主语', () => {
+  const system = PROMPTS.GEN_OUTLINE.system;
+  assert.equal(system.includes('"user 同意这次出行"'), false, 'criteria 的正例不能是 user 做主语');
+  assert.ok(system.includes('char 单方面就能做到'), system.slice(0, 200));
+  assert.ok(system.includes('user 不配合这场就永远过不去'));
+});
+
+await check('c：判定口径与 criteria 一致（看 char 做到没有）', () => {
+  assert.ok(PROMPTS.JUDGE_CHECKPOINT.system.includes('char 做到了就算达成'));
+  assert.ok(PROMPTS.JUDGE_CHECKPOINT.system.includes('不是 user 有没有配合'));
+});
+
+console.log('§七c · 本地兜底：criteria 要 user 配合 = 剧情会卡死');
+
+await check('"user 与 char 面对面" 被抓出来，并归到 criteria 依赖 user', () => {
+  const issues = findUserDirectives([
+    { goal: 'g', checkpoint: { criteria: 'user 与 char 面对面', antiCriteria: 'a' } },
+  ]);
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].field, 'checkpoint.criteria');
+  assert.equal(issues[0].kind, 'criteria-depends-on-user');
+  assert.ok(describeIssues(issues).includes('要 user 配合'));
+  assert.ok(describeIssues(issues).includes('剧情会卡死'));
+});
+
+await check('"让 user 与 char 见面" 也算依赖 user', () => {
+  const issues = findUserDirectives([{ checkpoint: { criteria: '让 user 与 char 见面' } }]);
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].kind, 'criteria-depends-on-user');
+});
+
+await check('同一条 criteria 只报一次（依赖 user 优先报）', () => {
+  const issues = findUserDirectives([{ checkpoint: { criteria: 'user 会答应 char 的请求' } }]);
+  assert.equal(issues.length, 1);
+  assert.equal(issues[0].kind, 'criteria-depends-on-user');
+});
+
+await check('合格写法不误报（user 只在从句里，主语是 char）', () => {
+  const good = [
+    'char 已把出行的事挑明，让这件事再也搁置不下去',
+    'char 已把话挑明，user 无法回避',
+    'char 已经把选择摆到台面上',
+  ];
+  for (const criteria of good) {
+    const issues = findUserDirectives([{ goal: 'g', checkpoint: { criteria, antiCriteria: 'a' } }]);
+    assert.equal(issues.length, 0, `不该误报：${criteria}`);
+  }
 });
 
 console.log(`\n通过 ${passed} 项`);

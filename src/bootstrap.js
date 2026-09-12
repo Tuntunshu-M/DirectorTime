@@ -164,12 +164,18 @@ export function bootstrap({ ctx, store } = {}) {
     getCapabilities: () => ctx.capabilities,
     getLastTurn: () => review.getLastTurn(),
     getLastRequest: () => lastDirectorRequest,
-    // T-418：Debug 里能看到选中的预设确实生效（判据 2）
-    getBreakStatus: () => ({
-      mode: normalizeBreakFilter(settings().breakFilter).mode,
-      preset: presets.status(),
-    }),
-  });
+    // T-418 / T-422：Debug 里必须一眼看出"到底注入了没有"，不能只报"选了预设"
+    getBreakStatus: () => {
+      const filter = normalizeBreakFilter(settings().breakFilter);
+      return {
+        mode: filter.mode,
+        preset: presets.status(),
+        customLength: String(filter.custom ?? '').trim().length,
+        // 真正会进请求的字数（mode=off 时是 0，别被"选了预设"骗了）
+        injected: (breakFilter.text() ?? '').length,
+      };
+    },
+    });
 
   // ---------- 剧本生成 ----------
   // T-203 的接线：清单里漏了"首次生成剧本"这一步，不接上就永远不会自动生成
@@ -234,9 +240,18 @@ export function bootstrap({ ctx, store } = {}) {
    */
   function warnScriptIssues(stages, where = '剧本') {
     const actorIssues = findUserDirectives(stages);
-    if (actorIssues.length) {
+    // §七c 单独报：达成条件要 user 配合 = 剧情会卡死，比"替 user 做决定"更致命
+    const dependsOnUser = actorIssues.filter((issue) => issue.kind === 'criteria-depends-on-user');
+    const directsUser = actorIssues.filter((issue) => issue.kind !== 'criteria-depends-on-user');
+    if (directsUser.length) {
       console.warn(
-        `[导演时间] ${where}又把 user 写成了演员（P0）：\n${describeIssues(actorIssues)}\n`
+        `[导演时间] ${where}又把 user 写成了演员（P0）：\n${describeIssues(directsUser)}\n`
+        + '建议点「重新生成剧本」；若反复出现，把这段贴给维护者。'
+      );
+    }
+    if (dependsOnUser.length) {
+      console.warn(
+        `[导演时间] ${where}的达成条件要 user 配合（P0：user 不配合就永远过不了）：\n${describeIssues(dependsOnUser)}\n`
         + '建议点「重新生成剧本」；若反复出现，把这段贴给维护者。'
       );
     }

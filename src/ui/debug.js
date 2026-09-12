@@ -6,6 +6,51 @@
 // 状态计算抽成纯函数 buildDebugState，便于自动化测试；DOM 渲染单独一层。
 
 import { hitRate } from '../director/speculate.js';
+import { automationText } from '../core/automation.js';
+
+/**
+ * T-411 / T-418：破限词模式 + 选中的酒馆预设，压成一行。
+ *
+ * **这一行只能说明一件事：到底注入了没有。**
+ * 之前只写「预设生效 N 字」，可模式是 off 时其实一个字都没注入 —— Debug 是排查的唯一依据，
+ * 它骗人整个排查就废了。所以这里统一口径：
+ *   没注入 → 「预设：X（未启用，未注入）」/「自定义：空（未注入）」
+ *   真注入 → 「预设：X（已注入 N 字）」
+ * 末尾还会写「本轮实际注入 N 字」兜底。
+ */
+export function breakFilterLine(status) {
+  if (!status) return '—';
+  const mode = status.mode ?? 'off';
+  const preset = status.preset ?? null;
+  const wantsPreset = mode === 'preset' || mode === 'append';
+  const wantsCustom = mode === 'custom' || mode === 'append';
+  const parts = [];
+
+  if (mode === 'off') {
+    parts.push('关闭（未注入破限词）');
+    if (preset?.name) parts.push(`预设：${preset.name}（未启用，未注入）`);
+    return parts.join(' · ');
+  }
+
+  parts.push(`模式 ${mode}`);
+
+  if (preset?.name) {
+    if (wantsPreset && preset.active) parts.push(`预设：${preset.name}（已注入 ${preset.length} 字）`);
+    else if (wantsPreset) parts.push(`预设：${preset.name}（读不到内容，未注入）`);
+    else parts.push(`预设：${preset.name}（未启用，未注入）`);
+  } else if (wantsPreset) {
+    parts.push(preset?.available ? '未选预设（未注入）' : '无可用预设（未注入）');
+  } else {
+    parts.push('未选预设（未注入）');
+  }
+
+  if (wantsCustom) {
+    parts.push(status.customLength ? `自定义：已注入 ${status.customLength} 字` : '自定义：空（未注入）');
+  }
+
+  parts.push(`本轮实际注入 ${status.injected ?? 0} 字`);
+  return parts.join(' · ');
+}
 
 /** 纯函数：把当前状态整理成 Debug 需要的结构 */
 export function buildDebugState({
@@ -44,6 +89,8 @@ export function buildDebugState({
       .map((item) => item.text),
     lastJudgement: last?.judgement ?? null,
     lastAction: last?.action ?? null,
+    // T-414：当前档位一行看完 —— 排查时先确认"是不是档位设错了"
+    automation: automationText(state.automation),
     lastReason: last?.reason ?? null,
     lastRaw: last?.raw ?? '',
     turn: lastTurn ?? null,
@@ -88,20 +135,7 @@ export function createDebugPanel({ store, registry, getCapabilities, getLastTurn
     return `<div><span style="opacity:.6">${escapeHtml(label)}</span> ${escapeHtml(value)}</div>`;
   }
 
-  /** T-411 / T-418：破限词模式 + 选中的酒馆预设，压成一行 */
-  function breakFilterLine(status) {
-    if (!status) return '—';
-    const mode = status.mode === 'off' ? '关闭' : `模式 ${status.mode}`;
-    const parts = [mode];
-    if (status.preset?.name) {
-      parts.push(`预设「${status.preset.name}」${status.preset.active ? `生效 ${status.preset.length} 字` : '读不到内容'}`);
-    } else if (status.mode === 'preset' || status.mode === 'append') {
-      parts.push(status.preset?.available ? '未选预设' : '无可用预设');
-    } else if (status.mode === 'custom') {
-      parts.push('用自定义破限词');
-    }
-    return parts.join(' · ');
-  }
+  /** T-407：把命中率 / 待验证的预测压成一行 */
 
   /** T-407：把命中率 / 待验证的预测压成一行 */
   function speculationLine(spec) {
@@ -132,6 +166,7 @@ export function createDebugPanel({ store, registry, getCapabilities, getLastTurn
         ${row('阶段', `${s.stage.index}/${s.stage.total} ${s.stage.title}`)}
         ${row('目标', s.stage.goal || '—')}
         ${row('状态', `${s.stage.status} · 卡住 ${s.stage.stuckCount} 轮`)}
+        ${row('档位', s.automation || '—')}
         ${row('注入', s.injection.registered ? `已注册 · ${s.injection.length} 字` : '未注册')}
         ${row('上次动作', s.lastAction ? `${s.lastAction}（${s.lastReason ?? ''}）` : '—')}
         ${row('伏笔', s.foreshadows?.length ? `待回收 ${s.foreshadows.length}：${s.foreshadows.join(' / ')}` : '无')}
