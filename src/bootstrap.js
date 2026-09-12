@@ -22,7 +22,9 @@ import { findUserDirectives, findFinishedLines, describeIssues } from './directo
 import { normalizeProtagonists, protagonistText } from './world/cast.js';
 import { gate, setLevel, normalizeAutomation } from './core/automation.js';
 import { createReviewQueue } from './core/review-queue.js';
-import { GEMINI_REDLINE, normalizeModelPreset, modelPresetText } from './core/model-preset.js';
+import {
+  BUILTIN_PRESETS, PRESET_LABELS, PRESET_KINDS, normalizeModelPreset, modelPresetText,
+} from './core/model-preset.js';
 import { createEditorService } from './director/editor.js';
 import { extensionFolderFromUrl, createExtensionUpdater, checkForUpdate } from './core/update-check.js';
 import { toneText as coreToneText, rebalanceTone, normalizeTone, TONE_KEYS } from './core/tone.js';
@@ -721,12 +723,19 @@ export function bootstrap({ ctx, store } = {}) {
   // ---------- T-403 模型特化预设（红线）----------
   const modelPresetApi = {
     get: () => normalizeModelPreset(settings().modelPreset),
+    kind: () => normalizeModelPreset(settings().modelPreset).kind,
+    kinds: () => [...PRESET_KINDS],
+    labels: () => ({ ...PRESET_LABELS }),
     text: () => redlineText(),
-    defaultText: () => GEMINI_REDLINE,
-    set: (patch) => {
-      const next = { ...normalizeModelPreset(settings().modelPreset), ...patch };
+    /** 内置文本：不传 kind 就是当前这套的 */
+    defaultText: (kind) => BUILTIN_PRESETS[kind ?? normalizeModelPreset(settings().modelPreset).kind] ?? '',
+    /** patch: { kind } 选套 / { custom: '文本' } 改当前这套的文本（两套各存各的） */
+    set: (patch = {}) => {
+      const current = normalizeModelPreset(settings().modelPreset);
+      const next = { kind: patch.kind ?? current.kind, custom: { ...current.custom } };
+      if (typeof patch.custom === 'string') next.custom[next.kind] = patch.custom;
       store.saveSettings({ modelPreset: normalizeModelPreset(next) });
-      review.syncInjection(); // 红线改了立刻重算注入（角色回复端那半）
+      review.syncInjection(); // 改完立刻重算注入（角色回复端那半）
       return normalizeModelPreset(settings().modelPreset);
     },
     reset: () => modelPresetApi.set({ custom: '' }),

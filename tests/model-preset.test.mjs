@@ -1,8 +1,9 @@
-// T-403 测试：模型特化预设（Gemini 角色塑造红线）—— 默认关、双端注入
+// T-403 测试：模型特化预设（Claude 推主动 / Gemini 收敛极端）—— 默认关、二选一、双端注入
 
 import assert from 'node:assert/strict';
 import {
-  GEMINI_REDLINE, normalizeModelPreset, modelPresetText,
+  CLAUDE_ACTIVE, GEMINI_REDLINE, BUILTIN_PRESETS, PRESET_KINDS,
+  normalizeModelPreset, modelPresetKind, modelPresetText,
 } from '../src/core/model-preset.js';
 import { buildInstruction, redlineLine } from '../src/inject/instruction.js';
 
@@ -26,30 +27,56 @@ const stage = {
   checkpoint: { criteria: 'c', antiCriteria: 'a' },
 };
 
-console.log('T-403 模型特化预设 · 开关语义');
+console.log('T-403 模型特化预设 · 开关与套别');
 
 check('默认关闭：一个字都不注入', () => {
-  assert.equal(normalizeModelPreset(undefined).enabled, false);
+  assert.equal(modelPresetKind(undefined), 'off');
   assert.equal(modelPresetText(undefined), '');
-  assert.equal(modelPresetText({ enabled: false, custom: '随便写的' }), '', '关着就是关着');
+  assert.equal(modelPresetText({ kind: 'off', custom: { claude: '写了也不算' } }), '');
   assert.equal(redlineLine(''), '');
 });
 
-check('开启且没改过 → 用内置 Gemini 红线', () => {
-  const text = modelPresetText({ enabled: true, custom: '  ' });
-  assert.equal(text, GEMINI_REDLINE);
-  assert.ok(text.includes('控制欲'), '要点名禁极端模板');
-  assert.ok(text.includes('心理与合理动机'), '占有欲要有动机');
-  for (const n of ['1.', '2.', '3.', '4.', '5.', '6.']) assert.ok(text.includes(n), `缺第 ${n} 条自检`);
+check('三选一：off / claude / gemini，认不出的值一律回落 off', () => {
+  assert.deepEqual(PRESET_KINDS, ['off', 'claude', 'gemini']);
+  assert.equal(modelPresetKind({ kind: 'claude' }), 'claude');
+  assert.equal(modelPresetKind({ kind: 'gpt5' }), 'off');
 });
 
-check('开启且改过 → 用用户那份（用户显式优先）', () => {
-  assert.equal(modelPresetText({ enabled: true, custom: '我自己的红线' }), '我自己的红线');
+check('两套内置文本方向相反：一个推主动、一个收敛极端', () => {
+  assert.equal(modelPresetText({ kind: 'claude' }), CLAUDE_ACTIVE);
+  assert.equal(modelPresetText({ kind: 'gemini' }), GEMINI_REDLINE);
+  assert.notEqual(CLAUDE_ACTIVE, GEMINI_REDLINE, '方向相反，文本必须不同');
+  assert.ok(CLAUDE_ACTIVE.includes('禁止被动句式与被动等待'), 'Claude 那套是推主动');
+  assert.ok(GEMINI_REDLINE.includes('控制欲'), 'Gemini 那套是拉回边界');
+});
+
+check('两套都自带 6 条生成前自检', () => {
+  for (const [name, text] of Object.entries(BUILTIN_PRESETS)) {
+    for (const n of ['1.', '2.', '3.', '4.', '5.', '6.']) {
+      assert.ok(text.includes(n), `${name} 缺第 ${n} 条自检`);
+    }
+    assert.ok(text.includes('自检'), `${name} 要写明是生成前自检`);
+  }
+});
+
+check('自定义各存各的：改 Claude 不会串到 Gemini', () => {
+  const raw = { kind: 'claude', custom: { claude: '我的主动版', gemini: '' } };
+  assert.equal(modelPresetText(raw), '我的主动版');
+  assert.equal(modelPresetText({ ...raw, kind: 'gemini' }), GEMINI_REDLINE, '切到 Gemini 用它的内置，不串台');
+  assert.equal(modelPresetText({ kind: 'claude', custom: { claude: '  ', gemini: '' } }), CLAUDE_ACTIVE, '空文本算没改');
+});
+
+check('兼容 v0.4.0 老格式 { enabled, custom }（老存档不丢）', () => {
+  const migrated = normalizeModelPreset({ enabled: true, custom: '老的红线' });
+  assert.equal(migrated.kind, 'gemini');
+  assert.equal(migrated.custom.gemini, '老的红线');
+  assert.equal(modelPresetText({ enabled: true, custom: '老的红线' }), '老的红线');
+  assert.equal(normalizeModelPreset({ enabled: false, custom: 'x' }).kind, 'off');
 });
 
 check('归一化容错：脏数据不炸', () => {
-  assert.deepEqual(normalizeModelPreset({ enabled: 1, custom: 123 }), { enabled: true, custom: '123' });
-  assert.deepEqual(normalizeModelPreset(null), { enabled: false, custom: '' });
+  assert.deepEqual(normalizeModelPreset(null), { kind: 'off', custom: { claude: '', gemini: '' } });
+  assert.deepEqual(normalizeModelPreset({ kind: 'claude', custom: 123 }), { kind: 'claude', custom: { claude: '', gemini: '' } });
 });
 
 console.log('T-403 双端注入 · 角色回复端');
@@ -65,7 +92,7 @@ check('角色端：红线进注入，且排在硬禁区之后、导演指令之�
 });
 
 check('只有红线时也要注入（别被"没有阶段就跳过"的逻辑吃掉）', () => {
-  const text = buildInstruction({ redline: GEMINI_REDLINE });
+  const text = buildInstruction({ redline: CLAUDE_ACTIVE });
   assert.ok(text.includes('[扮演红线'));
   assert.equal(buildInstruction({}), '', '什么都没有才是空');
 });

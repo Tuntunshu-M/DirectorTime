@@ -118,24 +118,35 @@ function automationSection(automation) {
     </details>`;
 }
 
-/** 模型特化预设（T-403 / F10）：Gemini 角色塑造红线，默认关闭，双端注入 */
+/**
+ * 模型特化预设（T-403 / F10）：按模型做**反向矫正**，二选一（方向相反，不能同时开）
+ *   Claude 容易被动 → 推主动；Gemini 容易极端 → 拉回边界
+ */
 function modelPresetSection(modelPreset) {
-  const current = modelPreset?.get?.() ?? { enabled: false, custom: '' };
+  const current = modelPreset?.get?.() ?? { kind: 'off', custom: {} };
+  const kind = current.kind ?? 'off';
+  const kinds = modelPreset?.kinds?.() ?? ['off', 'claude', 'gemini'];
+  const labels = modelPreset?.labels?.() ?? {};
   const text = modelPreset?.text?.() ?? '';
+  const editing = kind === 'off' ? '' : (current.custom?.[kind] || modelPreset?.defaultText?.(kind) || '');
+
   return `
     <details style="margin-top:12px">
-      <summary>模型特化预设（Gemini 角色塑造红线）</summary>
-      <label style="display:block;margin:8px 0 4px">
-        <input type="checkbox" id="dt-redline-on" ${current.enabled ? 'checked' : ''}> 启用
-      </label>
+      <summary>模型特化预设（按模型反向矫正，二选一）</summary>
+      <div style="margin:8px 0">
+        ${kinds.map((key) => `<label style="display:block;margin:2px 0">
+          <input type="radio" name="dt-redline-kind" value="${key}" ${kind === key ? 'checked' : ''}> ${escapeAttr(labels[key] ?? key)}
+        </label>`).join('')}
+      </div>
       <div style="font-size:11px;opacity:.7">
-        开启后<b>两端都注入</b>：导演请求（剧情生成）+ 每轮指令（角色回复）。只开一端会撕裂。
+        开启后<b>两端都注入</b>：导演请求（剧情生成）+ 每轮指令（角色回复）。只开一端会撕裂。<br>
+        Claude 容易写成被动等待 → 选 Claude；Gemini 容易极端模板化 → 选 Gemini。两套方向相反，不能同时开。
         当前${text ? `生效 ${text.length} 字` : '未注入任何内容'}。
       </div>
-      <textarea id="dt-redline-text" rows="8" style="${fieldStyle()}">${escapeAttr(current.custom || modelPreset?.defaultText?.() || '')}</textarea>
+      <textarea id="dt-redline-text" rows="8" style="${fieldStyle()}" ${kind === 'off' ? 'disabled placeholder="先在上面选一套"' : ''}>${escapeAttr(editing)}</textarea>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <button id="dt-redline-save" type="button" style="${BTN}">保存</button>
-        <button id="dt-redline-reset" type="button" style="${BTN}">恢复内置</button>
+        <button id="dt-redline-save" type="button" style="${BTN}" ${kind === 'off' ? 'disabled' : ''}>保存</button>
+        <button id="dt-redline-reset" type="button" style="${BTN}" ${kind === 'off' ? 'disabled' : ''}>恢复内置</button>
       </div>
       <div id="dt-redline-msg" style="margin-top:6px;opacity:.75">—</div>
     </details>`;
@@ -396,13 +407,18 @@ ${extras?.copy ? copySection(extras.copy) : ''}
   // ---------- 模型特化预设（T-403）----------
   if (extras?.modelPreset) {
     const msg = () => node.querySelector('#dt-redline-msg');
-    node.querySelector('#dt-redline-on')?.addEventListener('change', (event) => {
-      extras.modelPreset.set({ enabled: event.target.checked });
-      if (msg()) {
-        msg().textContent = event.target.checked
-          ? `已启用：导演请求与每轮指令都会带上（${extras.modelPreset.text().length} 字）`
-          : '已关闭：两端都不注入红线';
-      }
+    node.querySelectorAll('input[name="dt-redline-kind"]').forEach((radio) => {
+      radio.addEventListener('change', () => {
+        const next = extras.modelPreset.set({ kind: radio.value });
+        // 换套要把文本框换成那一套的文本，重绘最省事（面板是临时界面，不做局部刷新）
+        renderSettingsForm({ container: node, store, onTest, onSave, onClose, profile, presets, automation, extras });
+        const after = node.querySelector('#dt-redline-msg');
+        if (after) {
+          after.textContent = next.kind === 'off'
+            ? '已关闭：两端都不注入'
+            : `已启用 ${next.kind}：导演请求与每轮指令都会带上（${extras.modelPreset.text().length} 字）`;
+        }
+      });
     });
     node.querySelector('#dt-redline-save')?.addEventListener('click', () => {
       const text = node.querySelector('#dt-redline-text').value;
