@@ -7,6 +7,7 @@
 
 import { hitRate } from '../director/speculate.js';
 import { openForeshadows } from '../director/foreshadow.js';
+import { describeTails } from '../director/tail-guard.js';
 import { automationText } from '../core/automation.js';
 
 /**
@@ -166,7 +167,7 @@ export function createDebugPanel({ store, registry, getCapabilities, getLastTurn
         ${row('目标', s.stage.goal || '—')}
         ${row('状态', `${s.stage.status} · 卡住 ${s.stage.stuckCount} 轮`)}
         ${row('档位', s.automation || '—')}
-        ${row('注入', s.injection.registered ? `已注册 · ${s.injection.length} 字` : '未注册')}
+        ${row('已注册（下一轮用）', s.injection.registered ? `${s.injection.length} 字` : '未注册')}
         ${row('上次动作', s.lastAction ? `${s.lastAction}（${s.lastReason ?? ''}）` : '—')}
         ${row('伏笔', s.foreshadows?.length ? `待回收 ${s.foreshadows.length}：${s.foreshadows.join(' / ')}` : '无')}
         ${row('破限', breakFilterLine(s.breakStatus))}
@@ -176,7 +177,9 @@ export function createDebugPanel({ store, registry, getCapabilities, getLastTurn
       <details open style="margin-top:8px"><summary>本轮回放 · 跟随 user 输入发送了什么</summary>
         <div style="margin:6px 0">
           ${row('user 说', s.turn?.userMessage || '—')}
-          ${row('本轮注入', s.turn?.usedInjection ? `${s.turn.usedInjection.length} 字` : '（空）')}
+          ${row('本轮实际用的注入', s.turn?.usedInjection ? `${s.turn.usedInjection.length} 字` : '（空：生成这条回复时还没有注入）')}
+          ${s.turn?.injectionDrift ? row('⚠️ 注入断了', `上一轮注册了 ${s.turn.previousNextInjection} 字，这一轮生成时却是空的 —— 可能被别的扩展覆盖了同一个 key，或中途换过聊天`) : ''}
+          ${row('模型尾巴', s.turn?.tails?.length ? describeTails(s.turn.tails) : '无')}
           ${row('char 回', (s.turn?.charMessage || '—').slice(0, 100))}
           ${row('判定', s.turn ? `${s.turn.action}（${s.turn.reason}）` : '—')}
           ${row('投机', s.turn?.speculation ? `${s.turn.speculation.hit ? '命中' : '失手'}（猜「${s.turn.speculation.guess}」）` : '—')}

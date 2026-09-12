@@ -17,6 +17,7 @@
 import { buildInstruction } from '../inject/instruction.js';
 import { resolvePacing } from './checkpoint.js';
 import { resolve, shouldRunCheckpoint } from './will.js';
+import { findReplyTails, describeTails } from './tail-guard.js';
 import { needsInitiative, profileStamp } from './initiative.js';
 
 const SKIP_TYPES = ['regenerate', 'swipe', 'impersonate', 'quiet'];
@@ -89,6 +90,16 @@ export function createReviewService({
   function clearInjection() {
     registry?.clear?.();
     return '';
+  }
+
+  /**
+   * 换聊天时把"上一轮记录"也清掉。
+   * 不清的话：新聊天里 Debug 会显示上一个聊天的本轮记录，还会被连续性检查误判成"注册丢了"。
+   */
+  function resetTurn() {
+    lastTurn = null;
+    initiativeTriedFor = '';
+    return true;
   }
 
   // T-417：记下"这一版侧写已经试过重生成"，失败不每轮重试
@@ -228,6 +239,26 @@ export function createReviewService({
 
       // 本轮生成时实际生效的注入内容（上一轮复盘后注册的）
       const usedInjection = registry?.getStatus?.().text ?? '';
+      // 连续性检查：上一轮明明注册了内容，这一轮生成时却什么都没有 →
+      // 说明注册在中途丢了（别的扩展清了同一个 key / 换过聊天 / ST 重载了 prompt），要报出来
+      const previousNext = lastTurn?.nextInjection ?? '';
+      const injectionDrift = Boolean(previousNext && !usedInjection);
+      if (injectionDrift) {
+        console.warn(
+          `[导演时间] 注入断了：上一轮注册了 ${previousNext.length} 字，这一轮生成时却是空的`
+          + '（可能被别的扩展覆盖了同一个 key，或中途换过聊天）'
+        );
+      }
+
+      // 用户反馈 ②：模型自己加的尾巴（思考块 / "请选择剧情导向"）。
+      // **只识别、只报警，不改写回复** —— 要根治得去角色预设那边关。
+      const tails = findReplyTails(input.charMessage ?? '');
+      if (tails.length) {
+        console.warn(
+          `[导演时间] char 回复里有模型尾巴（不是本插件注入的）：${describeTails(tails)}\n`
+          + '建议：检查角色预设 / 破限词里是不是带了 <thinking> 规则，或要求"输出选项菜单"'
+        );
+      }
       const active = stages?.getActive?.();
       const activeId = active?.id;
       const userMessage = input.userMessage ?? '';
@@ -243,6 +274,9 @@ export function createReviewService({
           userMessage,
           charMessage,
           usedInjection,
+          previousNextInjection: previousNext.length,
+          injectionDrift,
+          tails,
           nextInjection: '',
           speculation: null,
           recalled: [],
@@ -341,6 +375,11 @@ export function createReviewService({
         userMessage,
         charMessage,
         usedInjection,
+        // 上一轮注册了多少字（用来判断"注册是不是中途丢了"）
+        previousNextInjection: previousNext.length,
+        injectionDrift,
+        // 模型自己加的尾巴（思考块 / 选项菜单 / 把决定权交回 user）
+        tails,
         nextInjection: injected,
         // T-407：这一轮用的是不是投机预测（Debug 显示命中率）
         speculation: speculated.speculation
@@ -395,5 +434,5 @@ export function createReviewService({
     return true;
   }
 
-  return { run, syncInjection, applyConfirmed, getLastTurn: () => lastTurn };
+  return { run, syncInjection, applyConfirmed, resetTurn, getLastTurn: () => lastTurn };
 }

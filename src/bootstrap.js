@@ -568,6 +568,8 @@ export function bootstrap({ ctx, store } = {}) {
     // 切聊天：剧本 / 进度 / 世界书选择都跟着这一聊天的记录走（存在 chatMetadata 里）
     seedWorldSelection();
     registry.clear();
+    // 上一轮的复盘记录也是上一个聊天的，一并清掉（否则 Debug 会串、连续性检查会误报）
+    review.resetTurn?.();
     // 换了聊天，上一轮的投机预测作废（否则会拿别的聊天的预测去猜）
     store.update((draft) => ({ ...draft, runtime: { ...draft.runtime, speculation: null } }), { track: false });
     // 界面要跟着换到这一聊天的剧本，否则会停在上一份（看起来像"剧本丢了"）

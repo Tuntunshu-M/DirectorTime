@@ -659,4 +659,77 @@ await check('syncInjection 会同时刷新上一轮记录里的 nextInjection', 
   assert.notEqual(service.getLastTurn().nextInjection, before);
 });
 
+console.log('注入连续性检查（反馈 ①：Debug 两行不能互相打架）');
+
+await check('正常一轮：上一轮注册的东西这一轮还在 → 不报"断了"', async () => {
+  const env = makeEnv();
+  seed(env);
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'hold', reason: 'x' }) },
+    stages: env.stages, registry: env.registry, store: env.store,
+    getSettings: () => ({}),
+  });
+
+  await service.run({ userMessage: '第一句' });
+  assert.equal(service.getLastTurn().injectionDrift, false);
+  assert.ok(service.getLastTurn().nextInjection.length > 0, '要有下一轮注入');
+
+  await service.run({ userMessage: '第二句' });
+  assert.equal(service.getLastTurn().usedInjection.length > 0, true, '第二轮该用到上一轮注册的内容');
+  assert.equal(service.getLastTurn().injectionDrift, false, '没断就不许报');
+});
+
+await check('注册中途没了 → 明确报"断了"，并带上上一轮的字数', async () => {
+  const env = makeEnv();
+  seed(env);
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'hold', reason: 'x' }) },
+    stages: env.stages, registry: env.registry, store: env.store,
+    getSettings: () => ({}),
+  });
+
+  await service.run({ userMessage: '第一句' });
+  const before = service.getLastTurn().nextInjection.length;
+
+  // 模拟"注册被别的东西清掉了"（另一个扩展用了同一个 key / ST 重载了 prompt）
+  env.registry.clear();
+  await service.run({ userMessage: '第二句' });
+
+  const turn = service.getLastTurn();
+  assert.equal(turn.injectionDrift, true, '上一轮注册了、这一轮没有 → 要报断');
+  assert.equal(turn.previousNextInjection, before);
+  assert.equal(turn.usedInjection, '');
+});
+
+await check('剧情暂停（follow）本来就清空 → 不算"断了"', async () => {
+  const env = makeEnv();
+  seed(env);
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'hold', reason: 'x' }) },
+    will: { judge: async () => ({ ok: true, stance: 'irrelevant', confidence: 0.95 }) },
+    stages: env.stages, registry: env.registry, store: env.store,
+    getSettings: () => ({ will: 90 }),
+  });
+
+  await service.run({ userMessage: '今天天气不错' });
+  assert.equal(service.getLastTurn().nextInjection, '', 'follow 要清空');
+
+  await service.run({ userMessage: '继续' });
+  assert.equal(service.getLastTurn().injectionDrift, false, '上一轮就说了这轮不注入，不算断');
+});
+
+await check('换聊天时把上一轮记录清掉（resetTurn），避免串聊天与误报', async () => {
+  const env = makeEnv();
+  seed(env);
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'hold', reason: 'x' }) },
+    stages: env.stages, registry: env.registry, store: env.store,
+    getSettings: () => ({}),
+  });
+  await service.run({ userMessage: '第一句' });
+  assert.ok(service.getLastTurn());
+  service.resetTurn();
+  assert.equal(service.getLastTurn(), null);
+});
+
 console.log(`\n通过 ${passed} 项`);

@@ -7,6 +7,7 @@
 
 import { usableInitiative } from '../director/initiative.js';
 import { hardLimitLine } from '../director/hard-limits.js';
+import { NO_TAIL_LINE } from '../director/tail-guard.js';
 
 const PROACTIVE_HINT = '不要等 user 提问或回应。如果冷场，你就自己找一件事继续。';
 
@@ -43,6 +44,7 @@ export function buildDirectorLayer({ stage, outline, pacing, profile }) {
     if (initiative) lines.push(`如果冷场，你就${initiative}`);
     // §七b：否定指令（"不要复述"）模型遵循率低，改成肯定说法
     lines.push('用你自己的话和方式，把上面的意图演出来。');
+    lines.push(NO_TAIL_LINE);
     return lines.join('\n');
   }
 
@@ -71,6 +73,8 @@ export function buildDirectorLayer({ stage, outline, pacing, profile }) {
   lines.push('以上都是**你要主动做的事** —— 不要等 user 开口，也不要等 user 给你理由。');
   // §七b：否定指令（"不要复述"）模型遵循率低，改成肯定说法
   lines.push('用你自己的话和方式，把上面的意图演出来。');
+  // 用户反馈 ②：模型会自带 <thinking> 块 / "请选择剧情导向" 的尾巴，把主导权交回 user
+  lines.push(NO_TAIL_LINE);
   return lines.join('\n');
 }
 
