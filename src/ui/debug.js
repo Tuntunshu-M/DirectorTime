@@ -117,6 +117,8 @@ export function buildDebugState({
     cost: state.cost ?? { sessionTotal: 0, callCount: 0 },
     capabilities: capabilities ?? null,
     lastRequest: lastRequest ?? '',
+    // 批复 §二-5：导演 API 调用日志（最近 30 条；client 每次请求都记一条）
+    apiLog: state.runtime?.apiLog ?? [],
     // T-411 / T-418：破限词模式与选中的酒馆预设（判据：选中后要能在这里看到生效）
     breakStatus: breakStatus ?? null,
   };

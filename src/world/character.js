@@ -113,7 +113,7 @@ export function createProfileService({ ctx, client, getConnection, now = Date.no
 
     let raw;
     try {
-      raw = await client.request({ ...getConnection?.(), messages });
+      raw = await client.request({ ...getConnection?.(), messages, label: 'GEN_PROFILE' });
     } catch (error) {
       return { ok: false, code: error?.name ?? 'DirectorRequestError', error: error?.message ?? '导演 API 请求失败' };
     }
@@ -179,7 +179,7 @@ export function createProfileService({ ctx, client, getConnection, now = Date.no
     const messages = buildMessages('CHECK_CONSISTENCY', { profile: profileText(profile), stages: text });
 
     try {
-      const raw = await client.request({ ...getConnection?.(), messages, maxTokens: 400 });
+      const raw = await client.request({ ...getConnection?.(), messages, maxTokens: 400, label: 'CHECK_CONSISTENCY' });
       const data = parseDirectorResponse(raw, 'consistency');
       if (!data) return { ok: true, reason: '自检结果无法解析，按合格处理' };
       return { ok: data.ok, reason: data.reason };

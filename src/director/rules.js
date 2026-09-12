@@ -27,6 +27,65 @@ const CONF = {
   none: 0,
 };
 
+/** 4 本词库的键与中文名（配置页「词库」折叠区用） */
+export const RULE_KEYS = ['strong', 'weak', 'negation', 'irrelevant'];
+export const RULE_LABELS = {
+  strong: '强词（直接表态）',
+  weak: '弱词（含糊）',
+  negation: '否定（反转）',
+  irrelevant: '转向（聊别的）',
+};
+
+/** 立场的几种写法（界面里允许写中文，存的时候统一成枚举） */
+const STANCE_ALIASES = {
+  accept: 'accept', 接受: 'accept', 同意: 'accept',
+  reject: 'reject', 拒绝: 'reject', 反对: 'reject',
+  hesitate: 'hesitate', 犹豫: 'hesitate',
+  redirect: 'redirect', 转向: 'redirect',
+};
+
+/**
+ * 词库 → 文本框（一行一条）。
+ * 强词 / 弱词带立场，写成 `词 = 立场`（没立场就只写词）；否定 / 转向只有词。
+ */
+export function rulesToText(rules, key) {
+  const list = Array.isArray(rules?.[key]) ? rules[key] : [];
+  return list
+    .map((item) => {
+      const word = String(typeof item === 'string' ? item : item?.word ?? '').trim();
+      if (!word) return '';
+      const stance = typeof item === 'object' ? item?.stance : '';
+      return stance ? `${word} = ${stance}` : word;
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
+/**
+ * 文本框 → 词库数组。认不出的立场直接丢掉那条（不猜），并回报被丢掉的词。
+ * @returns {{ list: Array, dropped: string[] }}
+ */
+export function textToRules(text, key) {
+  const lines = String(text ?? '').split('\n').map((line) => line.trim()).filter(Boolean);
+  const list = [];
+  const dropped = [];
+  for (const line of lines) {
+    const [rawWord, rawStance] = line.split(/[=＝]/).map((part) => part?.trim() ?? '');
+    if (!rawWord) continue;
+    if (!rawStance) {
+      list.push({ word: rawWord });
+      continue;
+    }
+    const stance = STANCE_ALIASES[rawStance] ?? STANCE_ALIASES[rawStance.toLowerCase?.() ?? rawStance];
+    if (!stance) {
+      dropped.push(rawWord);
+      continue;
+    }
+    list.push({ word: rawWord, stance });
+  }
+  return { list, dropped };
+}
+
 /** 统一成 { word, stance }；兼容纯字符串写法（否定词 / 转向词库） */
 function toEntries(list) {
   if (!Array.isArray(list)) return [];

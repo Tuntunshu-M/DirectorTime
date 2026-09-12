@@ -28,7 +28,7 @@ export function createBeatService({ client, getConnection } = {}) {
 
     let raw;
     try {
-      raw = await client.request({ ...getConnection?.(), messages, maxTokens: 500 });
+      raw = await client.request({ ...getConnection?.(), messages, maxTokens: 500, label: 'REWRITE_BEATS' });
     } catch (error) {
       return { ok: false, error: error?.message ?? '导演 API 调用失败' };
     }

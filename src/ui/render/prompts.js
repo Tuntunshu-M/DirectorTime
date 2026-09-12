@@ -31,6 +31,8 @@ export function render(state, ctxState) {
   const sanitize = state.sanitize ?? { enabled: true, rules: [] };
   const customRules = (sanitize.rules ?? []).map((rule) => rule.pattern ?? rule).join('\n');
   const needsCustom = filter.mode === 'custom' || filter.mode === 'append';
+  const breakModeLabel = BREAK_MODES.find((item) => item.value === filter.mode)?.label ?? filter.mode;
+  const presetKindLabel = PRESET_KINDS.find((item) => item.value === modelPreset.kind)?.label ?? modelPreset.kind;
 
   const presetName = status.name ?? '';
   const selectedCount = entries.filter((entry) => entry.selected).length;
@@ -77,6 +79,20 @@ export function render(state, ctxState) {
         <div class="dt-note">Gemini：收敛极端控制倾向；Claude：推主动性与情感表达。<br>
           两套方向相反，所以是三选一；<b>只注入导演请求</b>（限剧本生成），角色回复端不注入。</div>
         <button class="dt-mini" id="mp-reset" type="button" data-act="modelPreset.reset">恢复内置</button>
+      </div>
+    </details>
+
+    <details>
+      <summary>注入顺序（只读）</summary>
+      <div class="dt-box">
+        <div class="dt-pipe">
+          <div class="dt-pipe-row"><span style="flex:1">1. 破限词 · ${esc(breakModeLabel)}</span><span class="dt-chip${filter.mode === 'off' ? '' : ' dt-chip-lock'}">${filter.mode === 'off' ? '关' : '开'}</span></div>
+          <div class="dt-pipe-row"><span style="flex:1">2. 模型特化预设 · ${esc(presetKindLabel)}</span><span class="dt-chip${modelPreset.kind === 'off' ? '' : ' dt-chip-lock'}">${modelPreset.kind === 'off' ? '关' : '开'}</span></div>
+          <div class="dt-pipe-row"><span style="flex:1">3. 系统提示词（模板）</span><span class="dt-chip dt-chip-lock">恒开</span></div>
+          <div class="dt-pipe-row"><span style="flex:1">4. 导演指令注入（硬禁区 → 导演指令 → 角色动机）</span><span class="dt-chip dt-chip-lock">开</span></div>
+        </div>
+        <div class="dt-note">这个顺序是代码里固定的（都在导演 API 请求里，角色回复端不注入）。<br>
+          <b>槽位排序 / 单槽开关的功能还没做</b> —— 所以这里只做只读展示，等实现了再给控件。</div>
       </div>
     </details>
 

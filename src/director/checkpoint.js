@@ -107,7 +107,7 @@ export function createCheckpointService({ client, stages, getConnection, getSett
 
     let raw;
     try {
-      raw = await client.request({ ...getConnection?.(), messages, maxTokens: 800 });
+      raw = await client.request({ ...getConnection?.(), messages, maxTokens: 800, label: 'JUDGE_CHECKPOINT' });
     } catch (error) {
       // 调用失败也要放行吗？不。调用失败是「没信息」，不是「不确定」。
       // 保持不动，等下一轮再判——但不计入卡住（避免网络问题把剧情熔断）

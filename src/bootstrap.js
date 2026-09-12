@@ -12,7 +12,7 @@ import { createOutlineService } from './director/outline.js';
 import { createBeatService } from './director/beats.js';
 import { createWillService } from './director/will.js';
 import { createInitiativeService, stampInitiative } from './director/initiative.js';
-import { resolveRules } from './director/rules.js';
+import { resolveRules, RULE_KEYS, RULE_LABELS, rulesToText, textToRules } from './director/rules.js';
 import { createBreakFilterService, normalizeBreakFilter } from './llm/break-filter.js';
 import { createPresetService } from './inject/preset.js';
 import { createSpeculationService, hitRate } from './director/speculate.js';
@@ -21,7 +21,7 @@ import { carryOver, foreshadowText, openForeshadows, resolveRecalled } from './d
 import { hardLimitText } from './director/hard-limits.js';
 import { findUserDirectives, findFinishedLines, describeIssues } from './director/actor-guard.js';
 import { normalizeProtagonists, protagonistText } from './world/cast.js';
-import { gate, setLevel, normalizeAutomation } from './core/automation.js';
+import { gate, setLevel, normalizeAutomation, FEATURES, LEVELS, FEATURE_LABELS, LEVEL_LABELS } from './core/automation.js';
 import { createReviewQueue } from './core/review-queue.js';
 import {
   BUILTIN_PRESETS, PRESET_LABELS, PRESET_KINDS, normalizeModelPreset, modelPresetText,
@@ -96,6 +96,8 @@ export function bootstrap({ ctx, store } = {}) {
   // T-403 / F10 槽位管线：[破限词] → [模型特化预设] → [导演指令]
   const redlineText = () => modelPresetText(settings().modelPreset);
   const client = createDirectorClient({
+    // 批复 §二-5：导演 API 调用日志（时间 / 耗时 / tokens / 调用名 / 结果）
+    onResult: (entry) => recordApiCall(entry),
     getBreakText: () => [breakFilter.text(), redlineText()].filter(Boolean).join('\n\n'),
     // P0（bugfix 0912 第二波）：调用计数挂在真正发请求的地方。
     // 状态单一来源 = 本 store（聊天级，已持久化）—— 刷新页面不清零，且跟聊天走。
@@ -231,6 +233,17 @@ export function bootstrap({ ctx, store } = {}) {
   // ---------- 世界书（T-401 / M7）----------
   let worldCache = { at: 0, sources: [] };
   let lastDirectorRequest = '';
+
+  /** 调用日志（批复 §二-5）：最近 30 次，跟聊天走、已持久化；调试弹层那张表用它 */
+  function recordApiCall(entry) {
+    store.update((draft) => ({
+      ...draft,
+      runtime: {
+        ...draft.runtime,
+        apiLog: [entry, ...(draft.runtime?.apiLog ?? [])].slice(0, 30),
+      },
+    }), { track: false });
+  }
 
   /** 枚举世界书全部来源；30 秒内复用缓存，force=true 强制刷新 */
   async function collectWorldSources(force = false) {
@@ -906,6 +919,29 @@ export function bootstrap({ ctx, store } = {}) {
         stages,
         activeStageId: state.activeStageId ?? null,
         automationText: automationText(automationApi.get()),
+        // 批复 §二-1：档位现在是可改的（六个下拉）
+        automation: {
+          levels: automationApi.get(),
+          features: [...FEATURES],
+          featureLabels: { ...FEATURE_LABELS },
+          levelList: [...LEVELS],
+          levelLabels: { ...LEVEL_LABELS },
+        },
+        // 批复 §二-3：六个数字参数 + 一致性自检开关
+        params: {
+          pacing: { min: Number(settings().pacing?.min ?? 3), max: Number(settings().pacing?.max ?? 8) },
+          maxRounds: Number(settings().maxRounds ?? 15),
+          confidenceThreshold: Number(settings().confidenceThreshold ?? 0.7),
+          stuckThreshold: Number(settings().stuckThreshold ?? 3),
+          worldLimit: Number(settings().worldLimit ?? 20),
+          consistencyCheck: settings().consistencyCheck !== false,
+        },
+        // 批复 §二-2：四本词库（界面按行编辑，带立场的写成 `词 = 立场`）
+        rules: {
+          keys: [...RULE_KEYS],
+          labels: { ...RULE_LABELS },
+          texts: Object.fromEntries(RULE_KEYS.map((key) => [key, rulesToText(resolveRules(settings().rules), key)])),
+        },
         injection: registry.getStatus?.() ?? { registered: false, length: 0, text: '' },
         lastTurn: review.getLastTurn(),
         queue: queueApi.list(),
@@ -948,6 +984,16 @@ export function bootstrap({ ctx, store } = {}) {
         }),
       };
     },
+    /** 批复 §二-1：档位六个下拉（沿用 §5.4 那行「档位」的显示位做控件） */
+    setAutomation: (feature, level) => automationApi.set(feature, level),
+    /** 批复 §二-2：词库编辑（清空某个库 = 规则引擎什么都不判，老实转 LLM） */
+    saveRules: (key, text) => {
+      const current = resolveRules(settings().rules);
+      const { list, dropped } = textToRules(text, key);
+      store.saveSettings({ rules: { ...current, [key]: list } });
+      return { count: list.length, dropped };
+    },
+    resetRules: () => rulesApi.reset(),
     /** 界面上的小设置（意愿权重 / 强制爱 / 硬禁区…）：存 + 立刻刷注入 */
     saveSettings: (patch) => {
       store.saveSettings(patch);
@@ -1006,6 +1052,10 @@ export function bootstrap({ ctx, store } = {}) {
     onToggleEnabled: (value) => uiApi.onToggleEnabled(value),
     loadWorldSources: (force) => uiApi.loadWorldSources(force),
     saveWorldSelection: (selection) => uiApi.saveWorldSelection(selection),
+    // 批复 §二-1/§二-2：档位与词库（界面走这两个）
+    setAutomation: (feature, level) => uiApi.setAutomation(feature, level),
+    saveRules: (key, text) => uiApi.saveRules(key, text),
+    resetRules: () => uiApi.resetRules(),
     debug: {
       show: () => { panel.open(); panel.layer('debug'); },
       hide: () => panel.hide(),

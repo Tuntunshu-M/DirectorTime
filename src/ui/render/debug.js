@@ -2,11 +2,18 @@
 //
 // 控件（定稿 §2.1）：原文/清洗后 #48 · 撤销上一步 AI 修改 #49 · 清空剧本 #50
 //
-// **不画的东西**（定稿 §9 硬性要求 3：没实现就别画）：
-//   · 「导演 API 日志」（时间/耗时/tokens）—— client 没有留调用日志，等实现了再画
+// 「导演 API 日志」（时间 / 耗时 / tokens / 调用名 / 结果）在批复 §二-5 之后**已经能画了** ——
+// 数据来自 client 的 onResult（每次请求都记一条，最近 30 条，跟聊天走）。
 
-import { esc, layerShell, row } from '../dom.js';
+import { esc, layerShell, row, fmtNumber } from '../dom.js';
 import { breakFilterLine, stanceSourceLine } from '../debug.js';
+
+/** 时间戳 → HH:MM:SS */
+function clock(at) {
+  const date = new Date(Number(at) || Date.now());
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
 
 export function render(state, ctxState) {
   const debug = state.debug ?? {};
@@ -16,6 +23,7 @@ export function render(state, ctxState) {
   const spec = debug.speculation ?? {};
   const lastInjection = debug.lastInjection ?? null;
   const foreshadows = debug.foreshadows ?? [];
+  const apiLog = debug.apiLog ?? [];
 
   const reply = showRaw ? (turn?.charMessageRaw ?? '') : (turn?.charCleaned ?? turn?.charMessage ?? '');
   const judgement = debug.lastJudgement
@@ -66,6 +74,19 @@ export function render(state, ctxState) {
       </div>
       <pre>${esc(reply || '（这一轮还没有角色回复）')}</pre>
       <div class="dt-note">清洗只作用于插件自己看到的文本，聊天记录原文永远不动</div>
+    </details>
+
+    <details><summary>导演 API 日志（最近 ${apiLog.length} 条）</summary>
+      <div class="dt-log" style="margin-top:7px">
+        ${apiLog.length ? apiLog.map((item) => `<div class="dt-log-row">
+          <span>${esc(clock(item.at))}</span>
+          <span>${item.ms != null ? `${(Number(item.ms) / 1000).toFixed(1)}s` : '—'}</span>
+          <span>${item.tokens ? `${fmtNumber(item.tokens)} tok` : '—'}</span>
+          <span>${esc(item.label ?? '')}</span>
+          <span>${item.ok ? '✓' : `✗ ${esc(item.error ?? '失败')}`}</span>
+        </div>`).join('') : '<div class="dt-note">还没有调用记录</div>'}
+      </div>
+      <div class="dt-note">每次请求都记一条（成功/失败都记），最近 30 条，跟聊天走</div>
     </details>`;
 
   return {

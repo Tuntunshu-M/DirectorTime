@@ -57,7 +57,7 @@ export function createCombinedJudge({ client, stages, getConnection, getOutline 
 
     let raw = '';
     try {
-      raw = await client.request({ ...getConnection?.(), messages, maxTokens: COMBINED_MAX_TOKENS });
+      raw = await client.request({ ...getConnection?.(), messages, maxTokens: COMBINED_MAX_TOKENS, label: 'JUDGE_COMBINED' });
     } catch (error) {
       // 调用失败 = 没信息（不是"不确定"）：stance 降级 accept 让流程走下去，判定段降级 hold
       return {

@@ -48,6 +48,19 @@ function fakeState(patch = {}) {
     ],
     activeStageId: 's2',
     automationText: '大纲 L1 · 阶段重生成 L1 · 侧写 L1 · 立场判定 L2 · 推进点判定 L2 · 一致性自检 L2',
+    automation: {
+      levels: { outline: 'L1', stageRegen: 'L1', profile: 'L1', stanceJudge: 'L2', checkpointJudge: 'L2', consistency: 'L2' },
+      features: ['outline', 'stageRegen', 'profile', 'stanceJudge', 'checkpointJudge', 'consistency'],
+      featureLabels: { outline: '大纲', stageRegen: '阶段重生成', profile: '侧写', stanceJudge: '立场判定', checkpointJudge: '推进点判定', consistency: '一致性自检' },
+      levelList: ['L0', 'L1', 'L2'],
+      levelLabels: { L0: '全手动', L1: '待确认', L2: '全自动' },
+    },
+    params: { pacing: { min: 3, max: 8 }, maxRounds: 15, confidenceThreshold: 0.7, stuckThreshold: 3, worldLimit: 20, consistencyCheck: true },
+    rules: {
+      keys: ['strong', 'weak', 'negation', 'irrelevant'],
+      labels: { strong: '强词（直接表态）', weak: '弱词（含糊）', negation: '否定（反转）', irrelevant: '转向（聊别的）' },
+      texts: { strong: '好 = accept\n不要 = reject', weak: '嗯 = hesitate', negation: '不\n没', irrelevant: '天气\n吃什么' },
+    },
     injection: { registered: true, length: 67, text: '[本场目标] …' },
     lastTurn: {
       action: 'settle',
@@ -216,6 +229,20 @@ check('style.css 全部收在 #dt-panel 作用域里（没有裸选择器漏出�
   assert.ok(css.includes('#dt-panel[data-palette="b"]'), '要保留定稿的 B 版配色');
 });
 
+check('style.css 里不许出现 `#dt-panel :root`（那是永远匹配不到的后代选择器）', () => {
+  const css = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+  assert.equal(css.includes('#dt-panel :root'), false, '写成 #dt-panel :root 的话字体变量永远不生效 —— 必须是 #dt-panel{');
+  assert.ok(css.includes('#dt-panel{'), '变量块要挂在 #dt-panel 上');
+});
+
+check('预览生成器带 #dt-panel 壳（少这层壳 = 黑底黑字）', async () => {
+  const { buildPreviewHtml } = await import('../tools/make-ui-preview.mjs');
+  const html = buildPreviewHtml();
+  assert.ok(html.includes('<div id="dt-panel" data-palette="a">'), '预览页必须自己带 #dt-panel 壳');
+  assert.ok(html.includes('class="dt-card"'), '壳里要有卡片');
+  assert.ok(html.includes('#dt-panel .dt-card'), '要带上真实 style.css');
+});
+
 check('界面里不出现 emoji（定稿 §7：图标用 SVG）', () => {
   const { html } = renderPanel(fakeState(), { worldSources });
   const emoji = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u;
@@ -298,6 +325,123 @@ check('面板入口齐备：panel / settingsPanel / 更新与调试都够得着'
   assert.equal(typeof api.ui?.saveSettings, 'function');
   assert.equal(typeof api.undo, 'function');
   assert.equal(typeof api.checkUpdate, 'function');
+});
+
+console.log('T-428 批复补的三块：档位 / 词库 / 调参 / 调用日志');
+
+check('档位：六个功能点各一个下拉，选中值来自 settings（单一来源）', () => {
+  const { html } = renderPanel(fakeState(), { worldSources });
+  const selects = [...html.matchAll(/data-act="automation\.set" data-feature="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(selects, ['outline', 'stageRegen', 'profile', 'stanceJudge', 'checkpointJudge', 'consistency']);
+  assert.ok(html.includes('>L1 · 待确认</option>'), '下拉里要有 L1 的中文含义');
+  assert.ok(html.includes('>L2 · 全自动</option>'));
+});
+
+check('词库：四本都在，且带"清空 = 转 LLM"的说明', () => {
+  const { html } = renderPanel(fakeState(), { worldSources });
+  for (const key of ['strong', 'weak', 'negation', 'irrelevant']) {
+    assert.ok(html.includes(`data-act="rules.save" data-key="${key}"`), `缺词库 ${key}`);
+  }
+  assert.ok(html.includes('清空某一本'), '要写清"清空某一本 = 这一类不判"');
+  assert.ok(html.includes('恢复默认词库'));
+});
+
+check('调参：六个参数都在，且每个有人话说明', () => {
+  const { html } = renderPanel(fakeState(), { worldSources });
+  for (const field of ['pacing.min', 'pacing.max', 'maxRounds', 'confidenceThreshold', 'stuckThreshold', 'worldLimit']) {
+    assert.ok(html.includes(`data-field="${field}"`), `缺参数 ${field}`);
+  }
+  assert.ok(html.includes('data-act="params.toggleConsistency"'), '一致性自检开关要有');
+  assert.ok(html.includes('连续几轮没推进就强制跳场'), 'stuckThreshold 要有人话说明');
+});
+
+check('调用日志表：时间 / 耗时 / tokens / 调用名 / 结果', () => {
+  const { html } = renderPanel(fakeState({
+    debug: {
+      ...fakeState().debug,
+      apiLog: [{ at: 1700000000000, ms: 1800, tokens: 1200, label: 'JUDGE_COMBINED', ok: true },
+        { at: 1700000001000, ms: 2100, tokens: 0, label: 'GEN_OUTLINE', ok: false, error: '被截断' }],
+    },
+  }), { worldSources });
+  assert.ok(html.includes('导演 API 日志'), html.includes('导演 API 日志'));
+  assert.ok(html.includes('JUDGE_COMBINED') && html.includes('GEN_OUTLINE'));
+  assert.ok(html.includes('1.8s'), '要显示耗时');
+  assert.ok(html.includes('1,200 tok'), '要显示 tokens');
+  assert.ok(html.includes('✗ 被截断'), '失败要写原因');
+});
+
+check('注入顺序：只读展示 + 明确写"槽位功能没做"', () => {
+  const { html } = renderPanel(fakeState(), { worldSources });
+  assert.ok(html.includes('注入顺序（只读）'));
+  assert.ok(html.includes('槽位排序 / 单槽开关的功能还没做'));
+  assert.equal(/data-act="slot\./.test(html), false, '不许画假槽位控件');
+});
+
+console.log('T-428 写入路径：档位 / 词库 / 参数 / 调用日志真的落盘');
+
+check('api.setAutomation：改档位写进 settings（单一来源）', () => {
+  const api = bootApi();
+  api.setAutomation('outline', 'L0');
+  assert.equal(api.automation.get().outline, 'L0');
+  assert.equal(api.ui.read().automation.levels.outline, 'L0', '界面读到的就是刚改的值');
+});
+
+check('api.saveRules：词 = 立场 写进词库；清空 = 这一类不判', () => {
+  const api = bootApi();
+  const saved = api.saveRules('strong', '好 = accept\n不要 = reject');
+  assert.equal(saved.count, 2);
+  assert.deepEqual(saved.dropped, []);
+  assert.deepEqual(api.rules.get().strong, [{ word: '好', stance: 'accept' }, { word: '不要', stance: 'reject' }]);
+
+  const cleared = api.saveRules('weak', '');
+  assert.equal(cleared.count, 0);
+  assert.deepEqual(api.rules.get().weak, [], '清空后这一本为空（规则引擎不判这一类，转 LLM）');
+});
+
+check('api.saveRules：认不出的立场要回报，不硬猜', () => {
+  const api = bootApi();
+  const saved = api.saveRules('strong', '好 = 接受的\n不要 = accept');
+  assert.deepEqual(saved.dropped, ['好'], '立场认不出的那条要丢掉并回报');
+  assert.deepEqual(api.rules.get().strong, [{ word: '不要', stance: 'accept' }]);
+});
+
+check('api.saveSettings：六个参数与一致性开关都写进去', () => {
+  const api = bootApi();
+  api.saveSettings({ pacing: { min: 4, max: 10 }, maxRounds: 20, confidenceThreshold: 0.6, stuckThreshold: 5, worldLimit: 30, consistencyCheck: false });
+  const params = api.ui.read().params;
+  assert.deepEqual(params.pacing, { min: 4, max: 10 });
+  assert.equal(params.maxRounds, 20);
+  assert.equal(params.confidenceThreshold, 0.6);
+  assert.equal(params.stuckThreshold, 5);
+  assert.equal(params.worldLimit, 30);
+  assert.equal(params.consistencyCheck, false);
+});
+
+check('调用日志：client 每次请求记一条（成功记 tokens、失败记原因）', async () => {
+  const { createDirectorClient } = await import('../src/llm/client.js');
+  const log = [];
+  const ok = createDirectorClient({
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: '{"stance":"accept","confidence":0.9}' } }], usage: { total_tokens: 1234 } }),
+    }),
+    onResult: (entry) => log.push(entry),
+  });
+  await ok.request({ endpoint: 'https://x/v1', model: 'm', messages: [{ role: 'user', content: 'hi' }], label: 'JUDGE_STANCE' });
+  assert.equal(log.length, 1);
+  assert.equal(log[0].label, 'JUDGE_STANCE');
+  assert.equal(log[0].ok, true);
+  assert.equal(log[0].tokens, 1234);
+  assert.ok(Number.isFinite(log[0].ms) && log[0].ms >= 0);
+
+  const bad = createDirectorClient({
+    fetchImpl: async () => ({ ok: false, status: 401, text: async () => 'nope' }),
+    onResult: (entry) => log.push(entry),
+  });
+  await bad.request({ endpoint: 'https://x/v1', model: 'm', messages: [], label: 'GEN_OUTLINE' }).catch(() => {});
+  assert.equal(log.length, 2);
+  assert.equal(log[1].ok, false);
+  assert.ok(log[1].error, '失败要记原因');
 });
 
 console.log(`\n通过 ${passed} 项`);

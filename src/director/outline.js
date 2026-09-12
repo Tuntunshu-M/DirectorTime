@@ -66,7 +66,7 @@ export function createOutlineService({ client, getConnection, now = Date.now } =
 
     let text;
     try {
-      text = await client.request({ ...connection, messages });
+      text = await client.request({ ...connection, messages, label: 'GEN_OUTLINE' });
     } catch (error) {
       return { ok: false, code: error?.name ?? 'DirectorRequestError', error: error?.message ?? '导演 API 请求失败' };
     }
@@ -130,7 +130,7 @@ export function createOutlineService({ client, getConnection, now = Date.now } =
 
     let text;
     try {
-      text = await client.request({ ...connection, messages });
+      text = await client.request({ ...connection, messages, label: 'EXTEND_OUTLINE' });
     } catch (error) {
       return { ok: false, code: error?.name ?? 'DirectorRequestError', error: error?.message ?? '导演 API 请求失败' };
     }

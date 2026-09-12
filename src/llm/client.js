@@ -110,6 +110,7 @@ function authHeaders(apiKey) {
 // ---------- 客户端 ----------
 
 export function createDirectorClient({
+  onResult = null,
   fetchImpl = globalThis.fetch,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   // T-411：破限词只在这里加 —— 导演 API 请求的唯一出口，角色回复端拿不到
@@ -131,11 +132,23 @@ export function createDirectorClient({
    * @returns {Promise<string>} 模型返回的原始文本
    */
   async function request(options = {}) {
-    const { endpoint, apiKey, model, messages, temperature, maxTokens } = options;
+    const { endpoint, apiKey, model, messages, temperature, maxTokens, label = '' } = options;
 
     if (!endpoint || !model) {
       throw createError('DirectorConfigError', '导演 API 的端点与模型为必填项');
     }
+
+    // 调用日志（调试弹层那张表）：成功失败都记一条，带耗时与 tokens
+    const startedAt = Date.now();
+    let outcome = { ok: false, error: 'unknown' };
+    const record = () => {
+      if (typeof onResult !== 'function') return;
+      try {
+        onResult({ label: label || '未命名调用', ...outcome, at: startedAt, ms: Date.now() - startedAt, model });
+      } catch {
+        /* 记日志出问题不该影响请求 */
+      }
+    };
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? timeoutMs);
@@ -152,7 +165,7 @@ export function createDirectorClient({
     // 请求真的发出去了才计数（配置不全 / 没走到这一步的都不算）
     if (typeof onCall === 'function') {
       try {
-        onCall({ endpoint, model });
+        onCall({ endpoint, model, label });
       } catch {
         /* 计数出问题不该影响请求 */
       }
@@ -186,17 +199,28 @@ export function createDirectorClient({
       if (content === undefined || content === null || content === '') {
         throw createError('DirectorEmptyError', '导演 API 返回空内容');
       }
+      const usage = payload?.usage ?? null;
+      outcome = {
+        ok: true,
+        tokens: Number(usage?.total_tokens ?? 0)
+          || (Number(usage?.prompt_tokens ?? 0) + Number(usage?.completion_tokens ?? 0))
+          || 0,
+      };
       return content;
     } catch (error) {
       if (error?.name === 'AbortError' || controller.signal.aborted) {
+        outcome = { ok: false, error: '超时' };
         throw createError('TimeoutError', '导演 API 请求超时，请检查连接或增加超时时间。');
       }
       if (['DirectorHttpError', 'DirectorTruncationError', 'DirectorEmptyError', 'DirectorConfigError', 'TimeoutError'].includes(error?.name)) {
+        outcome = { ok: false, error: error.name === 'DirectorTruncationError' ? '被截断' : error.name };
         throw error;
       }
+      outcome = { ok: false, error: error?.name ?? '请求失败' };
       throw createError(error?.name ?? 'DirectorRequestError', redact(error?.message ?? '导演 API 请求失败', secrets));
     } finally {
       clearTimeout(timer);
+      record();
     }
   }
 

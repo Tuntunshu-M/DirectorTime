@@ -120,7 +120,7 @@ export function createSpeculationService({ client, getConnection, store, now = D
 
     let raw;
     try {
-      raw = await client.request({ ...getConnection?.(), messages, maxTokens: 400 });
+      raw = await client.request({ ...getConnection?.(), messages, maxTokens: 400, label: 'SPECULATE_NEXT' });
     } catch {
       return null; // 静默
     }

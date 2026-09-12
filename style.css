@@ -15,7 +15,7 @@
 #dt-panel *{box-sizing:border-box}
 #dt-panel .dt-card{width:100%;max-width:440px;margin:0 auto}
 
-#dt-panel :root{--mono:'Space Mono','JetBrains Mono','Cascadia Mono',ui-monospace,monospace;
+#dt-panel{--mono:'Space Mono','JetBrains Mono','Cascadia Mono',ui-monospace,monospace;
   --serif:'Noto Serif SC','Source Han Serif SC','Songti SC','SimSun',serif;
   --sans:'Inter','Microsoft YaHei','PingFang SC',sans-serif;}
 #dt-panel[data-palette="a"]{/* 夜间 · 场记板 */

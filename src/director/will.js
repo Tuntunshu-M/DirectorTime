@@ -182,7 +182,7 @@ export function createWillService({ client, getConnection, getRules } = {}) {
 
     let raw;
     try {
-      raw = await client.request({ ...getConnection?.(), messages, maxTokens: 300 });
+      raw = await client.request({ ...getConnection?.(), messages, maxTokens: 300, label: 'JUDGE_STANCE' });
     } catch (error) {
       return { ok: false, stance: 'accept', confidence: 0, reason: error?.message ?? '导演 API 调用失败', rule: local };
     }

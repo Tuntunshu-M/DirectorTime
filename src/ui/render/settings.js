@@ -34,6 +34,9 @@ export function render(state, ctxState) {
   const toneLabels = state.toneLabels ?? {};
   const lockedTones = state.toneLocked ?? [];
   const will = Number(state.will ?? 80);
+  const automation = state.automation ?? {};
+  const rules = state.rules ?? {};
+  const params = state.params ?? {};
   const tier = willTier(will);
   const showKey = Boolean(ctxState?.showKey);
   const total = toneKeys.reduce((sum, key) => sum + Number(tone[key] ?? 0), 0);
@@ -120,6 +123,68 @@ export function render(state, ctxState) {
           <div>投机预生成<br><span class="dt-note" style="margin:0">每轮多一次预判调用：命中才用得上针对性注入，失手就白花</span></div>
           ${toggle({ act: 'speculation.toggle', checked: state.speculation !== false })}
         </div>
+
+        <div class="dt-lbl">档位（L0 全手动 / L1 待确认 / L2 全自动）</div>
+        <div class="dt-pipe">
+          ${(automation.features ?? []).map((feature) => `<div class="dt-pipe-row">
+            <span style="flex:1">${esc(automation.featureLabels?.[feature] ?? feature)}</span>
+            <select data-act="automation.set" data-feature="${esc(feature)}" style="width:auto">
+              ${(automation.levelList ?? []).map((level) => `<option value="${esc(level)}" ${automation.levels?.[feature] === level ? 'selected' : ''}>${esc(level)}${automation.levelLabels?.[level] ? ` · ${esc(automation.levelLabels[level])}` : ''}</option>`).join('')}
+            </select>
+          </div>`).join('')}
+        </div>
+        <div class="dt-note">L1 = 结果先进「场记」的待确认队列，点「采用」才生效；L0 = 那一步完全不跑</div>
+      </div>
+    </details>
+
+    <details>
+      <summary>词库（规则引擎：判得准就不花钱调 API）</summary>
+      <div class="dt-box">
+        <div class="dt-note" style="margin-top:0">这些词用来在本地判 user 的态度 —— 判得准就<b>一次 API 都不发</b>。<br>
+          一行一条；强词 / 弱词可以写「<b>词 = 立场</b>」（接受 / 拒绝 / 犹豫 / 转向，也可以写 accept / reject / hesitate / redirect）。<br>
+          <b>清空某一本 = 这一类不判，老实交给 LLM</b>（不会硬猜）。</div>
+        ${(rules.keys ?? []).map((key) => `<div class="dt-lbl">${esc(rules.labels?.[key] ?? key)}</div>
+          <textarea rows="3" data-act="rules.save" data-key="${esc(key)}" placeholder="一行一条">${esc(rules.texts?.[key] ?? '')}</textarea>`).join('')}
+        <div class="dt-actions">
+          <button class="dt-btn" type="button" data-act="rules.saveAll">保存词库</button>
+          <button class="dt-btn" type="button" data-act="rules.reset">恢复默认词库</button>
+        </div>
+        <div class="dt-note" data-flash="rules" hidden></div>
+      </div>
+    </details>
+
+    <details>
+      <summary>调参（默认值就能用，不懂别动）</summary>
+      <div class="dt-box">
+        <div class="dt-lbl" style="margin-top:0">每场楼层（min ~ max）</div>
+        <div class="dt-line">
+          <input class="dt-tone-num" type="number" min="1" max="20" data-act="params.save" data-field="pacing.min" value="${Number(params.pacing?.min ?? 3)}" aria-label="每场最少楼层">
+          <span style="opacity:.6">~</span>
+          <input class="dt-tone-num" type="number" min="1" max="30" data-act="params.save" data-field="pacing.max" value="${Number(params.pacing?.max ?? 8)}" aria-label="每场最多楼层">
+        </div>
+        <div class="dt-note">一场戏最少演几楼才允许切场；聊满 max 楼无论如何强制换场</div>
+
+        <div class="dt-lbl">轮数上限</div>
+        <input class="dt-tone-num" type="number" min="1" max="200" data-act="params.save" data-field="maxRounds" value="${Number(params.maxRounds ?? 15)}" aria-label="轮数上限">
+        <div class="dt-note">跑满这么多轮就提示并清空剧本（默认 15）</div>
+
+        <div class="dt-lbl">置信阈值</div>
+        <input class="dt-tone-num" type="number" min="0" max="1" step="0.05" data-act="params.save" data-field="confidenceThreshold" value="${Number(params.confidenceThreshold ?? 0.7)}" aria-label="置信阈值">
+        <div class="dt-note">判定把握低于它一律按"接受"放行 —— <b>调高会更严，也更容易卡住</b>（默认 0.7）</div>
+
+        <div class="dt-lbl">卡住阈值</div>
+        <input class="dt-tone-num" type="number" min="1" max="10" data-act="params.save" data-field="stuckThreshold" value="${Number(params.stuckThreshold ?? 3)}" aria-label="卡住阈值">
+        <div class="dt-note">连续几轮没推进就强制跳场（默认 3，防死锁）</div>
+
+        <div class="dt-lbl">世界书条数上限</div>
+        <input class="dt-tone-num" type="number" min="1" max="200" data-act="params.save" data-field="worldLimit" value="${Number(params.worldLimit ?? 20)}" aria-label="世界书条数上限">
+        <div class="dt-note">勾选再多也只把最相关的这么多条进 prompt（默认 20）</div>
+
+        <div class="dt-toggle">
+          <div>生成后一致性自检<br><span class="dt-note" style="margin:0">写完剧本再花一次调用检查前后矛盾；关掉省一次调用</span></div>
+          ${toggle({ act: 'params.toggleConsistency', checked: params.consistencyCheck !== false })}
+        </div>
+        <div class="dt-note" data-flash="params" hidden></div>
       </div>
     </details>
 
@@ -162,6 +227,54 @@ export function render(state, ctxState) {
     </div>`,
     actions: {
       'settings.world': (el, { ctx }) => { ctx.openLayer('world'); },
+      // 批复 §二-1：档位（六个功能点各自 L0/L1/L2）
+      'automation.set': (el, { api, ctx }) => {
+        api.automation?.set?.(el.dataset.feature, el.value);
+        ctx.flash('params', `档位已改：${el.dataset.feature} → ${el.value}（Debug 的「档位」行同步）`);
+        ctx.refresh();
+      },
+      // 批复 §二-2：词库（改完立刻生效；清空某一本 = 这一类转 LLM）
+      'rules.save': (el, { api, ctx }) => {
+        const result = api.saveRules?.(el.dataset.key, el.value);
+        ctx.flash('rules', result?.dropped?.length
+          ? `已保存 ${result.count} 条；有 ${result.dropped.length} 条立场认不出，已跳过（${result.dropped.join('、')}）`
+          : `已保存 ${result?.count ?? 0} 条（这一本改完立刻生效）`);
+      },
+      'rules.saveAll': (el, { api, ctx }) => {
+        const boxes = [...(ctx.root()?.querySelectorAll('[data-act="rules.save"]') ?? [])];
+        let saved = 0;
+        const droppedAll = [];
+        for (const box of boxes) {
+          const result = api.saveRules?.(box.dataset.key, box.value);
+          saved += result?.count ?? 0;
+          droppedAll.push(...(result?.dropped ?? []));
+        }
+        ctx.flash('rules', droppedAll.length
+          ? `已保存 ${saved} 条；有 ${droppedAll.length} 条立场认不出，已跳过（${droppedAll.join('、')}）`
+          : `已保存 ${saved} 条（四本词库都生效了）`);
+      },
+      'rules.reset': (el, { api, ctx }) => {
+        api.resetRules?.();
+        ctx.flash('rules', '已恢复默认词库');
+        ctx.refresh();
+      },
+      // 批复 §二-3：六个数字参数 + 一致性自检开关
+      'params.save': (el, { api, ctx, state }) => {
+        const field = el.dataset.field ?? '';
+        const value = Number(el.value);
+        if (field.startsWith('pacing.')) {
+          const key = field.split('.')[1];
+          api.saveSettings?.({ pacing: { ...(state.params?.pacing ?? {}), [key]: value } });
+        } else {
+          api.saveSettings?.({ [field]: value });
+        }
+        ctx.flash('params', `已保存：${field} = ${value}`);
+      },
+      'params.toggleConsistency': (el, { api, ctx }) => {
+        api.saveSettings?.({ consistencyCheck: Boolean(el.checked) });
+        ctx.flash('params', el.checked ? '一致性自检已开（生成后会多一次调用）' : '一致性自检已关（省一次调用）');
+        ctx.refresh();
+      },
       'conn.setMode': (el, { api, ctx, state }) => {
         api.saveSettings?.({ connection: { ...(state.connection ?? {}), mode: el.value } });
         ctx.flashGlobal(el.value === 'main' ? '已切到主连接' : '已切到独立 API');

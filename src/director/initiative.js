@@ -83,7 +83,7 @@ export function createInitiativeService({ client, getConnection, stages, now = D
 
     let raw;
     try {
-      raw = await client.request({ ...getConnection?.(), messages, maxTokens: 300 });
+      raw = await client.request({ ...getConnection?.(), messages, maxTokens: 300, label: 'GEN_INITIATIVE' });
     } catch (error) {
       return { ok: false, code: error?.name ?? 'DirectorRequestError', error: error?.message ?? '导演 API 请求失败' };
     }
