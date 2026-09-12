@@ -1,470 +1,179 @@
-/* 导演时间 · 牛皮纸 UI v2（场记单 / 档案感）
+/* 导演时间 · UI 定稿样式
  *
- * 规范来源：《UI设计-完全版.md》§10（色板 / 字体 / 排线 / 排版纪律）。
- * 原则：
- *   1. 位置与几何一律不动（fixed + 100dvh + calc 限宽高，与旧版一致）；
- *   2. 精致感来自排版与排线，不用阴影 / 渐变 / 装饰图片（§10.6 / §10.9 禁则）；
- *   3. 面板内容大量 inline style（JS 生成），美化层用 !important 精准覆盖视觉属性，
- *      不碰 width / margin 等会影响布局的属性。
+ * 来源：`UI预览-双版A场记板.html`（唯一定稿预览）的 <style> 块，逐条抄下来后
+ * 只做了一件事：**把所有选择器收进 #dt-panel 作用域**（插件样式不许漏进酒馆页面）。
+ * 配色、字号、间距、圆角一律照抄，没有改动。两套配色靠 #dt-panel[data-palette] 切换：
+ *   a = 夜间场记板（默认）  b = 日间牛皮纸
  */
 
-/* 字体（loli.net 是 Google Fonts 国内镜像；拉不到就走本地衬线/等宽 fallback，不影响使用） */
 @import url('https://fonts.loli.net/css2?family=Noto+Serif+SC:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap');
 
-:root {
-  /* 牛皮纸 · 日间 */
-  --dt-paper: #ede4d3;
-  --dt-card: #f5efe1;
-  --dt-field: #faf5e9;
-  --dt-ink: #2b2721;
-  --dt-ink-2: #5a5245;
-  --dt-ink-faded: #8a8073;
-  --dt-accent: #8c3a2b;
+/* 面板本体：全屏遮罩 + 居中卡片（预览里这两件事由 body 承担） */
+#dt-panel{display:none;position:fixed;inset:0;z-index:1000;padding:24px 14px;overflow:auto;
+  background:rgba(0,0,0,.5);font-family:var(--sans);color:var(--ink);transition:background .18s}
+#dt-panel.dt-open{display:block}
+#dt-panel *{box-sizing:border-box}
+#dt-panel .dt-card{width:100%;max-width:440px;margin:0 auto}
 
-  /* 线与底 */
-  --dt-rule: rgba(43, 39, 33, 0.28);
-  --dt-rule-soft: rgba(43, 39, 33, 0.18);
-  --dt-tint: rgba(43, 39, 33, 0.05);
-  --dt-accent-soft: rgba(140, 58, 43, 0.09);
-
-  /* 字体：仅两款 */
-  --dt-font-serif: 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'SimSun', 'STSong', serif;
-  --dt-font-mono: 'Space Mono', 'JetBrains Mono', 'Cascadia Mono', ui-monospace, monospace;
-
-  /* 版画排线（§10.9）：两组角度差 4°、间距不同的平行线叠加出摩尔纹 */
-  --dt-hatch:
-    repeating-linear-gradient(62deg, rgba(43, 39, 33, 0.055) 0 1px, transparent 1px 6px),
-    repeating-linear-gradient(58deg, rgba(43, 39, 33, 0.038) 0 1px, transparent 1px 9px);
-  --dt-hatch-soft:
-    repeating-linear-gradient(62deg, rgba(43, 39, 33, 0.04) 0 1px, transparent 1px 7px),
-    repeating-linear-gradient(57deg, rgba(43, 39, 33, 0.028) 0 1px, transparent 1px 11px);
-
-  /* 字号层级 */
-  --dt-size-scene: 17px;
-  --dt-size-title: 15px;
-  --dt-size-body: 14px;
-  --dt-size-minor: 13px;
-  --dt-size-label: 11px;
-
-  /* 圆角：小，纸质感不要大圆角 */
-  --dt-radius: 4px;
-  --dt-radius-lg: 6px;
-
-  /* 间距 */
-  --dt-gap: 8px;
-  --dt-gap-md: 12px;
-  --dt-pad-x: 20px;
-  --dt-pad-y: 24px;
-}
-
-/* 暗房 · 夜间（酒馆深色主题下自动切换） */
-[data-theme='dark'],
-body.dark {
-  --dt-paper: #23201c;
-  --dt-card: #2b2721;
-  --dt-field: #322c25;
-  --dt-ink: #e8dfd0;
-  --dt-ink-2: #b5aa99;
-  --dt-ink-faded: #7a7065;
-  --dt-accent: #c25a45;
-
-  --dt-rule: rgba(232, 223, 208, 0.24);
-  --dt-rule-soft: rgba(232, 223, 208, 0.14);
-  --dt-tint: rgba(232, 223, 208, 0.06);
-  --dt-accent-soft: rgba(194, 90, 69, 0.14);
-
-  --dt-hatch:
-    repeating-linear-gradient(62deg, rgba(232, 223, 208, 0.05) 0 1px, transparent 1px 6px),
-    repeating-linear-gradient(58deg, rgba(232, 223, 208, 0.034) 0 1px, transparent 1px 9px);
-  --dt-hatch-soft:
-    repeating-linear-gradient(62deg, rgba(232, 223, 208, 0.036) 0 1px, transparent 1px 7px),
-    repeating-linear-gradient(57deg, rgba(232, 223, 208, 0.025) 0 1px, transparent 1px 11px);
-}
-
-/* ============================================================
- * 菜单栏入口（#extensionsMenu）
- * ============================================================ */
-#dt-menu-entry {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 5px;
-  min-width: 0;
-  cursor: pointer;
-  white-space: nowrap;
-  writing-mode: horizontal-tb;
-}
-
-#dt-menu-entry .dt-menu-icon,
-#dt-menu-entry .dt-menu-label {
-  display: inline-block;
-  flex: 0 0 auto;
-  writing-mode: horizontal-tb;
-}
-
-#dt-menu-entry .dt-menu-icon {
-  inline-size: 18px;
-  text-align: center;
-}
-
-#dt-menu-entry .dt-menu-label {
-  white-space: nowrap;
-}
-
-/* ============================================================
- * 主面板 —— 几何与旧版完全一致（位置不变）
- * ============================================================ */
-#dt-panel {
-  position: fixed;
-  inset: 0;
-  width: 100vw;
-  height: 100vh;
-  height: 100dvh;
-  z-index: 10000;
-  display: none;
-  place-items: center;
-  padding: 12px;
-  overflow: auto;
-  background: rgba(24, 20, 15, 0.5);
-  -webkit-overflow-scrolling: touch;
-}
-
-#dt-panel.dt-open {
-  display: grid;
-}
-
-#dt-panel,
-#dt-panel *,
-#dt-panel *::before,
-#dt-panel *::after {
-  box-sizing: border-box;
-}
-
-/* 纸卡：一层排线 + 双边框（外 1px 实线 + 内 1px 浅色 hairline），像装订好的场记单 */
-#dt-panel .dt-card {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  width: min(720px, calc(100vw - 24px));
-  max-width: 100%;
-  max-height: min(760px, calc(100vh - 24px));
-  max-height: min(760px, calc(100dvh - 24px));
-  min-height: 0;
-  overflow: hidden;
-  background-color: var(--dt-paper, #ede4d3);
-  background-image: var(--dt-hatch-soft);
-  color: var(--dt-ink, #2b2721);
-  border: 1px solid var(--dt-rule, rgba(43, 39, 33, 0.28));
-  border-radius: var(--dt-radius-lg, 6px);
-  outline: 1px solid var(--dt-rule-soft);
-  outline-offset: 2px;
-  font-family: var(--dt-font-serif, serif);
-  font-size: 13px;
-  line-height: 1.7;
-}
-
-/* 顶栏：排线密度高一档（§10.9：常规密度用于顶栏） */
-#dt-panel .dt-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 14px;
-  background-color: var(--dt-card, #f5efe1);
-  background-image: var(--dt-hatch);
-  border-bottom: 1px dashed var(--dt-rule, rgba(43, 39, 33, 0.28));
-}
-
-/* 标题：衬线 + 宽字距，后面跟一行等宽大写代号（场记单字段标签） */
-#dt-panel .dt-title {
-  flex: 1;
-  font-family: var(--dt-font-serif, serif);
-  font-size: var(--dt-size-title, 15px);
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  color: var(--dt-ink);
-}
-
-#dt-panel .dt-title::after {
-  content: 'FIELD LOG';
-  margin-left: 10px;
-  font-family: var(--dt-font-mono, monospace);
-  font-size: 9px;
-  font-weight: 400;
-  letter-spacing: 0.3em;
-  color: var(--dt-ink-faded);
-  vertical-align: 2px;
-}
-
-#dt-panel .dt-body {
-  min-height: 0;
-  overflow: auto;
-  padding: 16px 20px 20px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--dt-rule) transparent;
-}
-
-/* ============================================================
- * 通用组件（主面板 + 调试窗 + 配置窗共用）
- * ============================================================ */
-
-/* --- 按钮：纸面细边按钮，悬停沉一档；主按钮（生成剧本）实心砖红 --- */
-:is(#dt-panel, #dt-debug, #dt-settings) button {
-  font-family: var(--dt-font-mono, monospace) !important;
-  font-size: 11.5px !important;
-  letter-spacing: 0.06em;
-  color: var(--dt-ink-2) !important;
-  background: var(--dt-card) !important;
-  border: 1px solid var(--dt-rule) !important;
-  border-radius: var(--dt-radius) !important;
-  padding: 4px 12px !important;
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
-}
-
-:is(#dt-panel, #dt-debug, #dt-settings) button:hover:not(:disabled) {
-  background: var(--dt-paper) !important;
-  color: var(--dt-ink) !important;
-  border-color: var(--dt-ink-2) !important;
-}
-
-:is(#dt-panel, #dt-debug, #dt-settings) button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-:is(#dt-panel, #dt-debug, #dt-settings) button:focus-visible {
-  outline: 2px solid var(--dt-accent);
-  outline-offset: 1px;
-}
-
-/* 顶栏按钮再小半档，别抢标题 */
-#dt-panel .dt-head .dt-btn {
-  font-size: 11px !important;
-  padding: 3px 10px !important;
-  background: transparent !important;
-}
-
-#dt-panel .dt-head .dt-btn:hover:not(:disabled) {
-  background: var(--dt-tint) !important;
-}
-
-/* 主按钮实心（§7 组件规范） */
-#dt-panel #dt-panel-generate {
-  background: var(--dt-accent) !important;
-  border-color: var(--dt-accent) !important;
-  color: var(--dt-card) !important;
-}
-
-#dt-panel #dt-panel-generate:hover:not(:disabled) {
-  background: var(--dt-accent) !important;
-  color: var(--dt-card) !important;
-  filter: brightness(1.08);
-}
-
-/* --- 输入控件：浅纸底 + 0.5px 细边，焦点砖红描边（§10.8） --- */
-:is(#dt-panel, #dt-debug, #dt-settings) input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']),
-:is(#dt-panel, #dt-debug, #dt-settings) select,
-:is(#dt-panel, #dt-debug, #dt-settings) textarea {
-  background: var(--dt-field) !important;
-  color: var(--dt-ink) !important;
-  border: 1px solid var(--dt-rule-soft) !important;
-  border-radius: var(--dt-radius) !important;
-  font-family: var(--dt-font-serif, serif) !important;
-  font-size: 13px !important;
-  padding: 5px 8px !important;
-}
-
-:is(#dt-panel, #dt-debug, #dt-settings) input:focus,
-:is(#dt-panel, #dt-debug, #dt-settings) select:focus,
-:is(#dt-panel, #dt-debug, #dt-settings) textarea:focus {
-  outline: none;
-  border-color: var(--dt-accent) !important;
-}
-
-:is(#dt-panel, #dt-debug, #dt-settings) ::placeholder {
-  color: var(--dt-ink-faded);
-  opacity: 1;
-}
-
-/* 复选 / 单选：砖红 accent */
-:is(#dt-panel, #dt-debug, #dt-settings) input[type='checkbox'],
-:is(#dt-panel, #dt-debug, #dt-settings) input[type='radio'] {
-  accent-color: var(--dt-accent);
-}
-
-/* --- 滑块（意愿权重）：细轨道 + 描边圆钮 --- */
-:is(#dt-panel, #dt-debug, #dt-settings) input[type='range'] {
-  appearance: none;
-  -webkit-appearance: none;
-  height: 3px;
-  background: var(--dt-rule);
-  border-radius: 2px;
-  outline-offset: 4px;
-}
-
-:is(#dt-panel, #dt-debug, #dt-settings) input[type='range']::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--dt-card);
-  border: 2px solid var(--dt-accent);
-  cursor: pointer;
-}
-
-:is(#dt-panel, #dt-debug, #dt-settings) input[type='range']::-moz-range-thumb {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--dt-card);
-  border: 2px solid var(--dt-accent);
-  cursor: pointer;
-}
-
-/* --- 折叠块：衬线标题 + ▸/▾ 手绘记号（§7） --- */
-:is(#dt-panel, #dt-debug, #dt-settings) details {
-  margin: 8px 0;
-}
-
-:is(#dt-panel, #dt-debug, #dt-settings) summary {
-  cursor: pointer;
-  list-style: none;
-  font-family: var(--dt-font-serif, serif);
-  font-weight: 500;
-  font-size: var(--dt-size-minor, 13px);
-  color: var(--dt-ink);
-  padding: 6px 4px;
-  border-radius: var(--dt-radius);
-  min-height: 32px;
-}
-
-:is(#dt-panel, #dt-debug, #dt-settings) summary::-webkit-details-marker {
-  display: none;
-}
-
-:is(#dt-panel, #dt-debug, #dt-settings) summary::before {
-  content: '▸';
-  margin-right: 6px;
-  font-family: var(--dt-font-mono, monospace);
-  font-size: 11px;
-  color: var(--dt-ink-faded);
-}
-
-:is(#dt-panel, #dt-debug, #dt-settings) details[open] > summary::before {
-  content: '▾';
-  color: var(--dt-accent);
-}
-
-:is(#dt-panel, #dt-debug, #dt-settings) summary:hover {
-  background: var(--dt-tint);
-}
-
-/* 剧本编辑页的阶段卡片（inline 带 border 的 details）：补圆角与纸底；
- * 展开的那张 = 当前阶段，左侧 3px 砖红竖条（§10.6） */
-#dt-panel details[style*='border'] {
-  background: var(--dt-card);
-  border-radius: var(--dt-radius) !important;
-}
-
-#dt-panel details[open][style*='border'] {
-  border-left: 3px solid var(--dt-accent) !important;
-}
-
-/* --- 虚线分隔（§10.9 手绘感） --- */
-:is(#dt-panel, #dt-debug, #dt-settings) hr {
-  border: none !important;
-  border-top: 1px dashed var(--dt-rule) !important;
-  margin: 14px 0 !important;
-}
-
-/* --- 注入全文 / 模型返回等 <pre>：白纸卡数据块（§10.9 登记卡） --- */
-:is(#dt-panel, #dt-debug, #dt-settings) pre {
-  background-color: var(--dt-card);
-  background-image: var(--dt-hatch-soft);
-  border: 1px solid var(--dt-rule-soft);
-  border-radius: var(--dt-radius);
-  padding: 8px 10px;
-  font-family: var(--dt-font-mono, monospace);
-  font-size: 11.5px;
-  line-height: 1.6;
-  color: var(--dt-ink-2);
-  max-height: 280px;
-  overflow: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--dt-rule) transparent;
-}
-
-/* --- 开关（总开关 label）：等宽大写标签感 --- */
-#dt-panel .dt-switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex: 0 0 auto;
-  font-family: var(--dt-font-mono, monospace);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  color: var(--dt-ink-2);
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-/* --- 选中文本：砖红淡染 --- */
-:is(#dt-panel, #dt-debug, #dt-settings) ::selection {
-  background: var(--dt-accent-soft);
-}
-
-/* --- 滚动条（webkit） --- */
-:is(#dt-panel .dt-body, #dt-debug, #dt-settings)::-webkit-scrollbar,
-:is(#dt-panel, #dt-debug, #dt-settings) pre::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-:is(#dt-panel .dt-body, #dt-debug, #dt-settings)::-webkit-scrollbar-thumb,
-:is(#dt-panel, #dt-debug, #dt-settings) pre::-webkit-scrollbar-thumb {
-  background: var(--dt-rule-soft);
-  border-radius: 4px;
-}
-
-:is(#dt-panel .dt-body, #dt-debug, #dt-settings)::-webkit-scrollbar-thumb:hover,
-:is(#dt-panel, #dt-debug, #dt-settings) pre::-webkit-scrollbar-thumb:hover {
-  background: var(--dt-rule);
-}
-
-:is(#dt-panel .dt-body, #dt-debug, #dt-settings)::-webkit-scrollbar-track,
-:is(#dt-panel, #dt-debug, #dt-settings) pre::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-/* ============================================================
- * 调试窗 / 独立配置窗（几何由 inline PANEL_STYLE 定死，位置不动；
- * 这里只叠排线纸感，需 !important 盖过 inline background 简写）
- * ============================================================ */
-#dt-debug,
-#dt-settings {
-  background-image: var(--dt-hatch-soft) !important;
-  border-radius: var(--dt-radius-lg) !important;
-  scrollbar-width: thin;
-  scrollbar-color: var(--dt-rule) transparent;
-}
-
-/* 小屏 / 小窗口：面板再缩一档，保证不超出 */
-@media (max-width: 520px) {
-  #dt-panel {
-    padding: 8px;
-  }
-
-  #dt-panel .dt-card {
-    width: calc(100vw - 16px);
-    max-height: calc(100vh - 16px);
-    max-height: calc(100dvh - 16px);
-  }
-
-  #dt-panel .dt-body {
-    padding: 14px 14px 16px;
-  }
-
-  #dt-panel .dt-title::after {
-    display: none;
-  }
-}
+#dt-panel :root{--mono:'Space Mono','JetBrains Mono','Cascadia Mono',ui-monospace,monospace;
+  --serif:'Noto Serif SC','Source Han Serif SC','Songti SC','SimSun',serif;
+  --sans:'Inter','Microsoft YaHei','PingFang SC',sans-serif;}
+#dt-panel[data-palette="a"]{/* 夜间 · 场记板 */
+  --bg:#141310; --card:#232019; --card-2:#1c1a17; --field:#2b271f; --field-2:#322c23;
+  --ink:#ece3d0; --ink-2:#a89c88; --faded:#776e5f;
+  --accent:#d9a04b; --accent-soft:rgba(217,160,75,.14); --ok:#8fb573;
+  --rule:rgba(236,227,208,.16); --rule-soft:rgba(236,227,208,.09);
+  --font-title:var(--sans); --font-label:var(--mono); --size-title:15px; --ls-label:.12em;
+  --radius:3px; --row-alt:rgba(236,227,208,.025); --on-accent:#201c16;}
+#dt-panel[data-palette="b"]{/* 日间 · 牛皮纸 */
+  --bg:#4a443a; --card:#f4eee1; --card-2:#faf6ec; --field:#fdfbf4; --field-2:#efe8da;
+  --ink:#2b2721; --ink-2:#5f5647; --faded:#8d8371;
+  --accent:#8c3a2b; --accent-soft:rgba(140,58,43,.08); --ok:#4f7040;
+  --rule:rgba(43,39,33,.26); --rule-soft:rgba(43,39,33,.13);
+  --font-title:var(--serif); --font-label:var(--serif); --size-title:19px; --ls-label:.16em;
+  --radius:2px; --row-alt:transparent; --on-accent:#f7f2e7;}
+#dt-panel .dt-card{position:relative;background:var(--card);border:1px solid var(--rule);
+  border-radius:var(--radius);overflow:hidden;box-shadow:0 12px 34px rgba(0,0,0,.4)}
+#dt-panel[data-palette="a"] .dt-clapper{display:block;height:5px;
+  background:linear-gradient(90deg,var(--accent) 0 62%,var(--ink) 62% 100%)}
+#dt-panel[data-palette="b"] .dt-clapper{display:none}
+#dt-panel .dt-head{padding:11px 12px 10px;border-bottom:1px solid var(--rule)}
+#dt-panel .dt-head-top{display:flex;align-items:baseline;gap:8px}
+#dt-panel .dt-title{font-family:var(--font-title);font-size:var(--size-title);font-weight:600;letter-spacing:.08em}
+#dt-panel .dt-sub{font:10px var(--mono);color:var(--faded);letter-spacing:.18em}
+#dt-panel[data-palette="b"] .dt-sub{font-family:var(--serif);font-size:11px}
+#dt-panel .spacer{flex:1}
+#dt-panel .dt-tools{display:flex;gap:5px}
+#dt-panel .dt-icon{width:26px;height:26px;display:grid;place-items:center;background:transparent;
+  border:1px solid var(--rule-soft);border-radius:var(--radius);color:var(--ink-2);cursor:pointer;padding:0}
+#dt-panel .dt-icon:hover{background:var(--accent-soft);color:var(--accent)}
+#dt-panel .dt-icon svg{width:14px;height:14px;fill:currentColor}
+#dt-panel .dt-status{margin-top:7px;display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-2)}
+#dt-panel .dt-dot{width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px rgba(143,181,115,.15)}
+#dt-panel .dt-dot-off{background:var(--faded);box-shadow:none}
+#dt-panel .dt-tabs{display:flex;border-bottom:1px solid var(--rule);background:var(--card-2)}
+#dt-panel .dt-tab{flex:1;background:none;border:0;border-bottom:2px solid transparent;color:var(--faded);
+  font-family:var(--font-label);font-size:12.5px;letter-spacing:var(--ls-label);padding:9px 0;cursor:pointer}
+#dt-panel .dt-tab-on{color:var(--ink);border-bottom-color:var(--accent)}
+#dt-panel[data-palette="b"] .dt-tab{font-size:13.5px}
+#dt-panel .dt-body{padding:12px 13px 15px;max-height:600px;overflow:auto}
+#dt-panel .dt-sec{font:11px var(--font-label);letter-spacing:var(--ls-label);color:var(--faded);
+  border-bottom:1px solid var(--rule-soft);padding-bottom:4px;margin-bottom:7px}
+#dt-panel[data-palette="b"] .dt-sec{font-size:12px}
+#dt-panel .dt-rows{border:1px solid var(--rule-soft);border-radius:var(--radius);overflow:hidden}
+#dt-panel .dt-row{display:flex;gap:10px;padding:6px 9px;border-bottom:1px solid var(--rule-soft);font-size:13px}
+#dt-panel .dt-row:last-child{border-bottom:0}
+#dt-panel .dt-row:nth-child(odd){background:var(--row-alt)}
+#dt-panel .dt-k{flex:0 0 58px;font:11px var(--font-label);letter-spacing:.08em;color:var(--faded)}
+#dt-panel[data-palette="b"] .dt-k{font-size:12px;font-family:var(--sans)}
+#dt-panel .dt-v{flex:1}
+#dt-panel .num{font-family:var(--mono)}
+#dt-panel[data-palette="b"] .num{font-family:var(--serif);font-weight:600}
+#dt-panel .hl{color:var(--accent);font-weight:600}
+#dt-panel .dt-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+#dt-panel .dt-btn{font-size:12.5px;padding:6px 11px;background:var(--field);color:var(--ink);
+  border:1px solid var(--rule);border-radius:var(--radius);cursor:pointer}
+#dt-panel .dt-btn:hover{background:var(--field-2)}
+#dt-panel .dt-btn-primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600}
+#dt-panel .dt-note{font-size:11.5px;color:var(--faded);line-height:1.55;margin-top:4px}
+#dt-panel .dt-lbl{font-size:12.5px;color:var(--ink-2);margin:9px 0 4px}
+#dt-panel .dt-queue{margin-top:11px;border:1px solid var(--rule);border-left:3px solid var(--accent);
+  background:var(--accent-soft);padding:9px 11px}
+#dt-panel .dt-queue-t{font:11px var(--font-label);letter-spacing:.08em;color:var(--accent);margin-bottom:6px}
+#dt-panel .dt-queue-row{display:flex;gap:6px;align-items:center;font-size:12.5px}
+#dt-panel .dt-mini{font-size:11.5px;padding:3px 9px;background:var(--card-2);border:1px solid var(--rule-soft);
+  border-radius:var(--radius);color:var(--ink-2);cursor:pointer}
+#dt-panel .dt-mini:hover{color:var(--accent);border-color:var(--accent)}
+#dt-panel .dt-tone-num{width:46px;box-sizing:border-box;background:var(--field);color:var(--accent);
+  border:1px solid var(--rule-soft);border-radius:var(--radius);padding:3px 4px;
+  font-family:var(--font-label);font-weight:600;font-size:12px;text-align:right}
+#dt-panel .dt-flash{font-size:11.5px;line-height:1.55;color:var(--accent);margin-top:5px;
+  border-left:2px solid var(--accent);padding-left:8px}
+#dt-panel .dt-chip{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 8px;
+  border:1px solid var(--rule-soft);border-radius:99px;color:var(--faded);cursor:pointer}
+#dt-panel .dt-chip-lock{color:var(--accent);border-color:var(--accent)}
+#dt-panel details{border-top:1px solid var(--rule-soft);margin-top:11px;padding-top:9px}
+#dt-panel summary{cursor:pointer;font:12px var(--font-label);letter-spacing:var(--ls-label);color:var(--ink-2);
+  list-style:none;display:flex;align-items:center;gap:6px}
+#dt-panel summary::-webkit-details-marker{display:none}
+#dt-panel summary::before{content:'▸';font-size:10px;color:var(--faded)}
+#dt-panel details[open] summary::before{content:'▾'}
+#dt-panel[data-palette="b"] summary{font-size:13px}
+#dt-panel .dt-box{padding:8px 0 2px}
+#dt-panel input[type=text],#dt-panel textarea,#dt-panel select{width:100%;box-sizing:border-box;background:var(--field);color:var(--ink);
+  border:1px solid var(--rule-soft);border-radius:var(--radius);padding:6px 8px;font:12.5px/1.6 var(--sans)}
+#dt-panel textarea{resize:vertical}
+#dt-panel .dt-seg{display:flex;gap:6px;margin:5px 0 2px}
+#dt-panel .dt-seg label{flex:1;text-align:center;font-size:12.5px;padding:6px 0;cursor:pointer;
+  border:1px solid var(--rule-soft);border-radius:var(--radius);color:var(--ink-2);background:var(--field)}
+#dt-panel .dt-seg input{display:none}
+#dt-panel .dt-seg label:has(input:checked){border-color:var(--accent);background:var(--accent-soft);
+  color:var(--accent);font-weight:600}
+#dt-panel .dt-line{display:flex;align-items:center;gap:8px;margin-top:5px}
+#dt-panel .dt-line .dt-k2{flex:0 0 40px;font-size:12px;color:var(--ink-2)}
+#dt-panel input[type=range]{flex:1;-webkit-appearance:none;height:2px;background:var(--rule-soft);border-radius:2px}
+#dt-panel input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;
+  background:var(--accent);border:2px solid var(--card);cursor:pointer}
+#dt-panel .dt-val{font-family:var(--font-label);font-weight:600;color:var(--accent);min-width:30px;text-align:right}
+#dt-panel .dt-lockbtn{font-size:11px;padding:2px 7px;border:1px solid var(--rule-soft);border-radius:99px;
+  background:var(--field);color:var(--faded);cursor:pointer}
+#dt-panel .dt-lockbtn.on{border-color:var(--accent);color:var(--accent);background:var(--accent-soft)}
+#dt-panel .dt-toggle{display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:8px 0;border-bottom:1px dotted var(--rule-soft)}
+#dt-panel .dt-toggle:last-child{border-bottom:0}
+#dt-panel .dt-sw{position:relative;width:34px;height:18px;flex:0 0 34px}
+#dt-panel .dt-sw input{opacity:0;width:100%;height:100%;margin:0;cursor:pointer}
+#dt-panel .dt-sw i{position:absolute;inset:0;background:var(--field-2);border:1px solid var(--rule-soft);
+  border-radius:99px;transition:.15s;pointer-events:none}
+#dt-panel .dt-sw i::after{content:'';position:absolute;left:2px;top:2px;width:12px;height:12px;border-radius:50%;
+  background:var(--faded);transition:.15s}
+#dt-panel .dt-sw input:checked + i{background:var(--accent)}
+#dt-panel .dt-sw input:checked + i::after{left:18px;background:var(--on-accent)}
+#dt-panel .dt-sw-big{width:44px;height:23px;flex:0 0 44px}
+#dt-panel .dt-sw-big i::after{width:15px;height:15px}
+#dt-panel .dt-sw-big input:checked + i::after{left:25px}
+#dt-panel pre{background:var(--card-2);border:1px solid var(--rule-soft);border-radius:var(--radius);
+  padding:8px 9px;margin:7px 0;font:11.5px/1.65 var(--mono);color:var(--ink-2);
+  white-space:pre-wrap;max-height:150px;overflow:auto}
+#dt-panel .dt-seg2{display:flex;border:1px solid var(--rule-soft);border-radius:var(--radius);overflow:hidden;width:max-content}
+#dt-panel .dt-seg2 button{background:none;border:0;border-right:1px solid var(--rule-soft);color:var(--faded);
+  font-size:11.5px;padding:4px 10px;cursor:pointer}
+#dt-panel .dt-seg2 button:last-child{border-right:0}
+#dt-panel .dt-seg2 button.on{background:var(--accent);color:var(--on-accent)}
+#dt-panel .dt-stage{border:1px solid var(--rule-soft);border-radius:var(--radius);margin:7px 0;overflow:hidden;background:var(--card-2)}
+#dt-panel .dt-stage>summary{padding:8px 11px;font-size:13px;color:var(--ink)}
+#dt-panel .dt-stage-cur{border-color:var(--accent);background:var(--accent-soft)}
+#dt-panel .dt-stage-cur>summary{color:var(--accent);font-weight:600}
+#dt-panel .dt-stage-body{padding:2px 11px 11px}
+#dt-panel .dt-radio{display:flex;flex-direction:column;gap:5px;margin-top:4px}
+#dt-panel .dt-radio label{display:flex;align-items:center;gap:7px;padding:6px 9px;font-size:13px;
+  border:1px solid var(--rule-soft);border-radius:var(--radius);background:var(--field);cursor:pointer}
+#dt-panel .dt-radio label:has(input:checked){border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:600}
+#dt-panel .dt-radio input{accent-color:var(--accent)}
+#dt-panel .dt-layer{position:absolute;inset:0;z-index:20;background:var(--card);
+  border:1px solid var(--rule);border-radius:var(--radius);display:none;flex-direction:column}
+#dt-panel .dt-layer-on{display:flex}
+#dt-panel .dt-layer-head{display:flex;align-items:center;gap:8px;padding:9px 11px;border-bottom:1px solid var(--rule)}
+#dt-panel .dt-layer-title{font-family:var(--font-title);font-size:14px;font-weight:600;letter-spacing:.06em}
+#dt-panel .dt-back{display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:4px 9px 4px 6px;
+  background:var(--field);color:var(--ink-2);border:1px solid var(--rule-soft);
+  border-radius:var(--radius);cursor:pointer}
+#dt-panel .dt-back:hover{color:var(--accent);border-color:var(--accent)}
+#dt-panel .dt-back svg{width:11px;height:11px;fill:currentColor}
+#dt-panel .dt-layer-body{flex:1;overflow:auto;padding:12px 13px 15px}
+#dt-panel .dt-layer-foot{border-top:1px solid var(--rule);padding:9px 13px;display:flex;gap:6px;align-items:center;
+  font-size:12px;color:var(--ink-2);background:var(--card-2)}
+#dt-panel .dt-src{font-size:10.5px;padding:1px 6px;border:1px solid var(--rule-soft);border-radius:99px;color:var(--faded)}
+#dt-panel .dt-book{border:1px solid var(--rule-soft);border-radius:var(--radius);margin-bottom:6px;background:var(--card-2)}
+#dt-panel .dt-book>summary{padding:7px 10px;font-size:12.5px;color:var(--ink)}
+#dt-panel .dt-entry{display:flex;gap:8px;align-items:flex-start;padding:6px 10px 6px 22px;
+  border-top:1px solid var(--rule-soft);font-size:12.5px}
+#dt-panel .dt-entry span{flex:1}
+#dt-panel .dt-entry em{font-style:normal;color:var(--faded);font-size:11px}
+#dt-panel .dt-log{font:11px/1.7 var(--mono);color:var(--ink-2)}
+#dt-panel .dt-log-row{display:flex;gap:8px;border-bottom:1px dotted var(--rule-soft);padding:3px 0}
+#dt-panel .dt-log-row:last-child{border-bottom:0}
+#dt-panel .chk{accent-color:var(--accent);margin-top:2px}
+#dt-panel .dt-pipe{border:1px solid var(--rule-soft);border-radius:var(--radius);background:var(--card-2);margin-top:4px}
+#dt-panel .dt-pipe-row{display:flex;align-items:center;gap:8px;padding:6px 9px;border-bottom:1px solid var(--rule-soft);font-size:12.5px}
+#dt-panel .dt-pipe-row:last-child{border-bottom:0}

@@ -32,16 +32,17 @@ import { INTENSITY_LEVELS, INTENSITY_LABELS, normalizeIntensity } from './core/i
 import {
   extensionFolderFromUrl, createExtensionUpdater, createUpdateChecker, checkForUpdate,
 } from './core/update-check.js';
-import { toneText as coreToneText, rebalanceTone, normalizeTone, TONE_KEYS } from './core/tone.js';
+import { toneText as coreToneText, rebalanceTone, normalizeTone, TONE_KEYS, TONE_LABELS } from './core/tone.js';
+import { automationText } from './core/automation.js';
+import { intensityHint } from './core/intensity.js';
 import { createDefaultRules } from './core/default-state.js';
 import { exportCopy, previewCopy, applyCopy } from './core/portable.js';
 import { createCheckpointService } from './director/checkpoint.js';
 import { createReviewService } from './director/review.js';
 import { createPromptRegistry } from './inject/prompt-registry.js';
 import { createLorebookService } from './world/lorebook.js';
-import { createProfileService, profileText, PROFILE_FIELDS } from './world/character.js';
-import { createDebugPanel } from './ui/debug.js';
-import { createSettingsPanel } from './ui/settings.js';
+import { createProfileService, profileText, PROFILE_FIELDS, PROFILE_FIELD_LABELS } from './world/character.js';
+import { buildDebugState } from './ui/debug.js';
 import { createMainPanel } from './ui/panel.js';
 import { mountMenuEntry } from './ui/menu.js';
 
@@ -199,31 +200,12 @@ export function bootstrap({ ctx, store } = {}) {
    */
   function refreshInjection() {
     const text = review.syncInjection();
-    const turn = review.getLastTurn();
-    if (turn) debug.setLast({ ...turn, nextInjection: text });
+    // T-427：调试弹层每次都现读状态（uiApi.read），不再需要往里推
     return text;
   }
 
-  const debug = createDebugPanel({
-    store,
-    registry,
-    // P1-2：档位只有一个来源（settings）—— 以前 Debug 读聊天级那份，永远是默认值
-    getAutomation: () => automationApi.get(),
-    getCapabilities: () => ctx.capabilities,
-    getLastTurn: () => review.getLastTurn(),
-    getLastRequest: () => lastDirectorRequest,
-    // T-418 / T-422：Debug 里必须一眼看出"到底注入了没有"，不能只报"选了预设"
-    getBreakStatus: () => {
-      const filter = normalizeBreakFilter(settings().breakFilter);
-      return {
-        mode: filter.mode,
-        preset: presets.status(),
-        customLength: String(filter.custom ?? '').trim().length,
-        // 真正会进请求的字数（mode=off 时是 0，别被"选了预设"骗了）
-        injected: (breakFilter.text() ?? '').length,
-      };
-    },
-    });
+  // 旧调试浮窗（createDebugPanel）已并入主面板的「调试」弹层（T-427）：
+  // 状态仍由 buildDebugState 统一算（uiApi.read().debug），不再单独挂一个窗。
 
   // ---------- 剧本生成 ----------
   // T-203 的接线：清单里漏了"首次生成剧本"这一步，不接上就永远不会自动生成
@@ -710,14 +692,7 @@ export function bootstrap({ ctx, store } = {}) {
   };
 
 
-  // 同一时刻只允许一个面板在场：开哪个，就把另外两个收起来
-  function openOnly(target) {
-    if (target !== 'panel') panel?.close();
-    if (target !== 'debug') debug.hide();
-    if (target !== 'settings') settingsPanel.hide();
-  }
-
-  // 主页面：总开关 + 运行状态 + 配置 + 生成剧本；由菜单栏入口打开
+  // 主页面：总开关 + 运行状态 + 剧本 + 人物；由菜单栏入口打开
   // T-420 一键更新：在导演时间里点一下就更新 + 自动刷新
   const MANIFEST_URL = new URL('../manifest.json', import.meta.url).href;
   const updater = createExtensionUpdater({
@@ -906,67 +881,126 @@ export function bootstrap({ ctx, store } = {}) {
     intensity: intensityApi,
   };
 
-  // 测试用配置面板：没有它就没法填 API（控制台 DirectorTime.settingsPanel.show() 仍可用）
-  // 放在 extras 之后建：配置页要读那五个折叠区（T-403 / T-411 / T-415 / T-412 / T-413 的入口）
-  const settingsPanel = createSettingsPanel({
-    store,
-    profile: profileApi,
-    presets,
-    automation: automationApi,
-    extras,
-    onTest: () => client.testConnection(settings().connection ?? {}),
-    onSave: () => refreshInjection(),
-  });
-
-  const panel = createMainPanel({
-    store,
-    registry,
-    profile: profileApi,
-    // T-418：配置页的「预设」折叠区（只读酒馆预设）
-    presets,
-    // T-414：档位设置 + 待确认队列（生成出来的剧本要在这儿「采用」才生效）
-    automation: automationApi,
-    queue: queueApi,
-    // T-420：一键更新（面板上的「更新插件」）
-    update: updateApi,
-    // T-404：剧本编辑器（面板「剧本」页）
-    editor: editorApi,
-    onTruncateRegen: () => truncateAndRegen(),
-    // T-408：伏笔销账（剧本页里那块）
-    foreshadows: foreshadowApi,
-    // T-403 / T-411 / T-415 / T-412 / T-413 的入口（配置页折叠区）
-    extras,
-    getCapabilities: () => ctx.capabilities,
-    getLast: () => review.getLastTurn(),
-    onTest: () => client.testConnection(settings().connection ?? {}),
-    onSave: () => refreshInjection(),
-    onGenerate: () => regenerateScript(),
-    onExtend: () => topUpStages({ force: true }),
+  // ---------- T-427 UI：界面要的那一份（读写都收在这里，界面不碰 store/settings 内部）----------
+  // 只读快照：面板每次重绘读一次；写入口：saveSettings / 各功能自己的 api
+  const uiApi = {
+    read: () => {
+      const state = store.get();
+      const stages = state.stages ?? [];
+      const active = stages.find((stage) => stage.id === state.activeStageId) ?? null;
+      const profile = profileApi.read();
+      return {
+        enabled: Boolean(settings().enabled),
+        version: settings().loadedVersion ?? '',
+        connection: { ...(settings().connection ?? {}) },
+        will: Number(settings().will ?? 80),
+        forceAffection: Boolean(settings().forceAffection),
+        speculation: settings().speculation !== false,
+        hardLimits: [...(settings().hardLimits ?? [])],
+        pacing: { ...(settings().pacing ?? {}) },
+        stage: {
+          index: active ? stages.findIndex((stage) => stage.id === active.id) + 1 : 0,
+          total: stages.length,
+          active,
+        },
+        stages,
+        activeStageId: state.activeStageId ?? null,
+        automationText: automationText(automationApi.get()),
+        injection: registry.getStatus?.() ?? { registered: false, length: 0, text: '' },
+        lastTurn: review.getLastTurn(),
+        queue: queueApi.list(),
+        foreshadows: foreshadowApi.list(),
+        speculation: settings().speculation !== false,
+        speculationStatus: speculateApi.status(),
+        cost: state.cost ?? { sessionTotal: 0, callCount: 0 },
+        tone: toneApi.get(),
+        toneKeys: [...TONE_KEYS],
+        toneLabels: { ...TONE_LABELS },
+        toneLocked: state.tone?.locked ?? [],
+        intensity: intensityApi.get(),
+        intensityHint: intensityHint(intensityApi.get()),
+        breakFilter: breakFilterApi.get(),
+        modelPreset: { ...modelPresetApi.get(), text: modelPresetApi.text() },
+        sanitize: sanitizeConfig(settings()),
+        presets: {
+          list: presets.list(),
+          status: presets.status(),
+          entries: presets.entries(),
+        },
+        cast: { list: castApi.get(), current: ctx.getCharacterData?.()?.name ?? '' },
+        profile,
+        profileFields: PROFILE_FIELDS.map((key) => ({ key, label: PROFILE_FIELD_LABELS[key] ?? key })),
+        world: { sources: [], selection: { ...(state.worldSelection ?? {}) } },
+        update: { version: updateApi.version(), path: updateApi.path() },
+        debug: buildDebugState({
+          store,
+          registry,
+          last: review.getLastTurn(),
+          capabilities: ctx.capabilities,
+          automation: automationApi.get(),
+          lastRequest: lastDirectorRequest,
+          breakStatus: {
+            mode: normalizeBreakFilter(settings().breakFilter).mode,
+            preset: presets.status(),
+            customLength: String(normalizeBreakFilter(settings().breakFilter).custom ?? '').trim().length,
+            injected: (breakFilter.text() ?? '').length,
+          },
+        }),
+      };
+    },
+    /** 界面上的小设置（意愿权重 / 强制爱 / 硬禁区…）：存 + 立刻刷注入 */
+    saveSettings: (patch) => {
+      store.saveSettings(patch);
+      refreshInjection();
+      return settings();
+    },
+    /** T-425：撤回上一步 AI 写入（一切可回退） */
+    undo: () => {
+      const ok = store.undo?.();
+      refreshInjection();
+      return ok;
+    },
+    /** T-420：手动查一次远程版本（查到新版本会走既有的刷新流程） */
+    checkUpdate: () => checkForUpdate({
+      ctx,
+      store,
+      manifestUrl: `${MANIFEST_URL}?t=${Date.now()}`,
+      sessionStore: globalThis.sessionStorage,
+    }),
     loadWorldSources: (force) => collectWorldSources(force),
-    // 世界书选择：chat 级（T-418 追加 —— 每个聊天记自己的世界书）
-    getWorldSelection: () => store.get().worldSelection ?? {},
     saveWorldSelection: (selection) => {
       store.update((draft) => ({ ...draft, worldSelection: { ...selection } }), { label: '勾选世界书' });
       return store.get().worldSelection;
     },
-    getWorldText: () => worldText(),
-    getEnabled: () => Boolean(settings().enabled),
+    onTest: () => client.testConnection(settings().connection ?? {}),
+    onGenerate: () => regenerateScript(),
+    onExtend: () => topUpStages({ force: true }),
     onToggleEnabled: (value) => setEnabled(value),
-    onOpenDebug: () => { openOnly('debug'); debug.show(); },
-  });
+    resetScript,
+  };
+
+  const panel = createMainPanel({ getApi: () => api });
 
   // 入口挂在酒馆扩展菜单（#extensionsMenu）。点开是主页面，不再自动弹配置
-  const unmountMenu = mountMenuEntry({ onOpen: () => { openOnly('panel'); panel.open(); } });
+  const unmountMenu = mountMenuEntry({ onOpen: () => { panel.open(); } });
 
-  // 控制台入口也走互斥，避免出现第二个面板
+  // 控制台入口（设置弹层现在在主面板里，进设置 = 开面板 + 切到设置层）
   const settingsPanelApi = {
-    ...settingsPanel,
-    show: () => { openOnly('settings'); return settingsPanel.show(); },
+    show: () => { panel.open(); panel.layer('settings'); return panel; },
+    hide: () => panel.hide(),
   };
 
   const api = {
     client, stages, outline, beats, lorebook, profile, profileApi,
-    registry, checkpoint, will, initiative, rules: rulesApi, speculate: speculateApi, review, debug,
+    registry, checkpoint, will, initiative, rules: rulesApi, speculate: speculateApi, review,
+    // T-427：界面那份读写口 + 调试面板（现在是主面板里的弹层）
+    ui: uiApi,
+    debug: {
+      show: () => { panel.open(); panel.layer('debug'); },
+      hide: () => panel.hide(),
+      state: () => uiApi.read().debug,
+    },
+    onOpenDebug: () => { panel.open(); panel.layer('debug'); },
     // T-426：合并判定（控制台可直接调，便于排查"三段各自解析到了没有"）
     judgeCombined: combinedJudge,
     // T-418：破限预设（只读酒馆预设）—— UI 未做，先用控制台
