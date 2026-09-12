@@ -634,4 +634,29 @@ await check('锁定的阶段：AI 不许重写走位，也不许改它的字段'
   assert.deepEqual(env.store.get().stages[0].beats, list[0].beats, '原走位要原样不动');
 });
 
+console.log('配置改动要立刻反映到「下轮将注入」（用户反馈 9）');
+
+await check('syncInjection 会同时刷新上一轮记录里的 nextInjection', async () => {
+  const env = makeEnv();
+  seed(env);
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'hold', reason: 'x' }) },
+    stages: env.stages, registry: env.registry, store: env.store,
+    getSettings: () => ({}),
+  });
+
+  await service.run({ userMessage: '嗯' });
+  const before = service.getLastTurn().nextInjection;
+  assert.ok(before.length > 0);
+
+  // 模拟"配置改了"：走位被改掉 → 重新同步注入
+  const activeId = env.store.get().activeStageId;
+  env.stages.update(activeId, { beats: ['改过的走位'] });
+  const after = service.syncInjection();
+
+  assert.ok(after.includes('改过的走位'), after);
+  assert.equal(service.getLastTurn().nextInjection, after, 'Debug 的「下轮将注入」要跟着变，不能等下一轮复盘');
+  assert.notEqual(service.getLastTurn().nextInjection, before);
+});
+
 console.log(`\n通过 ${passed} 项`);

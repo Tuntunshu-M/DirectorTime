@@ -35,37 +35,55 @@ export function normalizeTone(raw) {
 }
 
 /**
- * 拖动其中一条：定死这条，另两条按原比例分掉剩下的。
+ * 改其中一条：定死这条，其余**没锁的**按原比例分掉剩下的；**锁住的保持不动**。
  * @param {object} tone 当前占比
- * @param {'daily'|'crisis'|'intimate'} key 被拖的那条
- * @param {number} value 拖到的值（0~100，越界会被夹住）
+ * @param {'daily'|'crisis'|'intimate'} key 被改的那条
+ * @param {number} value 改到的值（0~100，越界夹住）
+ * @param {{ locked?: string[] }} options 锁住的线（用户反馈：锁一条，只让其余两条配平）
  */
-export function rebalanceTone(tone, key, value) {
+export function rebalanceTone(tone, key, value, { locked = [] } = {}) {
   if (!TONE_KEYS.includes(key)) return normalizeTone(tone);
 
   const current = normalizeTone(tone);
-  const target = clampPercent(value, current[key]);
+  // 连自己要改的这条也锁了 → 谁都不许动（总和本来就是 100）
+  if (locked.includes(key)) return current;
+
   const others = TONE_KEYS.filter((item) => item !== key);
-  const rest = 100 - target;
+  const lockedOthers = others.filter((item) => locked.includes(item));
+  const freeOthers = others.filter((item) => !locked.includes(item));
+
+  // 锁住的那几条先占住自己的份额，剩下的空间才是可动的
+  const lockedSum = lockedOthers.reduce((acc, item) => acc + current[item], 0);
+  const room = Math.max(0, 100 - lockedSum);
+  const target = Math.min(clampPercent(value, current[key]), room);
 
   const out = { ...current, [key]: target };
-  if (!rest) {
-    for (const other of others) out[other] = 0;
-    return out;
-  }
+  for (const item of lockedOthers) out[item] = current[item];
+  for (const item of freeOthers) out[item] = 0;
 
-  const total = others.reduce((acc, other) => acc + current[other], 0);
+  const rest = room - target;
+  if (rest <= 0 || !freeOthers.length) return out; // 锁满了 / 没得分的 → 就这样
+
+  const total = freeOthers.reduce((acc, item) => acc + current[item], 0);
   if (!total) {
-    // 另两条原本都是 0（比如从 100/0/0 拖下来）→ 平分，别让它们永远起不来
-    const half = Math.floor(rest / 2);
-    out[others[0]] = half;
-    out[others[1]] = rest - half;
+    // 可调的那几条原本都是 0（比如从 100/0/0 改下来）→ 平分，别让它们永远起不来
+    const each = Math.floor(rest / freeOthers.length);
+    freeOthers.forEach((item, index) => {
+      out[item] = index === freeOthers.length - 1 ? rest - each * (freeOthers.length - 1) : each;
+    });
     return out;
   }
 
-  const first = Math.round((rest * current[others[0]]) / total);
-  out[others[0]] = Math.min(rest, Math.max(0, first));
-  out[others[1]] = rest - out[others[0]]; // 余数给第二条，保证和恒为 100
+  let used = 0;
+  freeOthers.forEach((item, index) => {
+    if (index === freeOthers.length - 1) {
+      out[item] = Math.max(0, rest - used); // 余数给最后一条，保证和恒为 100
+      return;
+    }
+    const share = Math.round((rest * current[item]) / total);
+    out[item] = Math.min(rest, Math.max(0, share));
+    used += out[item];
+  });
   return out;
 }
 

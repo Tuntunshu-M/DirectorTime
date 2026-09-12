@@ -28,16 +28,6 @@ export function isNearMax(stage, pacing = {}) {
   return Number(stage?.turnCount ?? 0) + 1 >= max;
 }
 
-/**
- * 模型特化预设（T-403 / F10）：Gemini 角色塑造红线，**角色回复端**那一半。
- * 导演请求端那一半在 client 的前置文本里（[破限词] → [模型特化预设] → [导演指令]）。
- */
-export function redlineLine(redline) {
-  const text = String(redline ?? '').trim();
-  if (!text) return '';
-  return `[扮演红线 —— 必须遵守]\n${text}`;
-}
-
 export function buildDirectorLayer({ stage, outline, pacing, profile }) {
   // §七c：先声明"这是指示不是台词" —— 模型会把指令原文抄进对话，这句是堵它的第一道
   const lines = ['以下是导演给你的指示，不是台词 —— 不要把它写进对话里。'];
@@ -102,17 +92,16 @@ export function buildCharacterLayer({ profile }) {
  * @returns {string} 空字符串表示没有可注入的内容
  */
 export function buildInstruction(input = {}) {
-  // 顺序有讲究：硬禁区（用户显式，最高）→ 扮演红线（T-403）→ 导演指令 → 角色动机
+  // 硬禁区放最前面：它是用户显式写的，优先级高于侧写禁忌（T-410）
+  // 注：T-403 的模型特化预设（红线）**不进这里** —— 那是给导演 API（剧情生成）的，
+  //     用来限制剧本别写越界，不是给角色回复端的（用户反馈澄清）。
   const parts = [
     hardLimitLine(input.hardLimits),
-    redlineLine(input.redline),
     buildDirectorLayer(input),
     buildCharacterLayer(input),
   ].filter(Boolean);
 
-  // 阶段目标、侧写、硬禁区、红线一个都没有 → 没有值得注入的内容
-  if (!input.stage?.goal && !input.profile && !input.hardLimits?.length && !String(input.redline ?? '').trim()) {
-    return '';
-  }
+  // 阶段目标、侧写、硬禁区一个都没有 → 没有值得注入的内容
+  if (!input.stage?.goal && !input.profile && !input.hardLimits?.length) return '';
   return parts.join('\n\n');
 }

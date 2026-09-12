@@ -66,6 +66,9 @@ export function createMainPanel({
   let worldSources = null;
   let worldKeyword = '';
   let worldLoading = false;
+  // T-404：快照文本框的内容存在这里 —— 面板每次重绘都会重建 DOM，
+  // 只放在 textarea 里的话，点一下 ↑↓ 就没了（用户实测反馈：切出去就丢）
+  let snapshotDraft = '';
 
   function ensure() {
     if (el) return el;
@@ -158,11 +161,34 @@ export function createMainPanel({
         ${enabled ? `<button id="dt-panel-generate" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">${noStage ? '生成剧本' : '重新生成剧本'}</button>` : ''}
         ${enabled && !noStage ? '<button id="dt-panel-extend" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">重新续写</button>' : ''}
         <button id="dt-panel-debug" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">打开调试面板</button>
+        ${update ? '<button id="dt-panel-check" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">检查更新</button>' : ''}
         ${update ? '<button id="dt-panel-update" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">更新插件</button>' : ''}
       </div>
       <div id="dt-update-msg" style="margin-top:6px;opacity:.75"></div>
       ${pendingBlock}
     `;
+
+    // T-420 追加（用户反馈 13）：先真查有没有新版本，结果写在面板上（不是控制台）
+    body.querySelector('#dt-panel-check')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      const msg = body.querySelector('#dt-update-msg');
+      button.disabled = true;
+      button.textContent = '查询中…';
+      if (msg) msg.textContent = '正在对比本地与远程版本…';
+      try {
+        const result = await update.check?.();
+        if (msg) msg.textContent = result?.message ?? '查不到结果';
+        if (result?.ok && result.hasUpdate) {
+          const updateButton = body.querySelector('#dt-panel-update');
+          if (updateButton) updateButton.textContent = `更新到 v${result.remote}`;
+        }
+      } catch (error) {
+        if (msg) msg.textContent = `检查更新失败：${error?.message ?? error}`;
+      } finally {
+        button.disabled = false;
+        button.textContent = '检查更新';
+      }
+    });
 
     // T-420：一键更新 —— 成功就自动刷新；失败**不刷新**，给一句能照做的话
     body.querySelector('#dt-panel-update')?.addEventListener('click', async (event) => {
@@ -249,6 +275,9 @@ export function createMainPanel({
     const keyword = worldKeyword.trim().toLowerCase();
     const statText = () => `已选 ${Object.keys(getWorldSelection?.() ?? {}).length} 条 · 上限 ${limit} 条`;
 
+    // 当前可见（搜索过滤后）的条目 key —— 全选/全不选只作用于看得见的这些
+    const visibleKeys = [];
+
     const list = (worldSources ?? []).map((source) => {
       const books = (source.books ?? []).map((book) => {
         const all = book.entries ?? [];
@@ -257,12 +286,18 @@ export function createMainPanel({
           || entry.name.toLowerCase().includes(keyword)
           || entry.content.toLowerCase().includes(keyword));
         if (!entries.length && !book.error) return '';
-        const head = `<label style="display:block;margin:6px 0 2px;opacity:.75"><input type="checkbox" data-world-book="${escapeHtml(book.name)}" ${all.length && all.every((entry) => selection[entry.key]) ? 'checked' : ''}> ▸ ${escapeHtml(book.name)}${book.error ? `（${escapeHtml(book.error)}）` : `　${all.length} 条`}</label>`;
+        for (const entry of entries) visibleKeys.push(entry.key);
+
+        // 书名做成可折叠的标题（用户反馈 2：条目太多，一个个翻太累）
+        // 勾选框在 summary 里 —— stopPropagation，免得点复选框连带折叠
+        const head = `<summary style="cursor:pointer;opacity:.8">
+            <label style="cursor:pointer"><input type="checkbox" data-world-book="${escapeHtml(book.name)}" ${all.length && all.every((entry) => selection[entry.key]) ? 'checked' : ''}> ${escapeHtml(book.name)}${book.error ? `（${escapeHtml(book.error)}）` : `　${all.length} 条`}</label>
+          </summary>`;
         const items = entries.map((entry) => `
           <label style="display:block;margin-left:14px">
             <input type="checkbox" data-world-key="${escapeHtml(entry.key)}" ${selection[entry.key] ? 'checked' : ''}> ${escapeHtml(entry.name)}${entry.enabled ? '' : '<span style="opacity:.6">（禁用）</span>'}${entry.constant ? '<span style="opacity:.6">（常驻）</span>' : ''}
           </label>`).join('');
-        return head + items;
+        return `<details style="margin:4px 0">${head}${items || '<div style="opacity:.6;margin-left:14px">（没有条目）</div>'}</details>`;
       }).join('');
       if (!books) return '';
       return `<div style="margin-bottom:6px"><div style="opacity:.6">${escapeHtml(source.label)}</div>${books}</div>`;
@@ -277,6 +312,8 @@ export function createMainPanel({
     body.innerHTML = `
       <div style="display:flex;gap:6px;margin-bottom:6px">
         <input id="dt-world-search" style="flex:1;box-sizing:border-box;padding:4px 6px;font:inherit" placeholder="搜索书名或条目" value="${escapeHtml(worldKeyword)}">
+        <button id="dt-world-select-all" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">全选</button>
+        <button id="dt-world-select-none" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">全不选</button>
         <button id="dt-world-reload" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">刷新</button>
       </div>
       <div id="dt-world-stat" style="opacity:.7;margin-bottom:6px">${statText()}</div>
@@ -293,6 +330,19 @@ export function createMainPanel({
     });
     body.querySelector('#dt-world-reload')?.addEventListener('click', () => loadWorld(true));
 
+    // 全选 / 全不选（只作用于当前搜出来的这些，免得误勾一堆没看见的）
+    const bulk = (checked) => {
+      const next = { ...(getWorldSelection?.() ?? {}) };
+      for (const key of visibleKeys) {
+        if (checked) next[key] = true;
+        else delete next[key];
+      }
+      saveWorldSelection?.(next);
+      render();
+    };
+    body.querySelector('#dt-world-select-all')?.addEventListener('click', () => bulk(true));
+    body.querySelector('#dt-world-select-none')?.addEventListener('click', () => bulk(false));
+
     body.querySelectorAll('input[data-world-key]').forEach((box) => {
       box.addEventListener('change', () => {
         const next = { ...(getWorldSelection?.() ?? {}) };
@@ -307,6 +357,8 @@ export function createMainPanel({
 
     // 整书勾选 / 取消（项目书 §F1「树形勾选整书或单条目」）
     body.querySelectorAll('input[data-world-book]').forEach((bookBox) => {
+      // 复选框在 <summary> 里：点它不应该顺带折叠/展开
+      bookBox.addEventListener('click', (event) => event.stopPropagation());
       bookBox.addEventListener('change', () => {
         const target = bookBox.dataset.worldBook;
         const next = { ...(getWorldSelection?.() ?? {}) };
@@ -401,12 +453,15 @@ export function createMainPanel({
         <button id="dt-edit-add" type="button" style="${EDIT_BTN}">在末尾加一阶段</button>
         <button id="dt-edit-truncate" type="button" style="${EDIT_BTN}">从当前阶段往后截断重生成</button>
       </div>
-      <details style="margin-top:10px"><summary>快照（导出 / 导入 / 回滚）</summary>
+      <details style="margin-top:10px"><summary>快照（下载 / 导入 / 回滚）</summary>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0">
+          <button id="dt-edit-download" type="button" style="${EDIT_BTN}">下载快照文件</button>
+          <button id="dt-edit-pickfile" type="button" style="${EDIT_BTN}">从文件导入</button>
           <button id="dt-edit-export" type="button" style="${EDIT_BTN}">导出到下面</button>
-          <button id="dt-edit-import" type="button" style="${EDIT_BTN}">从下面导入（覆盖当前剧本）</button>
+          <button id="dt-edit-import" type="button" style="${EDIT_BTN}">用下面的文本导入（覆盖当前剧本）</button>
+          <input id="dt-edit-file" type="file" accept=".json,application/json" style="display:none">
         </div>
-        <textarea id="dt-edit-snapshot" rows="6" style="${EDIT_FIELD}" placeholder="快照 JSON"></textarea>
+        <textarea id="dt-edit-snapshot" rows="6" style="${EDIT_FIELD}" placeholder="快照 JSON（在这个框里，切页面 / 重绘都不会丢）">${escapeHtml(snapshotDraft)}</textarea>
         <div id="dt-edit-msg" style="opacity:.75">—</div>
       </details>
       <details style="margin-top:8px"><summary>伏笔（待回收 ${openFs.length}）</summary>
@@ -468,14 +523,60 @@ export function createMainPanel({
     });
     body.querySelector('#dt-edit-add')?.addEventListener('click', () => { editor?.addStage?.(stages.length - 1); render(); });
 
+    // 文本框里的内容随时同步到内存草稿（重绘不丢）
+    const snapshotArea = body.querySelector('#dt-edit-snapshot');
+    snapshotArea?.addEventListener('input', () => { snapshotDraft = snapshotArea.value; });
+
     body.querySelector('#dt-edit-export')?.addEventListener('click', () => {
-      const area = body.querySelector('#dt-edit-snapshot');
-      if (area) area.value = editor?.exportJson?.() ?? '';
-      msg('已导出（复制走即可备份）');
+      snapshotDraft = editor?.exportJson?.() ?? '';
+      if (snapshotArea) snapshotArea.value = snapshotDraft;
+      msg(`已导出 ${snapshotDraft.length} 字（也可以点「下载快照文件」存成文件）`);
     });
+
+    /** 真下载一份 .json —— 只在文本框里放一份，用户复制走太容易丢 */
+    body.querySelector('#dt-edit-download')?.addEventListener('click', () => {
+      const json = editor?.exportJson?.() ?? '';
+      snapshotDraft = json;
+      if (snapshotArea) snapshotArea.value = json;
+      try {
+        const title = (store?.get?.().outline?.title ?? '剧本').replace(/[\\/:*?"<>|]/g, '_');
+        const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+        const blob = new Blob([json], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `导演时间-${title}-${stamp}.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        msg(`已下载快照：${link.download}`);
+      } catch (error) {
+        msg(`下载失败（${error?.message ?? error}），可以点「导出到下面」手动复制`);
+      }
+    });
+
+    body.querySelector('#dt-edit-pickfile')?.addEventListener('click', () => {
+      body.querySelector('#dt-edit-file')?.click();
+    });
+    body.querySelector('#dt-edit-file')?.addEventListener('change', async (event) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        snapshotDraft = text;
+        const result = editor?.importJson?.(text);
+        if (result?.ok) { render(); return; }
+        msg(`导入失败：${result?.error ?? '未知'}`);
+      } catch (error) {
+        msg(`读文件失败：${error?.message ?? error}`);
+      }
+    });
+
     body.querySelector('#dt-edit-import')?.addEventListener('click', () => {
-      const area = body.querySelector('#dt-edit-snapshot');
-      const result = editor?.importJson?.(area?.value ?? '');
+      const text = snapshotArea?.value ?? snapshotDraft;
+      if (!String(text).trim()) { msg('文本框是空的：先点「导出到下面」或「下载快照文件」，或者粘贴一份 JSON'); return; }
+      const result = editor?.importJson?.(text);
       if (result?.ok) { render(); return; }
       msg(`导入失败：${result?.error ?? '未知'}`);
     });

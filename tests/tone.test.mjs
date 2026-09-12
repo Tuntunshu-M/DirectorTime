@@ -116,4 +116,50 @@ await check('toneText 只列开着的线', () => {
   assert.ok(toneText({ daily: 34, crisis: 33, intimate: 33 }).includes('日常 34%'));
 });
 
+console.log('锁住某条线（用户反馈 3：锁了只配平其余两条）');
+
+await check('锁住一条：改另一条时，锁住的那条一动不动', () => {
+  const before = { daily: 70, crisis: 30, intimate: 0 };
+  const next = rebalanceTone(before, 'daily', 50, { locked: ['crisis'] });
+  assert.equal(next.crisis, 30, '锁住的危机不能动');
+  assert.equal(next.daily, 50);
+  assert.equal(next.intimate, 20, '剩下的全给没锁的那条');
+  assert.equal(next.daily + next.crisis + next.intimate, 100);
+});
+
+await check('锁住两条：改第三条也不会破坏"和恒为 100"', () => {
+  const before = { daily: 60, crisis: 40, intimate: 0 };
+  const next = rebalanceTone(before, 'intimate', 10, { locked: ['daily', 'crisis'] });
+  assert.equal(next.daily + next.crisis + next.intimate, 100, '和必须还是 100');
+  assert.equal(next.daily, 60, '锁住的一动不动');
+  assert.equal(next.crisis, 40, '锁住的一动不动');
+  assert.equal(next.intimate, 0, '锁住的 60+40 已经占满，没空间留给第三条');
+});
+
+await check('三条全锁 → 谁都不动（总和本来就是 100）', () => {
+  const before = { daily: 50, crisis: 30, intimate: 20 };
+  const next = rebalanceTone(before, 'daily', 40, { locked: ['daily', 'crisis', 'intimate'] });
+  assert.deepEqual(next, before);
+  assert.equal(next.daily + next.crisis + next.intimate, 100);
+});
+
+await check('把自己也锁了 → 改它也不动', () => {
+  const before = { daily: 50, crisis: 30, intimate: 20 };
+  assert.deepEqual(rebalanceTone(before, 'daily', 10, { locked: ['daily'] }), before);
+});
+
+await check('锁住的那条占太多时：被改的这条会被夹住，不让总和溢出', () => {
+  const next = rebalanceTone({ daily: 80, crisis: 20, intimate: 0 }, 'daily', 100, { locked: ['crisis'] });
+  assert.equal(next.crisis, 20);
+  assert.equal(next.daily, 80, '100 里只能给 daily 留 80');
+  assert.equal(next.daily + next.crisis + next.intimate, 100);
+});
+
+await check('不传 locked 时行为与以前完全一致（按原比例分剩下的）', () => {
+  assert.deepEqual(
+    rebalanceTone({ daily: 70, crisis: 30, intimate: 0 }, 'daily', 50),
+    { daily: 50, crisis: 50, intimate: 0 }
+  );
+});
+
 console.log(`\n通过 ${passed} 项`);

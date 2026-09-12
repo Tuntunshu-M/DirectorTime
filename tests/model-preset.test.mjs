@@ -5,7 +5,7 @@ import {
   CLAUDE_ACTIVE, GEMINI_REDLINE, BUILTIN_PRESETS, PRESET_KINDS,
   normalizeModelPreset, modelPresetKind, modelPresetText,
 } from '../src/core/model-preset.js';
-import { buildInstruction, redlineLine } from '../src/inject/instruction.js';
+import { buildInstruction } from '../src/inject/instruction.js';
 
 let passed = 0;
 function check(name, fn) {
@@ -33,7 +33,6 @@ check('默认关闭：一个字都不注入', () => {
   assert.equal(modelPresetKind(undefined), 'off');
   assert.equal(modelPresetText(undefined), '');
   assert.equal(modelPresetText({ kind: 'off', custom: { claude: '写了也不算' } }), '');
-  assert.equal(redlineLine(''), '');
 });
 
 check('三选一：off / claude / gemini，认不出的值一律回落 off', () => {
@@ -79,22 +78,22 @@ check('归一化容错：脏数据不炸', () => {
   assert.deepEqual(normalizeModelPreset({ kind: 'claude', custom: 123 }), { kind: 'claude', custom: { claude: '', gemini: '' } });
 });
 
-console.log('T-403 双端注入 · 角色回复端');
+console.log('T-403 注入位置（澄清：这套守则只给导演 API）');
 
-check('角色端：红线进注入，且排在硬禁区之后、导演指令之前', () => {
-  const text = buildInstruction({ stage, redline: GEMINI_REDLINE, hardLimits: ['自杀'] });
-  const atLimit = text.indexOf('自杀');
-  const atRedline = text.indexOf('[扮演红线');
-  const atDirector = text.indexOf('[导演指令]');
-  assert.ok(atLimit >= 0 && atRedline > atLimit, '硬禁区在红线之前（用户显式第一）');
-  assert.ok(atDirector > atRedline, '红线在导演指令之前');
-  assert.ok(text.includes(GEMINI_REDLINE));
+check('角色回复端**不该**出现红线 —— 它是给剧情生成的', () => {
+  const text = buildInstruction({ stage, hardLimits: ['自杀'] });
+  assert.equal(text.includes('扮演红线'), false, '角色回复端不许出现红线');
+  assert.equal(text.includes(GEMINI_REDLINE), false);
+  assert.equal(text.includes(CLAUDE_ACTIVE), false);
 });
 
-check('只有红线时也要注入（别被"没有阶段就跳过"的逻辑吃掉）', () => {
-  const text = buildInstruction({ redline: CLAUDE_ACTIVE });
-  assert.ok(text.includes('[扮演红线'));
-  assert.equal(buildInstruction({}), '', '什么都没有才是空');
+check('硬禁区仍然双端（T-410 才是双端注入那条）', () => {
+  const text = buildInstruction({ stage, hardLimits: ['自杀'] });
+  assert.ok(text.includes('自杀'), '硬禁区要进角色回复端');
+});
+
+check('没有阶段就没有角色端指令（红线不该单独撑起一条注入）', () => {
+  assert.equal(buildInstruction({}), '');
 });
 
 console.log(`\n通过 ${passed} 项`);

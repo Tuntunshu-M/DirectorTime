@@ -39,8 +39,6 @@ export function createReviewService({
   initiative,
   speculate,
   getProfile,
-  // T-403：模型特化预设文本（红线，角色回复端用；关着时是空串）
-  getRedline,
   // T-412：当前要生成的角色（多人卡里用来判断"这场戏是不是他的"）
   getSpeaker,
   // T-414：L1 档的待审核队列
@@ -78,11 +76,12 @@ export function createReviewService({
         pacing,
         // T-410：硬禁区每轮都要带上（角色回复端的约束）
         hardLimits: settings.hardLimits ?? [],
-        // T-403：模型特化预设（红线）的角色回复端那一半
-        redline: getRedline?.() ?? '',
       })
       : '';
     registry?.register?.(text);
+    // 配置一改（红线 / 破限 / 硬禁区 / 主角…）就重算一次，Debug 的「下轮将注入」要立刻跟上，
+    // 不能等下一轮复盘才更新（用户实测反馈：注入全文变了，"下轮将注入"还是旧的）
+    if (lastTurn) lastTurn = { ...lastTurn, nextInjection: text };
     return text;
   }
 

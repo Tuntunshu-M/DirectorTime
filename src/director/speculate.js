@@ -8,7 +8,7 @@
 //   2. 命中判定必须是本地纯函数 —— 为了判断"猜没猜中"再花一次 API 就本末倒置了
 
 import { buildMessages } from '../llm/prompts.js';
-import { parseDirectorResponse } from '../llm/schemas.js';
+import { parseDirectorResponse, normalizeSpeculationKeywords } from '../llm/schemas.js';
 
 /** 相似度阈值：到这个数才算猜中 */
 export const SIMILARITY_HIT = 0.5;
@@ -69,10 +69,26 @@ export function similarity(a, b) {
   return Math.max(dice(x, y), byChar);
 }
 
-/** 这条实际输入有没有落在投机预测上 */
+/**
+ * 这条实际输入有没有落在投机预测上。
+ *
+ * 预测是**意图级**的（"user 会拒绝并转移话题"），拿它跟原话做字符串相似度几乎永远不中，
+ * 所以命中判定有两条路：
+ *   1. 实际输入里出现了预测给的 keywords（主力）
+ *   2. 跟 guess 本身够像（只对"猜得比较具体"的情况有效）
+ */
 export function isHit(speculation, userMessage) {
-  if (!speculation?.guess) return false;
-  return similarity(speculation.guess, userMessage) >= SIMILARITY_HIT;
+  if (!speculation) return false;
+  const message = String(userMessage ?? '');
+  if (!message.trim()) return false;
+
+  for (const word of speculation.keywords ?? []) {
+    const keyword = String(word ?? '').trim();
+    if (keyword && message.includes(keyword)) return true;
+  }
+
+  if (!speculation.guess) return false;
+  return similarity(speculation.guess, message) >= SIMILARITY_HIT;
 }
 
 /** 命中率（Debug 用） */
@@ -109,7 +125,13 @@ export function createSpeculationService({ client, getConnection, store, now = D
     const data = parseDirectorResponse(raw, 'speculation');
     if (!data?.injection) return null; // 解析不了就当没猜 —— 静默
 
-    const record = { guess: data.guess ?? '', injection: data.injection, at: now(), stageId: stage.id };
+    const record = {
+      guess: data.guess ?? '',
+      keywords: normalizeSpeculationKeywords(data.keywords),
+      injection: data.injection,
+      at: now(),
+      stageId: stage.id,
+    };
     store?.update?.((draft) => ({
       ...draft,
       runtime: { ...draft.runtime, speculation: record },

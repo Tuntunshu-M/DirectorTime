@@ -26,7 +26,9 @@ import {
   BUILTIN_PRESETS, PRESET_LABELS, PRESET_KINDS, normalizeModelPreset, modelPresetText,
 } from './core/model-preset.js';
 import { createEditorService } from './director/editor.js';
-import { extensionFolderFromUrl, createExtensionUpdater, checkForUpdate } from './core/update-check.js';
+import {
+  extensionFolderFromUrl, createExtensionUpdater, createUpdateChecker, checkForUpdate,
+} from './core/update-check.js';
 import { toneText as coreToneText, rebalanceTone, normalizeTone, TONE_KEYS } from './core/tone.js';
 import { createDefaultRules } from './core/default-state.js';
 import { exportCopy, previewCopy, applyCopy } from './core/portable.js';
@@ -156,8 +158,6 @@ export function bootstrap({ ctx, store } = {}) {
     topUp: topUpStages,
     queue,
     getProfile: () => profile.read(),
-    // T-403：模型特化预设（红线）—— 角色回复端那一半
-    getRedline: () => redlineText(),
     // T-412 多人卡：当前生成者是谁
     getSpeaker: () => ({
       id: ctx.getCharacterId?.() ?? '',
@@ -168,6 +168,17 @@ export function bootstrap({ ctx, store } = {}) {
     store,
     getSettings: settings,
   });
+  /**
+   * 配置一改就重算注入，并把 Debug 的「下轮将注入」一起刷新。
+   * （用户反馈：改了红线/破限后「注入全文」变了，但「下轮将注入」还是旧的 —— 要等下一轮复盘才更新）
+   */
+  function refreshInjection() {
+    const text = review.syncInjection();
+    const turn = review.getLastTurn();
+    if (turn) debug.setLast({ ...turn, nextInjection: text });
+    return text;
+  }
+
   const debug = createDebugPanel({
     store,
     registry,
@@ -559,6 +570,8 @@ export function bootstrap({ ctx, store } = {}) {
     registry.clear();
     // 换了聊天，上一轮的投机预测作废（否则会拿别的聊天的预测去猜）
     store.update((draft) => ({ ...draft, runtime: { ...draft.runtime, speculation: null } }), { track: false });
+    // 界面要跟着换到这一聊天的剧本，否则会停在上一份（看起来像"剧本丢了"）
+    try { panel?.render?.(); debug?.render?.(); } catch (error) { console.warn('[导演时间] 切聊天后刷新界面失败', error); }
   });
 
   ctx.on?.(MESSAGE_RECEIVED, async () => {
@@ -685,10 +698,14 @@ export function bootstrap({ ctx, store } = {}) {
     remember: (candidate) => store.saveSettings({ updatePath: candidate }),
     delayMs: 400, // 面板上要来得及显示"更新完成"
   });
+  // T-420 追加（用户反馈 13）：要**真去查**有没有新版本，不能只报"更新成功"
+  const checker = createUpdateChecker({ manifestUrl: MANIFEST_URL });
   const updateApi = {
     folder: () => updater.folder,
     path: () => settings().updatePath ?? null,
     version: () => settings().loadedVersion ?? '',
+    /** 比本地与远程版本：{ ok, local, remote, hasUpdate, message } */
+    check: () => checker.check(),
     apply: () => updater.apply(),
   };
 
@@ -710,7 +727,7 @@ export function bootstrap({ ctx, store } = {}) {
   // ---------- T-404 剧本编辑器 ----------
   const editorApi = createEditorService({
     store,
-    onChanged: () => review.syncInjection(),
+    onChanged: () => refreshInjection(),
   });
   /** 从当前阶段往后截断，然后立刻续写一批新的（项目书 F1「截断重生成」） */
   async function truncateAndRegen() {
@@ -735,7 +752,7 @@ export function bootstrap({ ctx, store } = {}) {
       const next = { kind: patch.kind ?? current.kind, custom: { ...current.custom } };
       if (typeof patch.custom === 'string') next.custom[next.kind] = patch.custom;
       store.saveSettings({ modelPreset: normalizeModelPreset(next) });
-      review.syncInjection(); // 改完立刻重算注入（角色回复端那半）
+      refreshInjection(); // 改完立刻重算注入，并刷新 Debug 的「下轮将注入」
       return normalizeModelPreset(settings().modelPreset);
     },
     reset: () => modelPresetApi.set({ custom: '' }),
@@ -745,8 +762,9 @@ export function bootstrap({ ctx, store } = {}) {
   const toneApi = {
     get: () => normalizeTone(store.get().tone),
     keys: () => [...TONE_KEYS],
-    set: (key, value) => {
-      const next = rebalanceTone(store.get().tone, key, value);
+    /** locked：锁住的线不参与配平（T-415 用户反馈 3） */
+    set: (key, value, locked = []) => {
+      const next = rebalanceTone(store.get().tone, key, value, { locked });
       store.update((draft) => ({ ...draft, tone: next }), { label: '调整剧情占比' });
       return next;
     },
@@ -756,7 +774,7 @@ export function bootstrap({ ctx, store } = {}) {
     get: () => normalizeProtagonists(settings().protagonists),
     set: (list) => {
       store.saveSettings({ protagonists: normalizeProtagonists(list) });
-      review.syncInjection(); // 改完主角立刻重算注入（不是他的戏就别注入）
+      refreshInjection(); // 改完主角立刻重算注入（不是他的戏就别注入）
       return normalizeProtagonists(settings().protagonists);
     },
   };
@@ -796,7 +814,7 @@ export function bootstrap({ ctx, store } = {}) {
       }
 
       const result = applyCopy(copy, { store, writeProfile: (next) => profile.save(next) });
-      if (result.ok) review.syncInjection();
+      if (result.ok) refreshInjection();
       return result;
     },
   };
@@ -818,7 +836,7 @@ export function bootstrap({ ctx, store } = {}) {
     automation: automationApi,
     extras,
     onTest: () => client.testConnection(settings().connection ?? {}),
-    onSave: () => review.syncInjection(),
+    onSave: () => refreshInjection(),
   });
 
   const panel = createMainPanel({
@@ -842,7 +860,7 @@ export function bootstrap({ ctx, store } = {}) {
     getCapabilities: () => ctx.capabilities,
     getLast: () => review.getLastTurn(),
     onTest: () => client.testConnection(settings().connection ?? {}),
-    onSave: () => review.syncInjection(),
+    onSave: () => refreshInjection(),
     onGenerate: () => regenerateScript(),
     onExtend: () => topUpStages({ force: true }),
     loadWorldSources: (force) => collectWorldSources(force),

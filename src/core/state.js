@@ -28,6 +28,14 @@ export function assertInvariants(state) {
 export function createStateStore(ctx, moduleName = 'director_time') {
   let state = null;
   let settings = null;
+  /**
+   * 已经"绑定"过状态的聊天键。
+   * 为什么要它：boot 有可能早于聊天就绪（app_ready / 2 秒兜底都可能先跑），
+   * 那时 getChatState() 还是空的 → 读出来是默认状态；如果就这么写回去，
+   * **整份剧本会被默认状态覆盖**（实测报过："重新进入聊天后剧本全丢"）。
+   * 所以规则是：写入前必须已绑定当前聊天；聊天键一变（或还没绑）就先按新聊天重读一次。
+   */
+  let boundChatKey = null;
 
   // ---------- 全局设置（extensionSettings）----------
   function getSettings() {
@@ -46,19 +54,34 @@ export function createStateStore(ctx, moduleName = 'director_time') {
   }
 
   // ---------- 聊天级状态（chatMetadata）----------
+  const chatKey = () => ctx.getCurrentChatKey?.() ?? null;
+
   function load() {
     const chatState = ctx.getChatState();
     state = migrate(chatState?.[moduleName]);
+    boundChatKey = chatKey();
     return state;
   }
 
   function get() {
-    return state ?? load();
+    // 聊天换了、或还没绑定这个聊天 → 先重读，别拿上一个聊天的状态（或默认状态）当本聊天的
+    const key = chatKey();
+    if (state === null || (key && key !== boundChatKey)) load();
+    return state;
   }
 
   function save() {
     const chatState = ctx.getChatState();
     if (!chatState) return false;
+
+    // 保险丝：还没绑定当前聊天的状态，绝不允许写回去（写了就是拿默认状态覆盖存档）
+    const key = chatKey();
+    if (key && key !== boundChatKey) {
+      console.warn('[导演时间] 当前聊天的状态还没读出来就有人要写，先重读再说（防止覆盖存档）');
+      load();
+      return false;
+    }
+
     chatState[moduleName] = state;
     ctx.saveChatState?.();
     return true;

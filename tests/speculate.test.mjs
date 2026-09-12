@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   similarity, normalizeLine, isHit, hitRate, createSpeculationService, SIMILARITY_HIT,
 } from '../src/director/speculate.js';
+import { normalizeSpeculationKeywords } from '../src/llm/schemas.js';
 import { buildDebugState } from '../src/ui/debug.js';
 import { createReviewService } from '../src/director/review.js';
 import { createStateStore } from '../src/core/state.js';
@@ -198,6 +199,46 @@ await check('没开投机 / 没有预测时，一切照旧（不影响既有流�
   const r = await review.run({ userMessage: '我不想去' });
   assert.ok(r.injected.includes('知道想不想去'));
   assert.equal(review.getLastTurn().speculation, null);
+});
+
+console.log('投机改成意图级（用户反馈 7：预测原话永远猜不中）');
+
+await check('预测意图 + 关键词：命中判定主要看关键词', () => {
+  const record = { guess: 'user 会拒绝并转移话题', keywords: ['算了', '不聊这个'], injection: 'x' };
+  assert.equal(isHit(record, '算了，别说这个了'), true, '出现关键词就算命中');
+  assert.equal(isHit(record, '不聊这个吧'), true);
+  assert.equal(isHit(record, '好啊，我们去吧'), false, '无关的话不算命中');
+});
+
+await check('没有关键词时退化为原来的相似度判定（老数据仍能用）', () => {
+  assert.equal(isHit({ guess: '好啊那就去吧', injection: 'x' }, '好，那就去吧'), true);
+  assert.equal(isHit({ guess: '好啊那就去吧', injection: 'x' }, '我偏不去'), false);
+});
+
+await check('空输入 / 空预测不算命中', () => {
+  assert.equal(isHit({ guess: 'user 会靠近', keywords: ['走近'] }, ''), false);
+  assert.equal(isHit(null, '随便说点什么'), false);
+  assert.equal(isHit({ guess: '', keywords: [], injection: 'x' }, '随便'), false);
+});
+
+await check('关键词会洗净去重、最多 6 个', () => {
+  const cleaned = normalizeSpeculationKeywords([' 算了 ', '算了', '', '不聊这个', 1, '走']);
+  assert.deepEqual(cleaned, ['算了', '不聊这个', '1', '走']);
+  assert.equal(normalizeSpeculationKeywords('不是数组').length, 0);
+});
+
+await check('服务把模型给的关键词存进投机记录', async () => {
+  const env = makeEnv();
+  const service = createSpeculationService({
+    client: {
+      request: async () => '{"guess":"user 会追问","keywords":["为什么","说清楚"],"injection":"继续逼问"}',
+    },
+    getConnection: () => ({}),
+    store: env.store,
+  });
+  const result = await service.guess({ stage: env.stages.getActive(), userMessage: '嗯', charMessage: 'x' });
+  assert.deepEqual(result.keywords, ['为什么', '说清楚']);
+  assert.deepEqual(env.store.get().runtime.speculation.keywords, ['为什么', '说清楚']);
 });
 
 console.log(`\n通过 ${passed} 项`);

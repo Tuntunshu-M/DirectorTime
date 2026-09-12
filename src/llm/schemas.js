@@ -113,7 +113,20 @@ export function isValidInitiative(data) {
 export function isValidSpeculation(data) {
   if (!data || typeof data !== 'object') return false;
   if (typeof data.guess !== 'string') return false;
+  // keywords 可选：意图级预测要配"可能出现的词"，命中判定才不会永远失手
   return typeof data.injection === 'string' && data.injection.trim().length > 0;
+}
+
+/** 投机预测里的关键词（洗净、去空、去重，最多 6 个） */
+export function normalizeSpeculationKeywords(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const item of list) {
+    const word = String(item ?? '').trim();
+    if (word && !out.includes(word)) out.push(word);
+    if (out.length >= 6) break;
+  }
+  return out;
 }
 
 export function isValidJudgement(data) {

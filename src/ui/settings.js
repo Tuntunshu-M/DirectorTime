@@ -14,6 +14,12 @@ import { TONE_KEYS, TONE_LABELS } from '../core/tone.js';
 
 const BTN = 'font:inherit;padding:3px 9px;cursor:pointer';
 
+/**
+ * 剧情占比里被"锁住"的线（配平时不动它们）。
+ * 只存在内存里：它是临时手感，不是配置 —— 重开页面回到都不锁。
+ */
+const toneLockedKeys = new Set();
+
 const PANEL_STYLE = `
   position:fixed; top:60px; left:20px; width:340px; max-width:calc(100vw - 40px);
   max-height:calc(100vh - 80px); max-height:calc(100dvh - 80px);
@@ -34,8 +40,23 @@ function escapeAttr(text) {
   ));
 }
 
-/** 人物侧写折叠区（T-402 §九：放进设置面板的折叠区，不单独开视图） */
-function profileSection(profile) {
+/** 子块分隔线（同一个折叠区里放两组相关设置时用） */
+const SUBSECTION = 'margin-top:10px;border-top:1px dashed var(--dt-rule,rgba(43,39,33,.28));padding-top:8px';
+
+/** 主角（多人卡）—— 和人物侧写放同一个折叠区（用户反馈：这两个是一回事） */
+function castBlock(cast) {
+  const names = (cast?.get?.() ?? []).map((item) => item.name).filter(Boolean).join('、');
+  return `
+    <div style="${SUBSECTION}">
+      <div style="opacity:.6">主角（多人卡）</div>
+      <input id="dt-cast-names" style="${fieldStyle()}" placeholder="用、或逗号分隔；留空 = 单卡老行为" value="${escapeAttr(names)}">
+      <button id="dt-cast-save" type="button" style="${BTN}">保存主角</button>
+      <div id="dt-cast-msg" style="margin-top:6px;opacity:.75">只在这些主角说话时注入；不是他的戏不注入</div>
+    </div>`;
+}
+
+/** 人物侧写 + 主角（同一个区，T-402 / T-412） */
+function profileSection(profile, cast) {
   const data = profile.read?.() ?? {};
   const fields = data.fields ?? {};
   const locked = data.locked ?? {};
@@ -48,7 +69,7 @@ function profileSection(profile) {
 
   return `
     <details style="margin-top:12px">
-      <summary style="cursor:pointer">人物侧写（${escapeAttr(data.charName || '当前角色')}）</summary>
+      <summary style="cursor:pointer">人物与主角（${escapeAttr(data.charName || '当前角色')}）</summary>
       <div style="font-size:11px;opacity:.7;margin-top:4px">手改过的字段会锁定，AI 不再覆盖（存在角色卡上，跨聊天复用）</div>
       ${rows}
       <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
@@ -56,6 +77,7 @@ function profileSection(profile) {
         <button id="dt-profile-unlock-all" type="button" style="font:inherit;padding:5px 12px">全部解锁</button>
       </div>
       <div id="dt-profile-msg" style="margin-top:6px;opacity:.75">—</div>
+      ${cast ? castBlock(cast) : ''}
     </details>`;
 }
 
@@ -68,11 +90,15 @@ function presetOptions(list, current) {
     .join('');
 }
 
-/** T-418：破限预设折叠区。列表读不到就显示"无可用预设"，不报错、不伪造 */
-function presetSection(presets) {
+/**
+ * 破限预设 + 破限词模式（T-418 / T-411）—— 合成一个区（用户反馈：这两件事是一回事）
+ * 预设只读酒馆的；模式决定它到底用不用；再加一个"看预设里到底有什么"的预览。
+ */
+function presetSection(presets, breakFilter) {
   const list = presets?.list?.() ?? [];
   const status = presets?.status?.() ?? { name: '', length: 0 };
   const entries = status.name ? (presets?.entries?.() ?? []) : [];
+  const filter = breakFilter?.get?.() ?? { mode: 'off', custom: '' };
   const message = status.name
     ? `当前：${status.name}（${status.active ? `${status.length} 字` : '读不到内容，未生效'}）`
     : '未选：不注入任何破限内容';
@@ -85,9 +111,30 @@ function presetSection(presets) {
           <label style="display:block;margin:2px 0"><input type="checkbox" data-dt-preset-entry="${entry.index}"${entry.selected ? ' checked' : ''}> ${escapeAttr(entry.name)}${entry.enabled ? '' : '<span style="opacity:.6">（酒馆里禁用了）</span>'}</label>`).join('')}
       </div>` : '';
 
+  // 用户反馈 11：只显示"已注入 N 字"看不到内容 → 加可展开预览
+  let preview = '';
+  if (status.name) {
+    try { preview = String(presets?.text?.() ?? ''); } catch { preview = ''; }
+  }
+  const previewBox = preview ? `
+      <details style="margin-top:6px">
+        <summary style="cursor:pointer">看这个预设里到底有什么（${preview.length} 字）</summary>
+        <pre style="white-space:pre-wrap;max-height:220px;overflow:auto;margin:6px 0;font-size:11px">${escapeAttr(preview.slice(0, 6000))}</pre>
+      </details>` : '';
+
+  const modes = [
+    ['off', '关闭（不注入破限词）'],
+    ['preset', '跟随酒馆预设'],
+    ['custom', '只用下面自定义'],
+    ['append', '预设 + 自定义'],
+  ];
+  const modeHint = filter.mode === 'off'
+    ? '当前不注入任何破限词（选了预设也不会用）'
+    : (status.name ? `当前预设：${escapeAttr(status.name)}` : '还没选预设（在上面选一个）');
+
   return `
     <details style="margin-top:12px">
-      <summary>预设（破限提示词，只读酒馆预设）</summary>
+      <summary>预设与破限词</summary>
       <div style="margin:8px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         ${list.length
     ? `<select id="dt-preset-select" style="${fieldStyle()}">${presetOptions(list, status.name)}</select>`
@@ -96,6 +143,17 @@ function presetSection(presets) {
       </div>
       <div id="dt-preset-msg" style="margin-top:6px;opacity:.75">${message}</div>
       ${entryBoxes}
+      ${previewBox}
+      <div style="${SUBSECTION}">
+        <div style="opacity:.6">破限词模式（决定上面这些到底用不用）</div>
+        <select id="dt-break-mode" style="${fieldStyle()}">
+          ${modes.map(([value, label]) => `<option value="${value}"${filter.mode === value ? ' selected' : ''}>${label}</option>`).join('')}
+        </select>
+        <div>自定义破限词（custom / append 模式用）</div>
+        <textarea id="dt-break-custom" rows="4" style="${fieldStyle()}">${escapeAttr(filter.custom)}</textarea>
+        <button id="dt-break-save" type="button" style="${BTN}">保存模式</button>
+        <div id="dt-break-msg" style="margin-top:6px;opacity:.75">${modeHint}</div>
+      </div>
     </details>`;
 }
 
@@ -152,60 +210,54 @@ function modelPresetSection(modelPreset) {
     </details>`;
 }
 
-/** 破限词模式（T-411 的界面入口）：off / preset / custom / append */
-function breakFilterSection(breakFilter, presets) {
-  const current = breakFilter?.get?.() ?? { mode: 'off', custom: '' };
-  const presetName = presets?.status?.().name ?? '';
-  const modes = [
-    ['off', '关闭（不注入破限词）'],
-    ['preset', '跟随酒馆预设'],
-    ['custom', '只用下面自定义'],
-    ['append', '预设 + 自定义'],
-  ];
+/** 用户意愿（T-405 的界面入口）：will 权重 + 强制爱 */
+function willSection(store) {
+  const s = store.getSettings();
+  const will = Number(s.will ?? 80);
+  const dec = will <= 33 ? '剧情优先（char 会坚持）' : (will <= 66 ? '平衡' : 'user 优先（char 会让步）');
   return `
     <details style="margin-top:12px">
-      <summary>破限词模式</summary>
+      <summary>用户意愿（我反对时 char 怎么反应）</summary>
       <div style="margin:8px 0">
-        <select id="dt-break-mode" style="${fieldStyle()}">
-          ${modes.map(([value, label]) => `<option value="${value}"${current.mode === value ? ' selected' : ''}>${label}</option>`).join('')}
-        </select>
+        <div>意愿权重 <b id="dt-will-value">${will}</b>　<span style="opacity:.7">${dec}</span></div>
+        <input type="range" id="dt-will" min="0" max="100" value="${will}" style="width:100%">
+        <div style="font-size:11px;opacity:.7">0~33 剧情优先 / 34~66 平衡 / 67~100 user 优先</div>
       </div>
-      <div>自定义破限词（custom / append 模式用）</div>
-      <textarea id="dt-break-custom" rows="4" style="${fieldStyle()}">${escapeAttr(current.custom)}</textarea>
-      <div id="dt-break-msg" style="opacity:.75">
-        ${current.mode === 'off' ? '当前不注入任何破限词' : (presetName ? `当前预设：${escapeAttr(presetName)}` : '还没选预设（在上面「预设」区里选）')}
-        <button id="dt-break-save" type="button" style="${BTN}">保存</button>
-      </div>
+      <label style="display:block;margin:6px 0">
+        <input type="checkbox" id="dt-force-affection" ${s.forceAffection ? 'checked' : ''}> 强制爱（我口头拒绝也不让步）
+      </label>
+      <div id="dt-will-msg" style="opacity:.75">强制爱只管"口头拒绝"；触及硬禁区、关总开关、犹豫/无关/转向都不受它影响</div>
     </details>`;
 }
 
-/** 剧情占比（T-415 的界面入口）：三条线联动配平，和恒为 100 */
-function toneSection(tone) {
+/** 硬禁区（T-410 的界面入口）：一行一条，命中即停 */
+function hardLimitsSection(store) {
+  const list = store.getSettings().hardLimits ?? [];
+  return `
+    <details style="margin-top:12px">
+      <summary>硬禁区（命中即停）</summary>
+      <textarea id="dt-hard-limits" rows="4" style="${fieldStyle()}" placeholder="一行一条，例：自杀">${escapeAttr((list ?? []).join('\n'))}</textarea>
+      <button id="dt-hard-limits-save" type="button" style="${BTN}">保存</button>
+      <div id="dt-hard-limits-msg" style="margin-top:6px;opacity:.75">剧情里触及这些内容 → 清空注入、本轮终止（强制爱也覆盖不了）</div>
+    </details>`;
+}
+
+/** 剧情占比（T-415 的界面入口）：三条线联动配平，和恒为 100；可以锁住某条线 */
+function toneSection(tone, locked = []) {
   const current = tone?.get?.() ?? {};
   const rows = TONE_KEYS.map((key) => `
     <div style="display:flex;gap:6px;align-items:center;margin:4px 0">
       <div style="flex:1">${escapeAttr(TONE_LABELS[key] ?? key)}</div>
+      <label style="opacity:.75" title="锁住这条线，配平时不动它">
+        <input type="checkbox" data-dt-tone-lock="${key}" ${locked.includes(key) ? 'checked' : ''}> 锁
+      </label>
       <input type="number" min="0" max="100" data-dt-tone="${key}" value="${Number(current[key] ?? 0)}" style="width:5em;font:inherit;padding:3px 5px">
     </div>`).join('');
   return `
     <details style="margin-top:12px">
-      <summary>剧情占比（三条线联动，和恒为 100）</summary>
+      <summary>剧情占比（和恒为 100）</summary>
       <div style="margin:8px 0">${rows}</div>
-      <div id="dt-tone-msg" style="opacity:.75">拖一条，另外两条按原比例配平</div>
-    </details>`;
-}
-
-/** 主角（T-412 多人卡的界面入口） */
-function castSection(cast) {
-  const names = (cast?.get?.() ?? []).map((item) => item.name).filter(Boolean).join('、');
-  return `
-    <details style="margin-top:12px">
-      <summary>主角（多人卡）</summary>
-      <input id="dt-cast-names" style="${fieldStyle()}" placeholder="用、或逗号分隔；留空 = 单卡老行为" value="${escapeAttr(names)}">
-      <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <button id="dt-cast-save" type="button" style="${BTN}">保存</button>
-      </div>
-      <div id="dt-cast-msg" style="margin-top:6px;opacity:.75">只在这些主角说话时注入；不是他的戏不注入</div>
+      <div id="dt-tone-msg" style="opacity:.75">改一条，没锁的按原比例配平；锁住的不动</div>
     </details>`;
 }
 
@@ -261,13 +313,13 @@ export function renderSettingsForm({
       <button id="dt-refresh" style="font:inherit;padding:5px 12px">刷新模型列表</button>
     </div>
     <div id="dt-msg" style="margin-top:8px;opacity:.75">—</div>
-    ${profile ? profileSection(profile) : ''}
-${presets ? presetSection(presets) : ''}
+    ${profile ? profileSection(profile, extras?.cast) : ''}
+${presets ? presetSection(presets, extras?.breakFilter) : ''}
+${hardLimitsSection(store)}
+${willSection(store)}
 ${automation ? automationSection(automation) : ''}
 ${extras?.modelPreset ? modelPresetSection(extras.modelPreset) : ''}
-${extras?.breakFilter ? breakFilterSection(extras.breakFilter, presets) : ''}
-${extras?.tone ? toneSection(extras.tone) : ''}
-${extras?.cast ? castSection(extras.cast) : ''}
+${extras?.tone ? toneSection(extras.tone, [...toneLockedKeys]) : ''}
 ${extras?.copy ? copySection(extras.copy) : ''}
   `;
 
@@ -451,16 +503,71 @@ ${extras?.copy ? copySection(extras.copy) : ''}
   // ---------- 剧情占比（T-415）----------
   if (extras?.tone) {
     const boxes = () => [...node.querySelectorAll('input[data-dt-tone]')];
+    const locks = () => [...node.querySelectorAll('input[data-dt-tone-lock]')]
+      .filter((box) => box.checked)
+      .map((box) => box.dataset.dtToneLock);
+
+    node.querySelectorAll('input[data-dt-tone-lock]').forEach((box) => {
+      box.addEventListener('change', () => {
+        if (box.checked) toneLockedKeys.add(box.dataset.dtToneLock);
+        else toneLockedKeys.delete(box.dataset.dtToneLock);
+        const msg = node.querySelector('#dt-tone-msg');
+        if (msg) {
+          msg.textContent = toneLockedKeys.size
+            ? `已锁住 ${[...toneLockedKeys].map((k) => TONE_LABELS[k] ?? k).join('、')}：配平只动其余两条`
+            : '改一条，没锁的按原比例配平';
+        }
+      });
+    });
+
     boxes().forEach((box) => {
       box.addEventListener('change', () => {
-        const next = extras.tone.set(box.dataset.dtTone, Number(box.value));
-        // 联动配平：把另外两条的新值写回输入框（不重绘，免得丢焦点）
+        const next = extras.tone.set(box.dataset.dtTone, Number(box.value), locks());
+        // 联动配平：把每条的新值写回输入框（不重绘，免得丢焦点）
         for (const other of boxes()) other.value = Number(next?.[other.dataset.dtTone] ?? 0);
         const msg = node.querySelector('#dt-tone-msg');
-        if (msg) msg.textContent = `日常 ${next.daily} / 危机 ${next.crisis} / 亲密 ${next.intimate}（合计 ${next.daily + next.crisis + next.intimate}）`;
+        if (msg) {
+          msg.textContent = `日常 ${next.daily} / 危机 ${next.crisis} / 亲密 ${next.intimate}（合计 ${next.daily + next.crisis + next.intimate}）`
+            + (toneLockedKeys.size ? ` · 锁住 ${[...toneLockedKeys].map((k) => TONE_LABELS[k] ?? k).join('、')}` : '');
+        }
       });
     });
   }
+
+  // ---------- 用户意愿（T-405）----------
+  {
+    const slider = node.querySelector('#dt-will');
+    slider?.addEventListener('input', () => {
+      const value = Number(slider.value);
+      const label = node.querySelector('#dt-will-value');
+      if (label) label.textContent = String(value);
+    });
+    slider?.addEventListener('change', () => {
+      const value = Number(slider.value);
+      store.saveSettings({ will: value });
+      onSave?.();
+      const msg = node.querySelector('#dt-will-msg');
+      if (msg) {
+        msg.textContent = `已保存：意愿权重 ${value}（${value <= 33 ? '剧情优先' : (value <= 66 ? '平衡' : 'user 优先')}）`;
+      }
+    });
+    node.querySelector('#dt-force-affection')?.addEventListener('change', (event) => {
+      store.saveSettings({ forceAffection: event.target.checked });
+      onSave?.();
+      const msg = node.querySelector('#dt-will-msg');
+      if (msg) msg.textContent = event.target.checked ? '已开启强制爱：口头拒绝也不让步' : '已关闭强制爱：按意愿权重处理';
+    });
+  }
+
+  // ---------- 硬禁区（T-410）----------
+  node.querySelector('#dt-hard-limits-save')?.addEventListener('click', () => {
+    const list = node.querySelector('#dt-hard-limits').value
+      .split('\n').map((line) => line.trim()).filter(Boolean);
+    store.saveSettings({ hardLimits: list });
+    onSave?.();
+    const msg = node.querySelector('#dt-hard-limits-msg');
+    if (msg) msg.textContent = list.length ? `已保存 ${list.length} 条：${list.join('、')}` : '已清空硬禁区';
+  });
 
   // ---------- 主角（T-412）----------
   if (extras?.cast) {

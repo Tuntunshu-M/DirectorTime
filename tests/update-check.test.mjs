@@ -4,6 +4,7 @@
 import assert from 'node:assert/strict';
 import {
   decideUpdate, extensionFolderFromUrl, extensionCandidates, createExtensionUpdater, checkForUpdate,
+  createUpdateChecker, compareVersion, remoteManifestUrls,
 } from '../src/core/update-check.js';
 import { createSillyTavernContext } from '../src/core/context.js';
 
@@ -325,6 +326,88 @@ await check('updateExtension：酒馆拒绝 / 断网 / 没名字，都如实返�
   const ctxAny = createSillyTavernContext(() => ({ fetch: async () => ({ ok: true }) }));
   assert.equal((await ctxAny.updateExtension({})).reason, 'no-name');
   assert.equal((await ctxAny.updateExtension({ name: '   ' })).reason, 'no-name');
+});
+
+console.log('检查更新（用户反馈 13：要真去比版本，不能没查就报成功）');
+
+await check('版本比较：按段比数字，缺的当 0', () => {
+  assert.ok(compareVersion('0.4.2', '0.4.1') > 0);
+  assert.ok(compareVersion('0.4.1', '0.4.2') < 0);
+  assert.equal(compareVersion('0.4.1', '0.4.1'), 0);
+  assert.ok(compareVersion('1.0.0', '0.9.9') > 0);
+  assert.ok(compareVersion('0.4.10', '0.4.9') > 0, '10 要比 9 大，不能按字符串比');
+  assert.equal(compareVersion('0.4', '0.4.0'), 0);
+});
+
+await check('远程清单地址：从 manifest.homepage 推，非 GitHub 地址不猜', () => {
+  assert.deepEqual(remoteManifestUrls('https://github.com/Tuntunshu-M/DirectorTime'), [
+    'https://raw.githubusercontent.com/Tuntunshu-M/DirectorTime/main/manifest.json',
+    'https://raw.githubusercontent.com/Tuntunshu-M/DirectorTime/master/manifest.json',
+  ]);
+  assert.deepEqual(remoteManifestUrls('https://github.com/a/b.git', { branch: 'dev' }), [
+    'https://raw.githubusercontent.com/a/b/dev/manifest.json',
+  ]);
+  assert.deepEqual(remoteManifestUrls('https://example.com/x'), []);
+  assert.deepEqual(remoteManifestUrls(''), []);
+});
+
+await check('有新版本：报 new + 给出两边版本号', async () => {
+  const checker = createUpdateChecker({
+    manifestUrl: 'https://host/ext/manifest.json',
+    fetchImpl: async (url) => ({
+      ok: true,
+      json: async () => (url.includes('raw.githubusercontent')
+        ? { version: '0.5.0' }
+        : { version: '0.4.2', homepage: 'https://github.com/a/b' }),
+    }),
+  });
+  const result = await checker.check();
+  assert.equal(result.ok, true);
+  assert.equal(result.hasUpdate, true);
+  assert.equal(result.local, '0.4.2');
+  assert.equal(result.remote, '0.5.0');
+  assert.ok(result.message.includes('有新版本'));
+});
+
+await check('没有新版本：明确说"已是最新版"', async () => {
+  const checker = createUpdateChecker({
+    manifestUrl: 'https://host/ext/manifest.json',
+    fetchImpl: async (url) => ({
+      ok: true,
+      json: async () => (url.includes('raw.githubusercontent')
+        ? { version: '0.4.2' }
+        : { version: '0.4.2', homepage: 'https://github.com/a/b' }),
+    }),
+  });
+  const result = await checker.check();
+  assert.equal(result.hasUpdate, false);
+  assert.ok(result.message.includes('已是最新版'), result.message);
+});
+
+await check('查不到远程：如实说查不到，绝不假装"已是最新"', async () => {
+  const offline = createUpdateChecker({
+    manifestUrl: 'https://host/ext/manifest.json',
+    fetchImpl: async (url) => {
+      if (url.includes('raw.githubusercontent')) throw new Error('断网');
+      return { ok: true, json: async () => ({ version: '0.4.2', homepage: 'https://github.com/a/b' }) };
+    },
+  });
+  const result = await offline.check();
+  assert.equal(result.ok, false);
+  assert.equal(result.local, '0.4.2');
+  assert.ok(result.message.includes('连不上'), result.message);
+  assert.equal(result.message.includes('已是最新'), false, '查不到就不能说"已是最新"');
+});
+
+await check('没声明 homepage：明说查不了，不去猜地址', async () => {
+  const checker = createUpdateChecker({
+    manifestUrl: 'https://host/ext/manifest.json',
+    fetchImpl: async () => ({ ok: true, json: async () => ({ version: '0.4.2' }) }),
+  });
+  const result = await checker.check();
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'no-homepage');
+  assert.ok(result.message.includes('没声明仓库地址'), result.message);
 });
 
 console.log(`\n通过 ${passed} 项`);

@@ -78,6 +78,110 @@ export function extensionCandidates(folder) {
   return list;
 }
 
+/** 加时间戳绕过缓存（不然改了版本号也可能拿到旧的 manifest） */
+function withStamp(url) {
+  if (!url) return url;
+  const text = String(url);
+  return text.includes('?') ? `${text}&t=${Date.now()}` : `${text}?t=${Date.now()}`;
+}
+
+/** 版本号比较：a > b 返回正数（按段比数字，缺的当 0） */
+export function compareVersion(a, b) {
+  const left = String(a ?? '').split('.').map((part) => Number(part) || 0);
+  const right = String(b ?? '').split('.').map((part) => Number(part) || 0);
+  const len = Math.max(left.length, right.length);
+  for (let i = 0; i < len; i += 1) {
+    const diff = (left[i] ?? 0) - (right[i] ?? 0);
+    if (diff) return diff;
+  }
+  return 0;
+}
+
+/**
+ * 从扩展声明的 homepage 推出远程 manifest 地址（GitHub raw）。
+ * 推不出来（不是 GitHub 地址）就返回空数组 —— 不猜、不编。
+ */
+export function remoteManifestUrls(homepage, { branch } = {}) {
+  const url = String(homepage ?? '').trim();
+  const match = url.match(/^https?:\/\/github\.com\/([^/]+)\/([^/#?\s]+)/i);
+  if (!match) return [];
+
+  const owner = match[1];
+  const repo = match[2].replace(/\.git$/i, '');
+  const branches = branch ? [branch] : ['main', 'master'];
+  return branches.map((name) => `https://raw.githubusercontent.com/${owner}/${repo}/${name}/manifest.json`);
+}
+
+/**
+ * 「检查更新」：真去比本地与远程的版本号（用户反馈 13：以前没查就报"更新成功"）。
+ *
+ * - 本地版本：从扩展自己的 manifest.json 读（服务器上的文件，就是当前装着的这版）
+ * - 远程版本：从 manifest 里声明的 homepage 推 GitHub raw 地址读
+ * 任何一步失败都**如实返回失败原因**，不假装"已是最新"。
+ */
+export function createUpdateChecker({ manifestUrl, homepage, fetchImpl, branch } = {}) {
+  const doFetch = fetchImpl ?? globalThis.fetch;
+
+  async function readManifest(url) {
+    if (typeof doFetch !== 'function' || !url) return { ok: false, reason: 'no-fetch' };
+    try {
+      const response = await doFetch(withStamp(url), { cache: 'no-store' });
+      if (!response?.ok) return { ok: false, reason: `http-${response?.status ?? 'error'}` };
+      const data = await response.json();
+      if (!data?.version) return { ok: false, reason: 'no-version' };
+      return { ok: true, version: String(data.version), homepage: String(data.homepage ?? '') };
+    } catch (error) {
+      return { ok: false, reason: 'network', detail: error?.message ?? '' };
+    }
+  }
+
+  const local = () => readManifest(manifestUrl);
+
+  async function remote(remoteHomepage) {
+    const urls = remoteManifestUrls(remoteHomepage, { branch });
+    if (!urls.length) return { ok: false, reason: 'no-homepage' };
+
+    let last = { ok: false, reason: 'unknown' };
+    for (const url of urls) {
+      // eslint-disable-next-line no-await-in-loop -- 逐个试 main / master
+      const result = await readManifest(url);
+      if (result.ok) return { ...result, url };
+      last = result;
+    }
+    return last;
+  }
+
+  /** @returns {{ok:boolean, local?:string, remote?:string, hasUpdate?:boolean, message:string, reason?:string}} */
+  async function check() {
+    const here = await local();
+    if (!here.ok) {
+      return { ok: false, reason: here.reason, message: `读不到当前版本（${here.reason}）` };
+    }
+
+    // 远程地址从本地 manifest 声明的 homepage 推（不在代码里硬编码仓库地址）
+    const there = await remote(here.homepage || homepage);
+    if (!there.ok) {
+      const why = there.reason === 'no-homepage'
+        ? '这个扩展没声明仓库地址（manifest.homepage），查不了远程版本'
+        : (there.reason === 'network' ? '连不上 GitHub，查不到有没有新版本' : `查不到远程版本（${there.reason}）`);
+      return { ok: false, reason: there.reason, local: here.version, message: `${why} · 当前 v${here.version}` };
+    }
+
+    const hasUpdate = compareVersion(there.version, here.version) > 0;
+    return {
+      ok: true,
+      local: here.version,
+      remote: there.version,
+      hasUpdate,
+      message: hasUpdate
+        ? `有新版本 v${there.version}（当前 v${here.version}）→ 点「更新插件」`
+        : `已是最新版（v${here.version}）`,
+    };
+  }
+
+  return { check, local, remote };
+}
+
 /**
  * 一键更新：调酒馆的接口把扩展更新到最新，成功后刷新页面（T-420）。
  *

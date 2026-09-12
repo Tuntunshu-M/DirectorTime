@@ -225,4 +225,60 @@ check('订阅者抛错不影响其它订阅者', () => {
   assert.equal(reached, true);
 });
 
+console.log('聊天级持久化（P0 修复：剧本不能因为加载时机而丢）');
+
+function makeChatEnv() {
+  const slots = { 'chat-A': {}, 'chat-B': {} };
+  let chatKey = 'chat-A';
+  const ctx = {
+    getChatState: () => slots[chatKey],
+    saveChatState: () => true,
+    getCurrentChatKey: () => chatKey,
+    getExtensionSettings: () => ({}),
+    saveSettings: () => true,
+  };
+  return {
+    slots,
+    ctx,
+    switchTo: (key) => { chatKey = key; },
+    store: createStateStore(ctx, 'dt'),
+  };
+}
+
+check('切聊天：自动按新聊天重读，不会把 A 的剧本带到 B', () => {
+  const env = makeChatEnv();
+  env.store.update((draft) => ({ ...draft, outline: { title: 'A 的剧本' } }), { label: '写 A' });
+  assert.equal(env.slots['chat-A'].dt.outline.title, 'A 的剧本', '要落到 A 的存档里');
+
+  env.switchTo('chat-B');
+  assert.equal(env.store.get().outline, null, '换聊天要重读成 B 的（空）');
+
+  env.store.update((draft) => ({ ...draft, outline: { title: 'B 的剧本' } }), { label: '写 B' });
+  assert.equal(env.slots['chat-B'].dt.outline.title, 'B 的剧本');
+  assert.equal(env.slots['chat-A'].dt.outline.title, 'A 的剧本', 'A 的存档不能被 B 覆盖');
+
+  env.switchTo('chat-A');
+  assert.equal(env.store.get().outline.title, 'A 的剧本', '切回 A 要读回 A 的剧本');
+});
+
+check('聊天还没就绪：拿不到 chatMetadata 时不写（否则就是拿默认状态覆盖存档）', () => {
+  const ctx = {
+    getChatState: () => null,
+    saveChatState: () => true,
+    getCurrentChatKey: () => null,
+    getExtensionSettings: () => ({}),
+    saveSettings: () => true,
+  };
+  const store = createStateStore(ctx, 'dt');
+  assert.equal(store.save(), false, '没有 chatMetadata 就不该写，更不能报成功');
+});
+
+check('同一个聊天：正常的读写不受影响（不误判成"换了聊天"）', () => {
+  const env = makeChatEnv();
+  env.store.update((draft) => ({ ...draft, outline: { title: '第一份' } }), { label: 'x' });
+  env.store.update((draft) => ({ ...draft, outline: { title: '第二份' } }), { label: 'y' });
+  assert.equal(env.slots['chat-A'].dt.outline.title, '第二份');
+  assert.equal(env.store.get().outline.title, '第二份');
+});
+
 console.log(`\n通过 ${passed} 项`);
