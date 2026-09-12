@@ -248,13 +248,29 @@ check('几何用的是"旧版实机验证过的那套配方"（grid 居中，不
   assert.ok(css.includes('#dt-panel .dt-card{width:100%;max-width:440px;max-height:calc(100vh - 24px)'), '卡片要限宽 + 限高');
 });
 
-check('骨架几何写在 JS 内联样式里（外链样式没加载也不能塌）', () => {
+check('骨架几何与配色写在 JS 内联样式里（外链样式没加载也不能塌、不能变黑字）', () => {
   const code = fs.readFileSync(new URL('../src/ui/panel.js', import.meta.url), 'utf8');
+  assert.ok(code.includes('applyShellStyle'), '外壳样式要集中在一个函数里写');
   assert.ok(code.includes('el.style.cssText'), '根节点要有内联几何');
   assert.ok(code.includes('place-items:center'), '内联几何也要 grid 居中');
   assert.ok(code.includes('z-index:10000'), '内联 z-index 也要 10000');
-  assert.ok(code.includes("el.style.display = 'grid'"), '显隐走内联，而且是 grid（居中才行）');
+  assert.ok(code.includes("'grid'"), '打开态显示 grid（居中才行）');
+  assert.ok(code.includes('SHELL_VARS'), '配色变量也要内联（外链 CSS 挂了也不会黑字黑底）');
   assert.ok(code.includes('UI_VERSION'), '要有界面版本号（用来判断跑的是不是旧代码）');
+});
+
+check('事件走"根节点委托 + 捕获阶段"（宿主的 stopPropagation 拦不住，重绘也不丢）', () => {
+  const code = fs.readFileSync(new URL('../src/ui/panel.js', import.meta.url), 'utf8');
+  assert.ok(code.includes('bindDelegated'), '要用委托绑定');
+  assert.ok(code.includes("el.addEventListener('click', route, true)"), 'click 要挂捕获阶段（第三个参数 true）');
+  assert.ok(code.includes("el.addEventListener('change', route, true)"), 'change 也要捕获阶段');
+  assert.equal(code.includes('forEach((element) => {\n      const name = element.dataset.act'), false, '不要再逐元素绑定（实机点不了）');
+});
+
+check('点不了的兜底：没打开的弹层不吃点击、卡片自己收事件', () => {
+  const css = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+  assert.ok(css.includes('#dt-panel .dt-layer:not(.dt-layer-on){display:none !important;pointer-events:none !important'), '隐藏的弹层必须既不可见也不吃点击');
+  assert.ok(css.includes('#dt-panel button, #dt-panel input, #dt-panel select, #dt-panel textarea, #dt-panel summary, #dt-panel [data-act]{pointer-events:auto !important}'), '控件要能收事件');
 });
 
 check('面板自带 diagnose()（实机排障：一行看出样式到底有没有生效）', () => {

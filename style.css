@@ -29,6 +29,12 @@
 #dt-panel{position:fixed !important;top:0 !important;right:0 !important;bottom:0 !important;left:0 !important;box-sizing:border-box}
 #dt-panel.dt-open{display:grid !important}
 #dt-panel .dt-layer{position:absolute;top:0;right:0;bottom:0;left:0}
+/* 点不了的两个兜底（2026-09-12 实机反馈："看得到但完全点不了"）：
+ *   ① 没打开的弹层绝不吃点击；
+ *   ② 卡片自己一定要能收事件（宿主有的层会 pointer-events:none 一路传下来）。*/
+#dt-panel .dt-layer:not(.dt-layer-on){display:none !important;pointer-events:none !important}
+#dt-panel .dt-card{pointer-events:auto !important}
+#dt-panel button, #dt-panel input, #dt-panel select, #dt-panel textarea, #dt-panel summary, #dt-panel [data-act]{pointer-events:auto !important}
 /* 抬头那排图标与分类页签：酒馆会把 button 拉宽 / 加内边距，这几条压住尺寸 */
 #dt-panel .dt-head-top{display:flex !important;align-items:baseline;gap:8px}
 #dt-panel .dt-tools{display:flex !important;align-items:center;gap:5px}

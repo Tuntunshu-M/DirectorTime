@@ -27,7 +27,7 @@ const TABS = [
 ];
 
 /** 界面版本号：控制台 `DirectorTime.uiVersion` 一看就知道跑的是不是新代码（旧代码没有这个键） */
-export const UI_VERSION = '0.9.2';
+export const UI_VERSION = '0.9.3';
 
 const PALETTE_KEY = 'dt-palette';
 const LAYER_NAMES = { world: '世界书', prompt: '提示词', settings: '设置', debug: '调试面板' };
@@ -174,43 +174,78 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
       togglePalette: () => {
         uiState.palette = normalizePalette(uiState.palette) === 'a' ? 'b' : 'a';
         savePalette(uiState.palette);
+        if (el) { el.dataset.palette = uiState.palette; applyShellStyle(); }
         render();
       },
     };
   }
 
-  function eventOf(element) {
-    const tag = element.tagName;
-    const type = element.type;
-    // 搜索框要"边打边过滤"：用 input 事件，重绘后由 focusAct 把焦点还回去
-    if (element.dataset.act === 'world.search') return 'input';
-    if (tag === 'BUTTON' || tag === 'SPAN' || tag === 'A') return 'click';
-    if (type === 'file' || type === 'text' || type === 'password' || type === 'number') return 'change';
-    if (tag === 'TEXTAREA' || tag === 'SELECT') return 'change';
-    return 'change'; // checkbox / radio / range
-  }
+  let delegated = false;
 
-  function bind() {
-    card.querySelectorAll('[data-act]').forEach((element) => {
-      const name = element.dataset.act;
+  /**
+   * 事件接线：**在面板根节点上委托 + 捕获阶段**。
+   *
+   * 为什么不用"逐元素绑定"（2026-09-12 实机反馈："看得到但完全点不了"）：
+   *   1. 酒馆自己会在 document/body 上处理点击、有的地方还会 stopPropagation ——
+   *      逐元素监听在冒泡阶段收不到事件；挂根节点 + **capture:true** 就绕开了。
+   *   2. 面板每次重绘都换掉整棵子树，委托监听只挂一次，永远不会漏。
+   */
+  function bindDelegated() {
+    if (delegated || !el) return;
+    delegated = true;
+
+    const route = (event) => {
+      const target = event.target?.closest?.('[data-act]');
+      if (!target || !el.contains(target)) return;
+
+      // 实时过滤（世界书搜索）用 input；其余输入类交给 change（保存时才触发）
+      if (event.type === 'input' && !String(target.dataset.act).endsWith('.search')) return;
+      // 开关/单选由 click 处理（再收一次 change 会做两遍）
+      if (event.type === 'change' && (target.type === 'checkbox' || target.type === 'radio')) return;
+      // 其余输入类不是 click 的活儿（避免"点一下就保存"）
+      if (event.type === 'click') {
+        const tag = target.tagName;
+        const type = target.type;
+        if (tag === 'SELECT' || tag === 'TEXTAREA') return;
+        if (tag === 'INPUT' && !['checkbox', 'radio', 'button', 'submit'].includes(type)) return;
+      }
+
+      const name = target.dataset.act;
       const handler = actions[name];
       if (!handler) {
         // 定稿 §2.1：做了控件没接动作 = 打回。这里不静默 —— 控制台点名
-        console.warn(`[导演时间] 控件没有接线：data-act="${name}"`, element);
+        console.warn(`[导演时间] 控件没有接线：data-act="${name}"`, target);
         return;
       }
-      element.addEventListener(eventOf(element), (event) => {
-        const result = handler(element, ctx(), event);
+      try {
+        const result = handler(target, ctx(), event);
         if (result && typeof result.catch === 'function') {
           result.catch((error) => console.warn(`[导演时间] 动作 ${name} 出错`, error));
         }
-      });
-      if (element.dataset.act === 'script.lock') {
-        element.addEventListener('keydown', (event) => {
-          if (event.key === 'Enter' || event.key === ' ') element.click();
-        });
+      } catch (error) {
+        console.warn(`[导演时间] 动作 ${name} 抛异常`, error);
       }
-    });
+    };
+
+    // 捕获阶段挂三种事件：click（按钮/开关）+ change（输入框/下拉/滑块）+ input（搜索）
+    el.addEventListener('click', route, true);
+    el.addEventListener('change', route, true);
+    el.addEventListener('input', route, true);
+
+    // 键盘可达：锁芯片（span）用 Enter/空格也能点
+    el.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      const target = event.target?.closest?.('[data-act]');
+      if (target?.dataset.act === 'script.lock') {
+        event.preventDefault();
+        target.click();
+      }
+    }, true);
+  }
+
+  /** 仅用于自检：数一数界面上有多少个可点控件 */
+  function countControls() {
+    return card ? card.querySelectorAll('[data-act]').length : 0;
   }
 
   /** 世界书来源是异步的：打开面板时读一次，缓存进 uiState（弹层与设置里的状态行共用） */
@@ -239,7 +274,7 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
     card.querySelectorAll('.dt-layer').forEach((layer) => {
       layer.classList.toggle('dt-layer-on', layer.dataset.layer === uiState.layer);
     });
-    bind();
+    bindDelegated();
     // 旧引擎不认 :has() —— 给选中的单选补一个 .dt-on（视觉兜底，见 style.css）
     card.querySelectorAll('.dt-seg input:checked, .dt-radio input:checked').forEach((input) => {
       input.closest?.('label')?.classList.add('dt-on');
@@ -264,6 +299,29 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
     }
   }
 
+  /**
+   * 骨架几何与配色**写死在内联样式上**：酒馆的全局样式会抢外链 CSS / CSS 可能被缓存成旧版，
+   * 外链样式万一没生效，面板也必须"立得住、看得清"。
+   * 内联只兜底"定位 + 居中 + 配色变量"，字体/间距/边框仍由 style.css 负责。
+   */
+  const SHELL_VARS = {
+    a: '--bg:#141310;--card:#232019;--card-2:#1c1a17;--field:#2b271f;--field-2:#322c23;'
+      + '--ink:#ece3d0;--ink-2:#a89c88;--faded:#776e5f;--accent:#d9a04b;--accent-soft:rgba(217,160,75,.14);'
+      + '--ok:#8fb573;--rule:rgba(236,227,208,.16);--rule-soft:rgba(236,227,208,.09);--on-accent:#201c16;',
+    b: '--bg:#4a443a;--card:#f4eee1;--card-2:#faf6ec;--field:#fdfbf4;--field-2:#efe8da;'
+      + '--ink:#2b2721;--ink-2:#5f5647;--faded:#8d8371;--accent:#8c3a2b;--accent-soft:rgba(140,58,43,.08);'
+      + '--ok:#4f7040;--rule:rgba(43,39,33,.26);--rule-soft:rgba(43,39,33,.13);--on-accent:#f7f2e7;',
+  };
+
+  function applyShellStyle() {
+    if (!el) return;
+    const palette = normalizePalette(uiState.palette);
+    el.style.cssText = 'position:fixed;top:0;right:0;bottom:0;left:0;width:100vw;height:100vh;z-index:10000;'
+      + `display:${isOpen() || el.classList.contains('dt-open') ? 'grid' : 'none'};place-items:center;`
+      + 'box-sizing:border-box;overflow:auto;padding:12px;background:rgba(24,20,15,.5);'
+      + `color:var(--ink);font-family:var(--sans);${SHELL_VARS[palette]}`;
+  }
+
   function ensure() {
     if (el) return el;
     const doc = globalThis.document;
@@ -271,11 +329,7 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
     el = doc.createElement('div');
     el.id = 'dt-panel';
     el.dataset.palette = uiState.palette;
-    // 骨架几何**写死在内联样式上**：酒馆的全局样式会抢外链 CSS，样式万一没加载也不能塌
-    // （2026-09-12 实机反馈：面板变成页面里一条 = 定位没生效）
-    // 内联几何 = 旧版那套"实机验证过"的配方：grid + place-items:center 居中 + 100vw/100dvh + z-index 10000
-    el.style.cssText = 'position:fixed;top:0;right:0;bottom:0;left:0;width:100vw;height:100vh;z-index:10000;'
-      + 'display:none;place-items:center;box-sizing:border-box;overflow:auto;padding:12px;background:rgba(24,20,15,.5);';
+    applyShellStyle();
     card = doc.createElement('div');
     card.className = 'dt-card-holder';
     card.style.cssText = 'width:100%;max-width:440px;max-height:calc(100vh - 24px);box-sizing:border-box;';
@@ -307,8 +361,9 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
     ensure();
     if (!el) return null;
     el.classList.add('dt-open');
-    // grid（不是 block）—— 居中靠 place-items:center，与旧版一致
-    el.style.display = 'grid'; // 不依赖外链 CSS（见 ensure 的注释）
+    el.dataset.palette = normalizePalette(uiState.palette);
+    // grid（不是 block）—— 居中靠 place-items:center；整块样式由 applyShellStyle 统一写
+    applyShellStyle();
     render();
     if (!uiState.worldSources) loadWorld(false);
     return el;
@@ -316,7 +371,7 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
 
   function hide() {
     el?.classList.remove('dt-open');
-    if (el) el.style.display = 'none';
+    applyShellStyle();
     if (uiState.layer) { uiState.layer = null; uiState.stack = []; }
   }
 
@@ -371,9 +426,23 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
         cardHeight: box ? Math.round(box.height) : 0,
         viewport: { w: globalThis.innerWidth ?? 0, h: globalThis.innerHeight ?? 0 },
         palette: uiState.palette,
+        // ---- 点不了时看这几项 ----
+        controls: countControls(),
+        delegated: delegated,
+        layer: uiState.layer,
+        // 卡片头部正中间那个点上，命中的是谁？（不是面板里的东西 = 被别的东西盖住了）
+        hitTest: (() => {
+          if (!box || typeof globalThis.document?.elementFromPoint !== 'function') return '(无法测量)';
+          const node = globalThis.document.elementFromPoint(box.left + box.width / 2, box.top + 24);
+          if (!node) return '(没命中任何元素)';
+          if (el.contains(node)) return `面板内：${node.tagName}.${node.className || ''}`.slice(0, 80);
+          return `⚠ 被外面盖住：${node.tagName}.${node.className || ''}`.slice(0, 80);
+        })(),
         hint: style && style.position !== 'fixed'
           ? '定位没生效 → 样式表没加载或被酒馆样式覆盖：先重启酒馆 / Ctrl+F5 强刷（CSS 会被浏览器缓存）'
-          : '定位正常；若仍不居中，看 cardWidth 是否等于 440 上下',
+          : (countControls() === 0
+            ? '面板里一个控件都没有 → 渲染没跑完'
+            : '定位正常；点不了就看 controls / delegated / hitTest 这三项'),
       };
     },
   };
