@@ -83,7 +83,11 @@ export function render(state, ctxState) {
         <button class="dt-mini" type="button" data-act="layer.close">完成</button>`,
     }),
     actions: {
-      'world.search': (el, { ctx }) => { ctx.setState({ keyword: el.value }); },
+      'world.search': (el, { ctx }) => {
+        // 边打边过滤；重绘后把焦点还回搜索框（见 panel.js 的 focusAct）
+        ctx.setState({ keyword: el.value, focusAct: 'world.search' });
+        ctx.refresh();
+      },
       'world.toggle': (el, { api, ctx, state }) => {
         const selection = { ...(state.world?.selection ?? {}) };
         if (el.checked) selection[el.dataset.key] = true;

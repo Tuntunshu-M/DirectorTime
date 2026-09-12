@@ -10,6 +10,8 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { renderPanel, createMainPanel, normalizePalette } from '../src/ui/panel.js';
+import { bootstrap } from '../src/bootstrap.js';
+import { createStateStore } from '../src/core/state.js';
 
 let passed = 0;
 function check(name, fn) {
@@ -229,6 +231,73 @@ check('createMainPanel 在 Node（没有 document）里也是安全的', () => {
   panel.refresh();
   const info = panel.inspect();
   assert.ok(Array.isArray(info.actions));
+});
+
+console.log('T-427 界面 ↔ 装配：调用的 api 必须真的存在');
+
+/** 起一个真装配（Node 里没有酒馆，用最小 ctx 兜底） */
+function bootApi() {
+  const meta = {};
+  const settingsStore = {};
+  const ctx = {
+    capabilities: {},
+    getExtensionSettings: () => settingsStore,
+    saveSettings: () => true,
+    getChatState: () => meta,
+    saveChatState: () => true,
+    getCurrentChatKey: () => 'ui-test',
+    getMessages: () => [],
+    on: () => () => {},
+    showSystemMessage: () => {},
+    setExtensionPrompt: () => true,
+    clearExtensionPrompt: () => true,
+    characters: [{ name: 'C', data: { extensions: {} } }],
+    getCharacterId: () => 0,
+  };
+  const store = createStateStore(ctx, 'director_time');
+  return bootstrap({ ctx, store });
+}
+
+check('界面模块里出现的 api.xxx 都能在真 api 上找到', () => {
+  const api = bootApi();
+  const files = ['panel.js', 'render/journal.js', 'render/script.js', 'render/cast.js',
+    'render/worldbook.js', 'render/prompts.js', 'render/settings.js', 'render/debug.js'];
+  const missing = new Map();
+  for (const file of files) {
+    const code = fs.readFileSync(new URL(`../src/ui/${file}`, import.meta.url), 'utf8');
+    // 注意跳过域名写法（`api.example.com` 那种会误报成接口名）
+    for (const match of code.matchAll(/(?<![\w/])api\??\.([a-zA-Z_$][\w$]*)(?![\w$.])/g)) {
+      const name = match[1];
+      if (!(name in api)) missing.set(name, file);
+    }
+  }
+  assert.deepEqual([...missing.entries()], [], `这些接口不存在：${[...missing.entries()].map(([n, f]) => `${n}（${f}）`).join('、')}`);
+});
+
+check('ui.read() 在真装配下给得出界面要的字段', () => {
+  const api = bootApi();
+  const state = api.ui.read();
+  for (const key of ['enabled', 'connection', 'will', 'stages', 'stage', 'injection', 'tone', 'toneKeys',
+    'toneLabels', 'intensity', 'breakFilter', 'modelPreset', 'sanitize', 'presets', 'cast', 'profile',
+    'profileFields', 'world', 'update', 'debug', 'automationText', 'cost']) {
+    assert.ok(key in state, `ui.read() 缺 ${key}`);
+  }
+  assert.equal(state.profileFields.length, 8, '侧写八个字段要给全');
+  // 真状态渲染一遍，确认不崩
+  const { html, actions } = renderPanel(state, { worldSources });
+  const missing = [...new Set(controlsOf(html))].filter((name) => typeof actions[name] !== 'function');
+  assert.deepEqual(missing, []);
+});
+
+check('面板入口齐备：panel / settingsPanel / 更新与调试都够得着', () => {
+  const api = bootApi();
+  assert.equal(typeof api.panel?.open, 'function');
+  assert.equal(typeof api.settingsPanel?.show, 'function', '控制台 DirectorTime.settingsPanel.show() 仍要能用');
+  assert.equal(typeof api.debug?.show, 'function');
+  assert.equal(typeof api.onOpenDebug, 'function');
+  assert.equal(typeof api.ui?.saveSettings, 'function');
+  assert.equal(typeof api.undo, 'function');
+  assert.equal(typeof api.checkUpdate, 'function');
 });
 
 console.log(`\n通过 ${passed} 项`);

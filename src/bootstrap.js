@@ -995,6 +995,17 @@ export function bootstrap({ ctx, store } = {}) {
     registry, checkpoint, will, initiative, rules: rulesApi, speculate: speculateApi, review,
     // T-427：界面那份读写口 + 调试面板（现在是主面板里的弹层）
     ui: uiApi,
+    // 界面上这几个动作走 api 顶层（界面只认 api.xxx）——
+    // tests/ui.test.mjs 会扫界面源码里的 api.xxx，对不上就报错（这些漏过一次）
+    saveSettings: (patch) => uiApi.saveSettings(patch),
+    undo: () => uiApi.undo(),
+    checkUpdate: () => uiApi.checkUpdate(),
+    onTest: () => uiApi.onTest(),
+    onGenerate: () => uiApi.onGenerate(),
+    onExtend: () => uiApi.onExtend(),
+    onToggleEnabled: (value) => uiApi.onToggleEnabled(value),
+    loadWorldSources: (force) => uiApi.loadWorldSources(force),
+    saveWorldSelection: (selection) => uiApi.saveWorldSelection(selection),
     debug: {
       show: () => { panel.open(); panel.layer('debug'); },
       hide: () => panel.hide(),

@@ -9,7 +9,7 @@
 //   · 每个动作在对应 render 模块里注册同名 handler
 //   · 两边对不上就是「做了控件没接动作 / 做了动作没控件」—— tests/ui.test.mjs 会把它抓出来
 
-import { esc, icon, iconButton } from './dom.js';
+import { esc, iconButton } from './dom.js';
 import * as journal from './render/journal.js';
 import * as script from './render/script.js';
 import * as cast from './render/cast.js';
@@ -179,6 +179,8 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
   function eventOf(element) {
     const tag = element.tagName;
     const type = element.type;
+    // 搜索框要"边打边过滤"：用 input 事件，重绘后由 focusAct 把焦点还回去
+    if (element.dataset.act === 'world.search') return 'input';
     if (tag === 'BUTTON' || tag === 'SPAN' || tag === 'A') return 'click';
     if (type === 'file' || type === 'text' || type === 'password' || type === 'number') return 'change';
     if (tag === 'TEXTAREA' || tag === 'SELECT') return 'change';
@@ -235,6 +237,15 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
       layer.classList.toggle('dt-layer-on', layer.dataset.layer === uiState.layer);
     });
     bind();
+    // 重绘后把焦点还给"正在打字"的那个控件（搜索框边打边过滤不丢焦点）
+    if (uiState.focusAct) {
+      const target = card.querySelector(`[data-act="${uiState.focusAct}"]`);
+      if (target && typeof target.focus === 'function') {
+        target.focus();
+        const end = String(target.value ?? '').length;
+        try { target.setSelectionRange?.(end, end); } catch { /* 某些 input 类型不支持 */ }
+      }
+    }
     // 主面板右下角放一句提示（全局 flash）
     if (!card.querySelector('[data-flash="global"]')) {
       const hint = globalThis.document.createElement('div');
