@@ -27,7 +27,7 @@ const TABS = [
 ];
 
 /** 界面版本号：控制台 `DirectorTime.uiVersion` 一看就知道跑的是不是新代码（旧代码没有这个键） */
-export const UI_VERSION = '0.9.5';
+export const UI_VERSION = '0.9.6';
 
 const PALETTE_KEY = 'dt-palette';
 const LAYER_NAMES = { world: '世界书', prompt: '提示词', settings: '设置', debug: '调试面板' };
@@ -35,6 +35,20 @@ const BASE_NAME = '场记';
 
 export function normalizePalette(value) {
   return value === 'b' ? 'b' : 'a';
+}
+
+/**
+ * 分类页的显隐归一：只显示当前分类。
+ *
+ * 各 view 里的 `hidden` 只是**初值**（剧本 / 人物默认藏起来）。
+ * 2026-09-12 实机反馈："点剧本和人物没跳转" —— 就是这里漏了：
+ * 页签高亮变了、内容却还是写死的那一份。图层一直有同步逻辑，页面漏了。
+ */
+export function syncPageVisibility(html, active = 'status') {
+  return String(html).replace(
+    /<div data-page="([a-z]+)"(\s+hidden)?>/g,
+    (match, name) => `<div data-page="${name}"${name === active ? '' : ' hidden'}>`,
+  );
 }
 
 /** 面板 HTML（纯函数：state + 临时 UI 状态 → 字符串 + 动作表） */
@@ -81,7 +95,7 @@ export function renderPanel(state, uiState = {}) {
       ${TABS.map((tab) => `<button class="dt-tab${active === tab.view ? ' dt-tab-on' : ''}" type="button" data-act="shell.tab" data-view="${tab.view}">${tab.label}</button>`).join('')}
     </nav>
 
-    <div class="dt-body">${pages.join('')}</div>
+    <div class="dt-body">${syncPageVisibility(pages.join(''), active)}</div>
     ${layers.join('')}
   </section>`;
 
@@ -296,6 +310,10 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
     // 弹层显隐：只有当前这一层打开
     card.querySelectorAll('.dt-layer').forEach((layer) => {
       layer.classList.toggle('dt-layer-on', layer.dataset.layer === uiState.layer);
+    });
+    // 分类页显隐（与图层同理：markup 里的 hidden 只是初值，这里按当前分类归一）
+    card.querySelectorAll('[data-page]').forEach((page) => {
+      page.hidden = page.dataset.page !== (uiState.view ?? 'status');
     });
     bindDelegated();
     // 旧引擎不认 :has() —— 给选中的单选补一个 .dt-on（视觉兜底，见 style.css）

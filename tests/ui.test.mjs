@@ -528,6 +528,57 @@ check('调用日志：client 每次请求记一条（成功记 tokens、失败�
   assert.ok(log[1].error, '失败要记原因');
 });
 
+console.log('分类页签：点了要真的换页（2026-09-12 实机："点剧本和人物没跳转"）');
+
+/** 某分类页在渲染结果里是不是可见的 */
+function pageVisible(html, name) {
+  const match = html.match(new RegExp(`<div data-page="${name}"([^>]*)>`));
+  assert.ok(match, `渲染结果里没有 ${name} 页`);
+  return !/hidden/.test(match[1]);
+}
+
+check('三个分类页里，只有当前那个可见', () => {
+  const status = renderPanel(fakeState(), { view: 'status' }).html;
+  assert.equal(pageVisible(status, 'status'), true, '场记页要可见');
+  assert.equal(pageVisible(status, 'editor'), false, '剧本页要藏起来');
+  assert.equal(pageVisible(status, 'cast'), false, '人物页要藏起来');
+
+  const editor = renderPanel(fakeState(), { view: 'editor' }).html;
+  assert.equal(pageVisible(editor, 'editor'), true, '切到剧本页后要可见');
+  assert.equal(pageVisible(editor, 'status'), false, '场记页要让位');
+  assert.equal(pageVisible(editor, 'cast'), false);
+
+  const cast = renderPanel(fakeState(), { view: 'cast' }).html;
+  assert.equal(pageVisible(cast, 'cast'), true);
+  assert.equal(pageVisible(cast, 'editor'), false);
+  assert.equal(pageVisible(cast, 'status'), false);
+});
+
+check('没传 view 时默认场记页（打开面板的第一屏）', () => {
+  const html = renderPanel(fakeState(), {}).html;
+  assert.equal(pageVisible(html, 'status'), true);
+  assert.equal(pageVisible(html, 'editor'), false);
+  assert.equal(pageVisible(html, 'cast'), false);
+});
+
+check('页签高亮与显示的那一页一致（不会出现"高亮了却没换页"）', () => {
+  for (const view of ['status', 'editor', 'cast']) {
+    const html = renderPanel(fakeState(), { view }).html;
+    const on = (html.match(/class="dt-tab dt-tab-on"[^>]*data-view="([a-z]+)"/) ?? [])[1];
+    assert.equal(on, view, `${view}：高亮的是 ${on}`);
+    assert.equal(pageVisible(html, view), true, `${view}：高亮的页必须可见`);
+  }
+});
+
+check('点页签 = 记住新分类 + 重绘（动作真的这么做）', () => {
+  const { actions } = renderPanel(fakeState(), { view: 'status' });
+  const calls = [];
+  const ctx = { setState: (patch) => calls.push(patch), refresh: () => calls.push('refresh') };
+  actions['shell.tab']({ dataset: { view: 'editor' } }, { ctx, api: fakeApi(), state: fakeState() });
+  assert.deepEqual(calls[0], { view: 'editor', layer: null }, '要把 view 记下来并关掉弹层');
+  assert.equal(calls[1], 'refresh', '要重绘才看得到切换');
+});
+
 console.log('T-429 调用约定：每个动作都必须能被真的调起来（这次瘫痪的根因）');
 
 /**
