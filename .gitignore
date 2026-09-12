@@ -1,4 +1,6 @@
 node_modules/
+# 临时脚本（冒烟 / 调试 / 审计）：跑完就该删，别进版本库
+_*.mjs
 .DS_Store
 Thumbs.db
 *.log
