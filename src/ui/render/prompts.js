@@ -50,13 +50,14 @@ export function render(state, ctxState) {
           <div class="dt-lbl">只注入勾选的条目（一个不勾 = 全部启用条目）</div>
           <div class="dt-pipe">
             ${entries.map((entry) => `<div class="dt-pipe-row">
-              <input class="chk" type="checkbox" data-act="presets.entry" data-index="${esc(entry.index)}" ${entry.selected ? 'checked' : ''} ${entry.enabled === false ? 'disabled' : ''}>
-              <span>${esc(entry.label ?? entry.name ?? `条目 ${entry.index}`)}${entry.enabled === false ? ' <em style="font-style:normal;color:var(--faded)">（酒馆里已禁用）</em>' : ''}</span>
+              <input class="chk" type="checkbox" data-act="presets.entry" data-index="${esc(entry.index)}" ${entry.selected ? 'checked' : ''}>
+              <span>${esc(entry.label ?? entry.name ?? `条目 ${entry.index}`)}${entry.enabled === false ? ' <em style="font-style:normal;color:var(--faded)">（酒馆里已禁用，勾了照样注入）</em>' : ''}</span>
             </div>`).join('') || '<div class="dt-pipe-row"><span>这个预设读不到条目</span></div>'}
           </div>
           <div class="dt-note">已选 ${selectedCount} 条 · 注入 ${fmtNumber(status.length ?? 0)} 字${status.active ? '' : ' · 读不到内容，等于没注入'}</div>
         ` : '<div class="dt-note">选「不使用」→ 不注入任何额外内容</div>'}
         <button class="dt-mini" style="margin-top:6px" type="button" data-act="presets.refresh">刷新列表</button>
+        ${status.lastReadAt ? `<div class="dt-note">上次读取 · ${esc(new Date(status.lastReadAt).toLocaleTimeString('zh-CN', { hour12: false }))}（没变化说明酒馆那边还没应用）</div>` : ''}
       </div>
     </details>
 

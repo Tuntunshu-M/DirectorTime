@@ -33,18 +33,25 @@ export function presetEntries(preset) {
  * 从预设里抠出内容文本。
  * @param {object} preset 预设对象
  * @param {number[]|null} selected 只取这些条目（空 / 不传 = 全部启用的条目）
+ *
+ * T-432：**用户显式勾选优先于酒馆的启用状态**。
+ * 勾了哪条就注入哪条，哪怕酒馆里把那条禁用了 —— 在本插件里勾选就是明确指令。
+ * 只有"一个都没勾"时才回落到"全部启用条目"（老行为，零回归）。
  */
 export function presetContentText(preset, selected = null) {
   if (typeof preset === 'string') return preset.trim();
   if (!preset || typeof preset !== 'object') return '';
 
-  const entries = presetEntries(preset).filter((entry) => entry.content && entry.enabled);
-  if (!entries.length) return '';
+  const all = presetEntries(preset).filter((entry) => entry.content);
+  if (!all.length) return '';
 
-  const picked = Array.isArray(selected) && selected.length
-    ? entries.filter((entry) => selected.includes(entry.index))
-    : entries;
-  return picked.map((entry) => entry.content).join('\n\n');
+  if (Array.isArray(selected) && selected.length) {
+    return all
+      .filter((entry) => selected.includes(entry.index))
+      .map((entry) => entry.content)
+      .join('\n\n');
+  }
+  return all.filter((entry) => entry.enabled).map((entry) => entry.content).join('\n\n');
 }
 
 export function createPresetService({ ctx, getPreset, setPreset } = {}) {
@@ -57,10 +64,16 @@ export function createPresetService({ ctx, getPreset, setPreset } = {}) {
   };
   const save = (patch) => setPreset?.({ ...current(), ...patch });
 
+  /** T-432：让"刷新到底生效没有"看得见 —— 每次真去读酒馆就打一个时间戳 */
+  let lastReadAt = 0;
+  const stamp = () => { lastReadAt = Date.now(); return lastReadAt; };
+
   /** 酒馆里可选的预设名；读不到就是空数组 */
   function list() {
     try {
-      return ctx?.listPresets?.() ?? [];
+      const names = ctx?.listPresets?.() ?? [];
+      stamp();
+      return names;
     } catch {
       return [];
     }
@@ -76,6 +89,7 @@ export function createPresetService({ ctx, getPreset, setPreset } = {}) {
       raw = null;
     }
     const picked = current().entries;
+    if (raw) stamp();
     return presetEntries(raw).map((entry) => ({
       ...entry,
       // 一条都没勾 = 用全部启用的条目（默认行为，与 T-418 一致）
@@ -103,6 +117,7 @@ export function createPresetService({ ctx, getPreset, setPreset } = {}) {
       length: content.length,
       // 选了名字但读不到内容 → 不算生效（比如预设被删了）
       active: Boolean(name && content),
+      lastReadAt,
     };
   }
 

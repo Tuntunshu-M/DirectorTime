@@ -120,6 +120,10 @@ export function createDefaultSettings() {
     maxRounds: 15,
     // 生成新阶段后拿侧写做一致性自检（T-402 §六，可关）
     consistencyCheck: true,
+    // T-431：流式拉取（默认开）—— 边收边拼，长生成不会超时；站子不支持时自动降级
+    stream: true,
+    // T-431：空闲超时毫秒（收到数据就续期；非法值回落 30000）
+    timeoutMs: 30000,
     // 用户指定的主目标（T-416；留空则由 AI 自己构思一个）
     objective: '',
     // 楼层节奏：每场最少 / 最多聊几楼（T-416；阶段自己的 pacing 可覆盖）

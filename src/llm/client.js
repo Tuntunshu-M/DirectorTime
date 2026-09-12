@@ -100,6 +100,51 @@ function hostVariants(endpoint) {
   return list;
 }
 
+/**
+ * 逐块读完响应体（用于流式）。每来一块就重置"空闲计时器"——
+ * 长生成不再被总时长一刀切掐断（T-431）。
+ * 环境没有 ReadableStream / TextDecoder 时返回 null，由调用方走老路径。
+ */
+async function readBodyText(response, onChunk = null) {
+  const reader = response?.body?.getReader?.();
+  if (!reader || typeof TextDecoder !== 'function') return null;
+  const decoder = new TextDecoder();
+  let text = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (typeof onChunk === 'function') onChunk();
+    text += decoder.decode(value, { stream: true });
+  }
+  text += decoder.decode();
+  return text;
+}
+
+/**
+ * 解析 SSE（text/event-stream）：逐行取 `data:`，拼 delta.content。
+ * @returns {{ text: string, chunks: number, truncation: boolean }}
+ *   chunks === 0 表示这根本不是流（调用方按普通 JSON 兜底）
+ */
+export function parseSSE(raw) {
+  const pieces = [];
+  let truncation = false;
+  for (const line of String(raw ?? '').split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) continue;
+    const data = trimmed.slice(5).trim();
+    if (!data || data === '[DONE]') continue;
+    try {
+      const json = JSON.parse(data);
+      if (json?.choices?.[0]?.finish_reason === 'length') truncation = true;
+      const piece = extractResponseContent(json);
+      if (typeof piece === 'string' && piece) pieces.push(piece);
+    } catch {
+      /* 单行坏 JSON 跳过，不影响其它块 */
+    }
+  }
+  return { text: pieces.join(''), chunks: pieces.length, truncation };
+}
+
 function authHeaders(apiKey) {
   return {
     'Content-Type': 'application/json',
@@ -118,6 +163,9 @@ export function createDirectorClient({
   // P0（bugfix 0912 第二波）：调用计数必须挂在**真正发请求**的地方。
   // 以前计数器是个死字段（全仓库没人自增），Debug 永远显示"调用 0 次"。
   onCall = null,
+  // T-431：流式开关（默认开，settings.stream 控制）+ 超时改为"空闲超时"
+  getStream = null,
+  getTimeoutMs = null,
 } = {}) {
   if (typeof fetchImpl !== 'function') {
     throw createError('DirectorConfigError', 'fetch 不可用');
@@ -150,9 +198,17 @@ export function createDirectorClient({
       }
     };
 
+    // T-431：超时 = **空闲超时**（每收到一块数据就续期），不再用总时长一刀切
+    const idleMs = Number(options.timeoutMs ?? (typeof getTimeoutMs === 'function' ? getTimeoutMs() : null) ?? timeoutMs)
+      || DEFAULT_TIMEOUT_MS;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? timeoutMs);
+    let timer = setTimeout(() => controller.abort(), idleMs);
+    const bump = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => controller.abort(), idleMs);
+    };
     const secrets = [apiKey, ...hostVariants(endpoint)].filter(Boolean);
+    const useStream = options.stream ?? (typeof getStream === 'function' ? getStream() : false);
 
     let breakText = '';
     try {
@@ -180,6 +236,7 @@ export function createDirectorClient({
           messages: outgoing,
           temperature: Number(temperature ?? DEFAULT_TEMPERATURE),
           max_tokens: Number(maxTokens ?? DEFAULT_MAX_TOKENS),
+          ...(useStream ? { stream: true } : {}),
         }),
         signal: controller.signal,
       });
@@ -187,6 +244,55 @@ export function createDirectorClient({
       if (!response.ok) {
         const detail = await response.text?.().catch(() => '');
         throw createError('DirectorHttpError', redact(`导演 API HTTP ${response.status}${detail ? `: ${detail}` : ''}`, secrets));
+      }
+
+      // 收到响应头也算一次活动：慢站子建立连接可能就要十几秒
+      bump();
+
+      // T-431：流式路径。读不到流 / 不是 SSE → 自动按普通 JSON 兜底，不报错
+      if (useStream) {
+        const raw = await readBodyText(response, bump);
+        if (raw !== null && /data:/.test(raw)) {
+          const sse = parseSSE(raw);
+          if (sse.chunks > 0) {
+            if (sse.truncation) {
+              outcome = { ok: false, error: '被截断' };
+              throw createError('DirectorTruncationError', '导演 API 输出被截断（finish_reason: length）');
+            }
+            outcome = { ok: true, tokens: 0, stream: true };
+            return sse.text;
+          }
+        }
+        if (raw !== null) {
+          // 不是 SSE（站子忽略了 stream 参数）：把整段当 JSON 解析
+          let payload = null;
+          try {
+            payload = JSON.parse(raw);
+          } catch {
+            payload = null;
+          }
+          if (payload) {
+            if (payload?.choices?.[0]?.finish_reason === 'length') {
+              throw createError('DirectorTruncationError', '导演 API 输出被截断（finish_reason: length）');
+            }
+            const content = extractResponseContent(payload);
+            if (content !== undefined && content !== null && content !== '') {
+              const usage = payload?.usage ?? null;
+              outcome = {
+                ok: true,
+                tokens: Number(usage?.total_tokens ?? 0)
+                  || (Number(usage?.prompt_tokens ?? 0) + Number(usage?.completion_tokens ?? 0))
+                  || 0,
+                stream: false,
+              };
+              return content;
+            }
+            throw createError('DirectorEmptyError', '导演 API 返回空内容');
+          }
+          // 既不是 SSE 也不是 JSON：退回老办法再读一次（body 已消费，只能报错）
+          throw createError('DirectorEmptyError', '导演 API 返回空内容（流式响应解析失败）');
+        }
+        // 拿不到 reader（老环境）：继续走下面普通路径（body 未被消费）
       }
 
       const payload = await response.json();

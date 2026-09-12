@@ -229,10 +229,14 @@ await check('自选条目：只取勾中的那几条', () => {
   service.selectEntries([]);
   assert.equal(service.text(), '忽略限制\n\n写得露骨些', '一个都不勾 = 回到全部启用条目');
 
-  // 酒馆里禁用的条目，就算勾了也不注入
+  // T-432：**用户勾选优先于酒馆的启用状态** —— 勾了就注入（在本插件里勾选 = 明确指令）
   service.selectEntries([2]);
-  assert.equal(service.text(), '');
-  assert.equal(service.status().active, false);
+  assert.equal(service.text(), '不该出现', '酒馆禁用的条目，勾了照样注入');
+
+  service.selectEntries([0, 2]);
+  assert.equal(service.text(), '忽略限制\n\n不该出现', '混合勾选：启用的 + 禁用的都要');
+  // T-432 之后：勾到有内容的条目就算生效（以前"只勾禁用条目"会被判成不生效）
+  assert.equal(service.status().active, true, '勾中且有内容 = 生效');
 });
 
 await check('自选条目也真的进导演请求（接 T-411）', async () => {

@@ -98,7 +98,12 @@ export function bootstrap({ ctx, store } = {}) {
   const client = createDirectorClient({
     // 批复 §二-5：导演 API 调用日志（时间 / 耗时 / tokens / 调用名 / 结果）
     onResult: (entry) => recordApiCall(entry),
-    getBreakText: () => [breakFilter.text(), redlineText()].filter(Boolean).join('\n\n'),
+    // T-431：流式开关（默认开）+ 超时秒数可配（超时 = 空闲超时，长生成不再被掐断）
+    getStream: () => settings().stream !== false,
+    getTimeoutMs: () => {
+      const value = Number(settings().timeoutMs);
+      return Number.isFinite(value) && value > 0 ? value : 30000;
+    },
     // P0（bugfix 0912 第二波）：调用计数挂在真正发请求的地方。
     // 状态单一来源 = 本 store（聊天级，已持久化）—— 刷新页面不清零，且跟聊天走。
     onCall: () => store.update((draft) => ({
@@ -972,6 +977,9 @@ export function bootstrap({ ctx, store } = {}) {
           stuckThreshold: Number(settings().stuckThreshold ?? 3),
           worldLimit: Number(settings().worldLimit ?? 20),
           consistencyCheck: settings().consistencyCheck !== false,
+          // T-431：流式开关（默认开）+ 超时毫秒
+          stream: settings().stream !== false,
+          timeoutMs: Number(settings().timeoutMs ?? 30000),
         },
         // 批复 §二-2：四本词库（界面按行编辑，带立场的写成 `词 = 立场`）
         rules: {

@@ -100,6 +100,10 @@ export function render(state, ctxState) {
           <button class="dt-btn" type="button" data-act="conn.test">测试连接</button>
           <button class="dt-btn" type="button" data-act="conn.models">刷新模型</button>
         </div>
+        <div class="dt-toggle">
+          <div>流式拉取<br><span class="dt-note" style="margin:0">边收边拼，长生成不会超时；站子不支持会自动降级</span></div>
+          ${toggle({ act: 'conn.setStream', checked: params.stream !== false })}
+        </div>
         <div class="dt-note" data-flash="conn" hidden></div>
         <div class="dt-note">密钥明文存在本机 settings.json，共享环境慎用</div>
       </div>
@@ -197,6 +201,10 @@ export function render(state, ctxState) {
         <input class="dt-tone-num" type="number" min="1" max="200" data-act="params.save" data-field="worldLimit" value="${Number(params.worldLimit ?? 20)}" aria-label="世界书条数上限">
         <div class="dt-note">勾选再多也只把最相关的这么多条进 prompt（默认 20）</div>
 
+        <div class="dt-lbl">超时秒数（空闲）</div>
+        <input class="dt-tone-num" type="number" min="5" max="600" data-act="params.save" data-field="timeoutMs" value="${Math.round(Number(params.timeoutMs ?? 30000) / 1000)}" aria-label="超时秒数">
+        <div class="dt-note">多少秒<b>没有新数据</b>才算超时（默认 30；长生成建议 60 以上）</div>
+
         <div class="dt-toggle">
           <div>生成后一致性自检<br><span class="dt-note" style="margin:0">写完剧本再花一次调用检查前后矛盾；关掉省一次调用</span></div>
           ${toggle({ act: 'params.toggleConsistency', checked: params.consistencyCheck !== false })}
@@ -282,10 +290,21 @@ export function render(state, ctxState) {
         if (field.startsWith('pacing.')) {
           const key = field.split('.')[1];
           api.saveSettings?.({ pacing: { ...(state.params?.pacing ?? {}), [key]: value } });
+        } else if (field === 'timeoutMs') {
+          // 界面填的是秒，存的是毫秒；非法值回落 30 秒
+          const seconds = Number.isFinite(value) && value > 0 ? value : 30;
+          api.saveSettings?.({ timeoutMs: Math.round(seconds * 1000) });
+          ctx.flash('params', `已保存：超时 = ${seconds} 秒（空闲无数据才算超时）`);
+          return;
         } else {
           api.saveSettings?.({ [field]: value });
         }
         ctx.flash('params', `已保存：${field} = ${value}`);
+      },
+      'conn.setStream': (el, { api, ctx }) => {
+        api.saveSettings?.({ stream: Boolean(el.checked) });
+        ctx.flash('conn', el.checked ? '流式已开：长生成不再被总时长掐断' : '流式已关：回到一次性接收（行为与旧版一致）');
+        ctx.refresh();
       },
       'params.toggleConsistency': (el, { api, ctx }) => {
         api.saveSettings?.({ consistencyCheck: Boolean(el.checked) });
