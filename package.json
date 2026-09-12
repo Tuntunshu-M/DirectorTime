@@ -1,6 +1,6 @@
 {
   "name": "director-time",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "description": "导演时间 · SillyTavern 扩展：外置自动剧本生成器",
   "type": "module",
   "private": true

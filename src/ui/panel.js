@@ -27,7 +27,7 @@ const TABS = [
 ];
 
 /** 界面版本号：控制台 `DirectorTime.uiVersion` 一看就知道跑的是不是新代码（旧代码没有这个键） */
-export const UI_VERSION = '0.9.3';
+export const UI_VERSION = '0.9.4';
 
 const PALETTE_KEY = 'dt-palette';
 const LAYER_NAMES = { world: '世界书', prompt: '提示词', settings: '设置', debug: '调试面板' };
@@ -73,6 +73,8 @@ export function renderPanel(state, uiState = {}) {
         </span>
       </div>
       <div class="dt-status"><i class="dt-dot${state.enabled ? '' : ' dt-dot-off'}"></i><span>${esc(statusText)}</span></div>
+      <!-- 全局提示位：动作出错/没接线就写在这儿（一直可见，不用开控制台） -->
+      <div class="dt-flash" data-flash="global" hidden></div>
     </header>
 
     <nav class="dt-tabs">
@@ -140,12 +142,25 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
     return LAYER_NAMES[from] ?? BASE_NAME;
   }
 
-  function flash(key, text, intoFoot = false) {
+  /** 事件到达统计 + 最近一次动作/错误（诊断用：把"事件到没到"和"动作对不对"分开） */
+  const stats = { seen: 0, byType: {}, lastAct: '', lastError: '', lastAt: 0 };
+
+  function flash(key, text) {
     const target = card?.querySelector(`[data-flash="${key}"]`);
     if (!target) return;
     target.hidden = false;
     target.textContent = text;
-    if (intoFoot && !target.textContent) target.textContent = text;
+  }
+
+  /**
+   * 出错要**在界面上**说（批复 §〇之二 强烈建议）：
+   * 以前只 console.warn —— 用户看到的是"点了没反应"，还得每次开控制台猜。
+   * 现在同时写全局提示位（抬头下方，一直可见）＋控制台留详细堆栈。
+   */
+  function surface(text, detail = '') {
+    stats.lastError = text;
+    flash('global', text);
+    console.warn(`[导演时间] ${text}`, detail);
   }
 
   function ctx() {
@@ -198,6 +213,12 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
       const target = event.target?.closest?.('[data-act]');
       if (!target || !el.contains(target)) return;
 
+      // 统计"事件到底有没有到面板"：diagnose 里 seen=0 = 被宿主挡了 / 被透明层盖了
+      stats.seen += 1;
+      stats.byType[event.type] = (stats.byType[event.type] ?? 0) + 1;
+      stats.lastAct = target.dataset.act ?? '';
+      stats.lastAt = Date.now();
+
       // 实时过滤（世界书搜索）用 input；其余输入类交给 change（保存时才触发）
       if (event.type === 'input' && !String(target.dataset.act).endsWith('.search')) return;
       // 开关/单选由 click 处理（再收一次 change 会做两遍）
@@ -213,17 +234,17 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
       const name = target.dataset.act;
       const handler = actions[name];
       if (!handler) {
-        // 定稿 §2.1：做了控件没接动作 = 打回。这里不静默 —— 控制台点名
-        console.warn(`[导演时间] 控件没有接线：data-act="${name}"`, target);
+        // 定稿 §2.1：做了控件没接动作 = 打回。界面上+控制台都点名（别静默）
+        surface(`控件没有接线：${name}`, target);
         return;
       }
       try {
         const result = handler(target, ctx(), event);
         if (result && typeof result.catch === 'function') {
-          result.catch((error) => console.warn(`[导演时间] 动作 ${name} 出错`, error));
+          result.catch((error) => surface(`动作 ${name} 出错：${error?.message ?? error}`, error));
         }
       } catch (error) {
-        console.warn(`[导演时间] 动作 ${name} 抛异常`, error);
+        surface(`动作 ${name} 抛异常：${error?.message ?? error}`, error);
       }
     };
 
@@ -288,15 +309,7 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
         try { target.setSelectionRange?.(end, end); } catch { /* 某些 input 类型不支持 */ }
       }
     }
-    // 主面板右下角放一句提示（全局 flash）
-    if (!card.querySelector('[data-flash="global"]')) {
-      const hint = globalThis.document.createElement('div');
-      hint.className = 'dt-flash';
-      hint.dataset.flash = 'global';
-      hint.hidden = true;
-      hint.style.margin = '10px 13px 0';
-      card.querySelector('.dt-body')?.append(hint);
-    }
+    // 全局提示位由 shell 模板提供（抬头下方，任何分类页都可见）——这里不再动态塞
   }
 
   /**
@@ -388,8 +401,14 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
     isOpen,
     refresh: render,
     layer: openLayer,
-    /** 测试与自检用：当前渲染出来的控件 → 动作对照 */
-    inspect: () => ({ actions: Object.keys(actions), state, uiState: { ...uiState } }),
+    /** 测试与自检用：当前渲染出来的控件 → 动作对照 + 事件到达统计 */
+    inspect: () => ({
+      actions: Object.keys(actions),
+      stats: { ...stats, byType: { ...stats.byType } },
+      uiVersion: UI_VERSION,
+      state,
+      uiState: { ...uiState },
+    }),
     /**
      * 实机排障用（控制台 `DirectorTime.panel.diagnose()`）：
      * 面板塌成一条 / 没居中时，一眼看出是"外链样式没加载"还是"被宿主样式覆盖"。
@@ -409,6 +428,14 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
           cardHeight: 0,
           viewport: { w: globalThis.innerWidth ?? 0, h: globalThis.innerHeight ?? 0 },
           palette: uiState.palette,
+          controls: 0,
+          delegated: false,
+          layer: uiState.layer,
+          clicksSeen: stats.seen,
+          eventsByType: { ...stats.byType },
+          lastAct: '(还没点过面板)',
+          lastError: '(没有报错)',
+          hitTest: '(面板还没创建)',
           hint: '面板还没创建过（先点扩展菜单打开一次）；如果连 DirectorTime.uiVersion 都读不到，说明跑的还是旧代码 → 重启酒馆',
         };
       }
@@ -426,10 +453,17 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
         cardHeight: box ? Math.round(box.height) : 0,
         viewport: { w: globalThis.innerWidth ?? 0, h: globalThis.innerHeight ?? 0 },
         palette: uiState.palette,
-        // ---- 点不了时看这几项 ----
+        // ---- 点不了时看这几项（批复 §〇之二：把"事件到没到"与"动作对不对"分开）----
         controls: countControls(),
-        delegated: delegated,
+        delegated,
         layer: uiState.layer,
+        // 事件到达计数：先点一下面板上的按钮，再跑 diagnose ——
+        //   seen = 0 → 事件根本没到面板（被宿主拦 / 被透明层盖住，看 hitTest）
+        //   seen > 0 但界面没反应 → handler 的问题，看 lastAct / lastError
+        clicksSeen: stats.seen,
+        eventsByType: { ...stats.byType },
+        lastAct: stats.lastAct || '(还没点过面板)',
+        lastError: stats.lastError || '(没有报错)',
         // 卡片头部正中间那个点上，命中的是谁？（不是面板里的东西 = 被别的东西盖住了）
         hitTest: (() => {
           if (!box || typeof globalThis.document?.elementFromPoint !== 'function') return '(无法测量)';
@@ -442,7 +476,9 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
           ? '定位没生效 → 样式表没加载或被酒馆样式覆盖：先重启酒馆 / Ctrl+F5 强刷（CSS 会被浏览器缓存）'
           : (countControls() === 0
             ? '面板里一个控件都没有 → 渲染没跑完'
-            : '定位正常；点不了就看 controls / delegated / hitTest 这三项'),
+            : (stats.seen === 0
+              ? '还没收到任何面板内的点击：点一个按钮再看 clicksSeen；仍是 0 就看 hitTest 是不是"被外面盖住"'
+              : `事件能到（已收到 ${stats.seen} 次），最近一次动作 ${stats.lastAct || '—'}；动作出错会直接写在面板上`)),
       };
     },
   };

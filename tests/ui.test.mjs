@@ -273,11 +273,30 @@ check('点不了的兜底：没打开的弹层不吃点击、卡片自己收事�
   assert.ok(css.includes('#dt-panel button, #dt-panel input, #dt-panel select, #dt-panel textarea, #dt-panel summary, #dt-panel [data-act]{pointer-events:auto !important}'), '控件要能收事件');
 });
 
-check('面板自带 diagnose()（实机排障：一行看出样式到底有没有生效）', () => {
+check('动作出错要显示在界面上（不能只 console.warn）', () => {
+  const code = fs.readFileSync(new URL('../src/ui/panel.js', import.meta.url), 'utf8');
+  assert.ok(code.includes('function surface('), '要有一个"出错就往界面写"的出口');
+  assert.ok(code.includes('flash(\'global\', text)'), '出错要写到全局提示位');
+  assert.ok(code.includes('surface(`控件没有接线：${name}`'), '没接线也要写在界面上');
+  assert.ok(code.includes('surface(`动作 ${name} 抛异常：'), '抛异常要写在界面上');
+  assert.ok(code.includes('surface(`动作 ${name} 出错：'), '异步出错也要写在界面上');
+  // 壳里必须有全局提示位（抬头下方，任何分类页都看得见）
+  const { html } = renderPanel(fakeState(), { worldSources });
+  assert.ok(html.includes('data-flash="global"'), '壳里要有全局提示位');
+  assert.ok(html.indexOf('data-flash="global"') < html.indexOf('dt-tabs'), '提示位要在抬头区（切分类也看得到）');
+});
+
+check('面板自带 diagnose()（实机排障：一行看出样式/事件到底通没通）', () => {
   const panel = createMainPanel({ getApi: () => ({ ui: { read: () => fakeState() } }) });
   const result = panel.diagnose();
   assert.equal(result.exists, false, 'Node 里没 DOM，应该如实说没有');
-  assert.ok('position' in result && 'cssLoaded' in result && 'hint' in result);
+  for (const key of ['position', 'cssLoaded', 'hint', 'controls', 'delegated', 'clicksSeen', 'lastAct', 'lastError', 'hitTest']) {
+    assert.ok(key in result, `diagnose 缺字段 ${key}`);
+  }
+  // inspect 也要能看动作数与事件统计（批复里的 B/C 两步）
+  const info = panel.inspect();
+  assert.ok(Array.isArray(info.actions));
+  assert.ok('stats' in info && typeof info.uiVersion === 'string');
 });
 
 check('style.css 里不许出现 `#dt-panel :root`（那是永远匹配不到的后代选择器）', () => {
