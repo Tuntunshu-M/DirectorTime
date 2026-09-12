@@ -237,6 +237,10 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
       layer.classList.toggle('dt-layer-on', layer.dataset.layer === uiState.layer);
     });
     bind();
+    // 旧引擎不认 :has() —— 给选中的单选补一个 .dt-on（视觉兜底，见 style.css）
+    card.querySelectorAll('.dt-seg input:checked, .dt-radio input:checked').forEach((input) => {
+      input.closest?.('label')?.classList.add('dt-on');
+    });
     // 重绘后把焦点还给"正在打字"的那个控件（搜索框边打边过滤不丢焦点）
     if (uiState.focusAct) {
       const target = card.querySelector(`[data-act="${uiState.focusAct}"]`);
@@ -264,8 +268,13 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
     el = doc.createElement('div');
     el.id = 'dt-panel';
     el.dataset.palette = uiState.palette;
+    // 骨架几何**写死在内联样式上**：酒馆的全局样式会抢外链 CSS，样式万一没加载也不能塌
+    // （2026-09-12 实机反馈：面板变成页面里一条 = 定位没生效）
+    el.style.cssText = 'position:fixed;top:0;right:0;bottom:0;left:0;z-index:1000;box-sizing:border-box;'
+      + 'display:none;overflow:auto;padding:24px 14px;background:rgba(0,0,0,.5);';
     card = doc.createElement('div');
     card.className = 'dt-card-holder';
+    card.style.cssText = 'width:100%;max-width:440px;margin:0 auto;';
     el.append(card);
     doc.body.appendChild(el);
 
@@ -284,12 +293,16 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
     return el;
   }
 
-  function isOpen() { return Boolean(el?.classList.contains('dt-open')); }
+  function isOpen() {
+    // 显隐以**内联样式**为准（CSS 的 .dt-open 只是给样式表用的钩子）
+    return Boolean(el && el.style.display !== 'none' && el.classList.contains('dt-open'));
+  }
 
   function open() {
     ensure();
     if (!el) return null;
     el.classList.add('dt-open');
+    el.style.display = 'block'; // 不依赖外链 CSS（见 ensure 的注释）
     render();
     if (!uiState.worldSources) loadWorld(false);
     return el;
@@ -297,6 +310,7 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
 
   function hide() {
     el?.classList.remove('dt-open');
+    if (el) el.style.display = 'none';
     if (uiState.layer) { uiState.layer = null; uiState.stack = []; }
   }
 
@@ -315,5 +329,30 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
     layer: openLayer,
     /** 测试与自检用：当前渲染出来的控件 → 动作对照 */
     inspect: () => ({ actions: Object.keys(actions), state, uiState: { ...uiState } }),
+    /**
+     * 实机排障用（控制台 `DirectorTime.panel.diagnose()`）：
+     * 面板塌成一条 / 没居中时，一眼看出是"外链样式没加载"还是"被宿主样式覆盖"。
+     */
+    diagnose: () => {
+      const style = el && globalThis.getComputedStyle ? globalThis.getComputedStyle(el) : null;
+      const cardNode = card?.firstElementChild ?? card ?? null;
+      const box = cardNode?.getBoundingClientRect?.();
+      return {
+        exists: Boolean(el),
+        open: isOpen(),
+        position: style?.position ?? '(读不到)',
+        display: style?.display ?? '',
+        zIndex: style?.zIndex ?? '',
+        // --card 只在 style.css 的配色块里定义：读不到 = 外链样式根本没生效
+        cssLoaded: style ? Boolean(style.getPropertyValue('--card')) : false,
+        cardWidth: box ? Math.round(box.width) : 0,
+        cardHeight: box ? Math.round(box.height) : 0,
+        viewport: { w: globalThis.innerWidth ?? 0, h: globalThis.innerHeight ?? 0 },
+        palette: uiState.palette,
+        hint: style && style.position !== 'fixed'
+          ? '定位没生效 → 样式表没加载或被酒馆样式覆盖：先重启酒馆 / Ctrl+F5 强刷（CSS 会被浏览器缓存）'
+          : '定位正常；若仍不居中，看 cardWidth 是否等于 440 上下',
+      };
+    },
   };
 }

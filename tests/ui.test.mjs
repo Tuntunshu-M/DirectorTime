@@ -229,6 +229,36 @@ check('style.css 全部收在 #dt-panel 作用域里（没有裸选择器漏出�
   assert.ok(css.includes('#dt-panel[data-palette="b"]'), '要保留定稿的 B 版配色');
 });
 
+console.log('实机塌陷的两类原因（用户截图：面板变成页面里一条）');
+
+check('style.css 不许再用 `inset` 简写（旧引擎不认 → 定位失效 → 面板塌成一条）', () => {
+  const css = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+  const usesInset = css.split('\n').filter((line) => /(^|[\s{])inset\s*:/.test(line));
+  assert.deepEqual(usesInset, [], `这些地方要改成 top/right/bottom/left 四件套：\n${usesInset.join('\n')}`);
+});
+
+check('几何兜底：定位/居中/弹层都打 !important（酒馆宿主样式会抢）', () => {
+  const css = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+  assert.ok(css.includes('position:fixed !important'), '面板定位必须 !important');
+  assert.ok(css.includes('top:0 !important'), '四件套要 !important');
+  assert.ok(css.includes('#dt-panel .dt-card{width:100% !important;max-width:440px !important'), '卡片要限宽居中且不被覆盖');
+  assert.ok(css.includes('#dt-panel .dt-layer{position:absolute !important'), '弹层也要四件套兜底');
+});
+
+check('骨架几何写在 JS 内联样式里（外链样式没加载也不能塌）', () => {
+  const code = fs.readFileSync(new URL('../src/ui/panel.js', import.meta.url), 'utf8');
+  assert.ok(code.includes('el.style.cssText'), '根节点要有内联几何');
+  assert.ok(code.includes('position:fixed;top:0;right:0;bottom:0;left:0'), '内联几何要用四件套');
+  assert.ok(code.includes("el.style.display = 'block'"), '显隐也要走内联（不依赖外链 CSS）');
+});
+
+check('面板自带 diagnose()（实机排障：一行看出样式到底有没有生效）', () => {
+  const panel = createMainPanel({ getApi: () => ({ ui: { read: () => fakeState() } }) });
+  const result = panel.diagnose();
+  assert.equal(result.exists, false, 'Node 里没 DOM，应该如实说没有');
+  assert.ok('position' in result && 'cssLoaded' in result && 'hint' in result);
+});
+
 check('style.css 里不许出现 `#dt-panel :root`（那是永远匹配不到的后代选择器）', () => {
   const css = fs.readFileSync(new URL('../style.css', import.meta.url), 'utf8');
   assert.equal(css.includes('#dt-panel :root'), false, '写成 #dt-panel :root 的话字体变量永远不生效 —— 必须是 #dt-panel{');

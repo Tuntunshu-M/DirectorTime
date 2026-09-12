@@ -9,11 +9,33 @@
 @import url('https://fonts.loli.net/css2?family=Noto+Serif+SC:wght@400;500;600&family=Space+Mono:wght@400;700&display=swap');
 
 /* 面板本体：全屏遮罩 + 居中卡片（预览里这两件事由 body 承担） */
-#dt-panel{display:none;position:fixed;inset:0;z-index:1000;padding:24px 14px;overflow:auto;
+#dt-panel{display:none;position:fixed;top:0;right:0;bottom:0;left:0;z-index:1000;padding:24px 14px;overflow:auto;
   background:rgba(0,0,0,.5);font-family:var(--sans);color:var(--ink);transition:background .18s}
 #dt-panel.dt-open{display:block}
 #dt-panel *{box-sizing:border-box}
 #dt-panel .dt-card{width:100%;max-width:440px;margin:0 auto}
+
+/* ===== 几何兜底（酒馆里必须压住宿主页面的全局样式）=====
+ * 2026-09-12 用户实机反馈："面板没在正中央，变成页面里一条"。
+ * 两个原因：① 宿主页面（酒馆）有全局规则会抢定位/宽度；② 旧引擎不认 `inset` 简写。
+ * 所以：几何只用 top/right/bottom/left 四件套，并且**打 !important** ——
+ * 面板塌掉比丑严重得多（丑还能看，塌了就不能用）。改这几条前先想清楚。
+ */
+#dt-panel{position:fixed !important;top:0 !important;right:0 !important;bottom:0 !important;left:0 !important;box-sizing:border-box}
+#dt-panel.dt-open{display:block !important}
+#dt-panel .dt-card{width:100% !important;max-width:440px !important;margin:0 auto !important}
+#dt-panel .dt-layer{position:absolute !important;top:0 !important;right:0 !important;bottom:0 !important;left:0 !important}
+/* 抬头那排图标与分类页签：酒馆会把 button 拉宽 / 加内边距，这几条压住尺寸（截图里那排被拉宽的方片） */
+#dt-panel .dt-head-top{display:flex !important;align-items:baseline;gap:8px}
+#dt-panel .dt-tools{display:flex !important;align-items:center;gap:5px}
+#dt-panel .dt-icon{width:26px !important;height:26px !important;min-width:26px !important;flex:0 0 26px !important;padding:0 !important;line-height:1 !important}
+#dt-panel .dt-icon svg{width:14px !important;height:14px !important}
+#dt-panel .dt-tab{flex:1 1 0 !important}
+#dt-panel .dt-body{max-height:70vh !important}
+
+/* 旧引擎不认 :has() —— 选中态由 JS 补一个 .dt-on（与上面的 :has 规则保持一致） */
+#dt-panel .dt-seg label.dt-on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:600}
+#dt-panel .dt-radio label.dt-on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:600}
 
 #dt-panel{--mono:'Space Mono','JetBrains Mono','Cascadia Mono',ui-monospace,monospace;
   --serif:'Noto Serif SC','Source Han Serif SC','Songti SC','SimSun',serif;
@@ -123,7 +145,7 @@
 #dt-panel .dt-toggle:last-child{border-bottom:0}
 #dt-panel .dt-sw{position:relative;width:34px;height:18px;flex:0 0 34px}
 #dt-panel .dt-sw input{opacity:0;width:100%;height:100%;margin:0;cursor:pointer}
-#dt-panel .dt-sw i{position:absolute;inset:0;background:var(--field-2);border:1px solid var(--rule-soft);
+#dt-panel .dt-sw i{position:absolute;top:0;right:0;bottom:0;left:0;background:var(--field-2);border:1px solid var(--rule-soft);
   border-radius:99px;transition:.15s;pointer-events:none}
 #dt-panel .dt-sw i::after{content:'';position:absolute;left:2px;top:2px;width:12px;height:12px;border-radius:50%;
   background:var(--faded);transition:.15s}
@@ -150,7 +172,7 @@
   border:1px solid var(--rule-soft);border-radius:var(--radius);background:var(--field);cursor:pointer}
 #dt-panel .dt-radio label:has(input:checked){border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:600}
 #dt-panel .dt-radio input{accent-color:var(--accent)}
-#dt-panel .dt-layer{position:absolute;inset:0;z-index:20;background:var(--card);
+#dt-panel .dt-layer{position:absolute;top:0;right:0;bottom:0;left:0;z-index:20;background:var(--card);
   border:1px solid var(--rule);border-radius:var(--radius);display:none;flex-direction:column}
 #dt-panel .dt-layer-on{display:flex}
 #dt-panel .dt-layer-head{display:flex;align-items:center;gap:8px;padding:9px 11px;border-bottom:1px solid var(--rule)}
