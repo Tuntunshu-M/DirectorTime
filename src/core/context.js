@@ -163,6 +163,8 @@ export function createSillyTavernContext(contextProvider = defaultProvider) {
         worldInfo: hasFunction(host.loadWorldInfo) || hasFunction(host.getWorldInfoNames) || Array.isArray(host.world_names),
         // T-418：只声明"有取预设管理器的方法"，能不能真列出预设由 probe 的实测结果说话
         presets: hasFunction(host.getPresetManager),
+        // 一键更新：拿得到 CSRF 头才能调酒馆的写接口（拿不到也试，失败会如实返回）
+        requestHeaders: hasFunction(host.getRequestHeaders),
         // 主连接模式才需要；独立 API 模式禁用（禁则 G1）
         rawGeneration: hasFunction(host.generateRaw),
       };
@@ -200,6 +202,51 @@ export function createSillyTavernContext(contextProvider = defaultProvider) {
     /** 按名字读一个预设对象；读不到返回 null */
     readPreset(name) {
       return probePresetByName(findPresetManager(getHost()), name);
+    },
+
+    // ---------- 一键更新（T-420：在导演时间里点一下就更新 + 刷新）----------
+
+    /** 酒馆的 CSRF / 认证头；拿不到就返回空对象（更老版本可能不需要） */
+    getRequestHeaders() {
+      const host = getHost();
+      if (!hasFunction(host.getRequestHeaders)) return {};
+      try {
+        return host.getRequestHeaders() ?? {};
+      } catch {
+        return {};
+      }
+    },
+
+    /**
+     * 让酒馆自己把扩展更新到最新（内部就是 git pull）。
+     *
+     * ⚠️ 走的是酒馆的 REST 接口 `/api/extensions/update`，**不保证每个版本都有这个接口**。
+     * 所以这里的策略是"试了才知道"：拿不到成功响应就如实返回失败，
+     * 由调用方提示用户去「扩展」面板手动更新 —— 绝不假装成功（清单：探测不到就停下报告）。
+     *
+     * @param {{ name: string, global?: boolean }} options 酒馆认的扩展名（如 third-party/导演时间）
+     */
+    async updateExtension({ name, global = false } = {}) {
+      const label = String(name ?? '').trim();
+      if (!label) return { ok: false, reason: 'no-name' };
+
+      const host = getHost();
+      const doFetch = hasFunction(host.fetch) ? host.fetch : globalThis.fetch;
+      if (!hasFunction(doFetch)) return { ok: false, reason: 'no-fetch' };
+
+      try {
+        const response = await doFetch('/api/extensions/update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...ctx.getRequestHeaders() },
+          body: JSON.stringify({ extensionName: label, global: Boolean(global) }),
+        });
+        if (!response?.ok) {
+          return { ok: false, reason: `http-${response?.status ?? 'error'}`, status: response?.status ?? 0 };
+        }
+        return { ok: true, name: label };
+      } catch (error) {
+        return { ok: false, reason: 'network', error: error?.message ?? '' };
+      }
     },
 
     // ---------- 基础读取 ----------

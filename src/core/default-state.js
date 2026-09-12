@@ -136,6 +136,8 @@ export function createDefaultSettings() {
     breakFilter: { mode: 'off', custom: '' },
     // 破限预设（T-418）：选中的酒馆预设名 + 自选条目下标；空 = 没选（什么都不注入）
     preset: { name: '', entries: [] },
+    // 一键更新：上次试成功的扩展路径（T-420），下次先试它
+    updatePath: null,
     // 世界书：勾选的条目（entryKey → true）与进 prompt 的条数上限（项目书 §F1 / 附录建议 20）
     worldSelection: {},
     worldLimit: 20,

@@ -35,6 +35,8 @@ export function createMainPanel({
   // T-414：档位设置 + 待审核队列
   automation,
   queue,
+  // T-420：一键更新
+  update,
   loadWorldSources,
   getWorldSelection,
   saveWorldSelection,
@@ -135,14 +137,37 @@ export function createMainPanel({
       ${row('注入', status.injection.registered ? `已注册 · ${status.injection.length} 字` : '未注册')}
       ${row('上次动作', status.lastAction ? `${status.lastAction}（${status.lastReason ?? ''}）` : '—')}
       ${row('累计', `调用 ${status.cost.callCount} 次`)}
+      ${update ? row('版本', `v${update.version?.() || '—'}`) : ''}
       ${tip}
       <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
         ${enabled ? `<button id="dt-panel-generate" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">${noStage ? '生成剧本' : '重新生成剧本'}</button>` : ''}
         ${enabled && !noStage ? '<button id="dt-panel-extend" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">重新续写</button>' : ''}
         <button id="dt-panel-debug" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">打开调试面板</button>
+        ${update ? '<button id="dt-panel-update" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">更新插件</button>' : ''}
       </div>
+      <div id="dt-update-msg" style="margin-top:6px;opacity:.75"></div>
       ${pendingBlock}
     `;
+
+    // T-420：一键更新 —— 成功就自动刷新；失败**不刷新**，给一句能照做的话
+    body.querySelector('#dt-panel-update')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      const msg = body.querySelector('#dt-update-msg');
+      button.disabled = true;
+      button.textContent = '更新中…';
+      if (msg) msg.textContent = '正在让酒馆拉取最新版本…';
+      try {
+        const result = await update.apply?.();
+        if (msg) msg.textContent = result?.message ?? '';
+        if (result && result.ok === false) console.warn('[导演时间] 一键更新失败', result);
+      } catch (error) {
+        if (msg) msg.textContent = '更新出错，请到酒馆的「扩展」面板手动点更新';
+        console.warn('[导演时间] 一键更新异常', error);
+      } finally {
+        button.disabled = false;
+        button.textContent = '更新插件';
+      }
+    });
 
     // 待确认：采用 = 让判别结果真正生效（T-414 L1）
     body.querySelectorAll('[data-dt-approve]').forEach((button) => {

@@ -22,6 +22,7 @@ import { findUserDirectives, findFinishedLines, describeIssues } from './directo
 import { normalizeProtagonists, protagonistText } from './world/cast.js';
 import { gate, setLevel, normalizeAutomation } from './core/automation.js';
 import { createReviewQueue } from './core/review-queue.js';
+import { extensionFolderFromUrl, createExtensionUpdater, checkForUpdate } from './core/update-check.js';
 import { toneText as coreToneText, rebalanceTone, normalizeTone, TONE_KEYS } from './core/tone.js';
 import { createDefaultRules } from './core/default-state.js';
 import { exportCopy, previewCopy, applyCopy } from './core/portable.js';
@@ -644,6 +645,31 @@ export function bootstrap({ ctx, store } = {}) {
   }
 
   // 主页面：总开关 + 运行状态 + 配置 + 生成剧本；由菜单栏入口打开
+  // T-420 一键更新：在导演时间里点一下就更新 + 自动刷新
+  const MANIFEST_URL = new URL('../manifest.json', import.meta.url).href;
+  const updater = createExtensionUpdater({
+    ctx,
+    folder: extensionFolderFromUrl(import.meta.url),
+    // 更新成功后交给"版本检查"去刷新：它会记下新版本 + 打 sessionStorage 标记，避免重复刷新
+    refreshVersion: () => checkForUpdate({
+      ctx,
+      store,
+      manifestUrl: `${MANIFEST_URL}?t=${Date.now()}`,
+      sessionStore: globalThis.sessionStorage,
+    }),
+    reload: () => globalThis.location?.reload?.(),
+    // 上次试成功的那条路径记下来，下次先试它（也便于排查"这个酒馆认哪种名字"）
+    remembered: () => settings().updatePath,
+    remember: (candidate) => store.saveSettings({ updatePath: candidate }),
+    delayMs: 400, // 面板上要来得及显示"更新完成"
+  });
+  const updateApi = {
+    folder: () => updater.folder,
+    path: () => settings().updatePath ?? null,
+    version: () => settings().loadedVersion ?? '',
+    apply: () => updater.apply(),
+  };
+
   // T-414：档位与待确认队列的读写口（面板与配置页共用）
   const automationApi = {
     get: () => normalizeAutomation(settings().automation),
@@ -668,6 +694,8 @@ export function bootstrap({ ctx, store } = {}) {
     // T-414：档位设置 + 待确认队列（生成出来的剧本要在这儿「采用」才生效）
     automation: automationApi,
     queue: queueApi,
+    // T-420：一键更新（面板上的「更新插件」）
+    update: updateApi,
     getCapabilities: () => ctx.capabilities,
     getLast: () => review.getLastTurn(),
     onTest: () => client.testConnection(settings().connection ?? {}),
@@ -725,6 +753,8 @@ export function bootstrap({ ctx, store } = {}) {
     // T-414：三级自动化档位 + 待审核队列（同上面板/配置页用的那份）
     automation: automationApi,
     queue: queueApi,
+    // T-420：一键更新（面板「更新插件」按钮背后就是它）
+    update: updateApi,
     // T-413 副本迁移：整个副本搬走 / 搬回来
     copy: {
       export: () => exportCopy({ state: store.get(), settings: settings(), profile: profile.read() }),
