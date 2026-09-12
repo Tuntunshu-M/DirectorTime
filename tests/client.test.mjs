@@ -140,4 +140,47 @@ await check('redact 替换所有出现的密钥', () => {
   assert.equal(redact('key sk-1 and sk-1', ['sk-1']), 'key [REDACTED] and [REDACTED]');
 });
 
+console.log('调用计数（P0：以前计数器是死的，Debug 永远显示 0 次）');
+
+await check('onCall 在真正发请求时计数', async () => {
+  let calls = 0;
+  const client = createDirectorClient({
+    fetchImpl: async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: 'ok' } }] }) }),
+    onCall: () => { calls += 1; },
+  });
+  await client.request({ endpoint: 'https://x/v1', model: 'm', messages: [{ role: 'user', content: 'a' }] });
+  await client.request({ endpoint: 'https://x/v1', model: 'm', messages: [{ role: 'user', content: 'b' }] });
+  assert.equal(calls, 2);
+});
+
+await check('配置不全（没端点 / 没模型）时不算调用 —— 根本没发出去', async () => {
+  let calls = 0;
+  const client = createDirectorClient({
+    fetchImpl: async () => ({ ok: true, json: async () => ({}) }),
+    onCall: () => { calls += 1; },
+  });
+  await assert.rejects(() => client.request({ endpoint: '', model: '', messages: [] }));
+  await assert.rejects(() => client.request({ endpoint: 'https://x/v1', model: '', messages: [] }));
+  assert.equal(calls, 0);
+});
+
+await check('请求失败也要计数（发出去了就算一次）', async () => {
+  let calls = 0;
+  const client = createDirectorClient({
+    fetchImpl: async () => ({ ok: false, status: 500, text: async () => 'boom' }),
+    onCall: () => { calls += 1; },
+  });
+  await assert.rejects(() => client.request({ endpoint: 'https://x/v1', model: 'm', messages: [] }));
+  assert.equal(calls, 1, 'HTTP 失败也是一次真实调用');
+});
+
+await check('onCall 自己抛错不能影响请求', async () => {
+  const client = createDirectorClient({
+    fetchImpl: async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: 'ok' } }] }) }),
+    onCall: () => { throw new Error('计数炸了'); },
+  });
+  const text = await client.request({ endpoint: 'https://x/v1', model: 'm', messages: [] });
+  assert.equal(text, 'ok');
+});
+
 console.log(`\n通过 ${passed} 项`);

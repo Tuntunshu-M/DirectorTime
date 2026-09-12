@@ -24,7 +24,7 @@ export function migrate(raw) {
 
   // 来自未来的版本：不猜，直接按当前默认结构兜底，但保留原数据副本便于排查
   if (version > SCHEMA_VERSION) {
-    return { ...createDefaultState(), ...state, schemaVersion: SCHEMA_VERSION };
+    return dropLegacyFields({ ...createDefaultState(), ...state, schemaVersion: SCHEMA_VERSION });
   }
 
   while (version < SCHEMA_VERSION) {
@@ -35,5 +35,16 @@ export function migrate(raw) {
   }
 
   // 补齐所有缺失字段（新增字段后老数据也不会缺）
-  return { ...createDefaultState(), ...state, schemaVersion: SCHEMA_VERSION };
+  return dropLegacyFields({ ...createDefaultState(), ...state, schemaVersion: SCHEMA_VERSION });
+}
+
+/**
+ * 删掉已经搬家的老字段，保证"一个东西只有一个来源"。
+ * `automation`：档位现在只存在 settings（配置页写、运行时读），
+ * 以前聊天级也存了一份，Debug 读的是那份 → 永远看到默认值（bugfix 0912 P1-2）。
+ */
+function dropLegacyFields(state) {
+  const next = { ...state };
+  delete next.automation;
+  return next;
 }

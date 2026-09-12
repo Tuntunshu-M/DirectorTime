@@ -57,6 +57,8 @@ export function breakFilterLine(status) {
 /** 纯函数：把当前状态整理成 Debug 需要的结构 */
 export function buildDebugState({
   store, registry, last = null, capabilities = null, lastTurn = null, lastRequest = null, breakStatus = null,
+  // P1-2：档位只有一个来源（settings），由调用方传进来；读聊天级状态会永远看到默认值
+  automation = null,
 } = {}) {
   const state = store?.get?.() ?? {};
   const stages = state.stages ?? [];
@@ -90,7 +92,10 @@ export function buildDebugState({
     lastJudgement: last?.judgement ?? null,
     lastAction: last?.action ?? null,
     // T-414：当前档位一行看完 —— 排查时先确认"是不是档位设错了"
-    automation: automationText(state.automation),
+    // 来源是 settings（配置页写的那份），不是聊天级状态（P1-2）
+    automation: automationText(automation),
+    // P2：上一轮实际发出去的注入快照 + 那一轮投机命中情况
+    lastInjection: state.runtime?.lastInjection ?? null,
     lastReason: last?.reason ?? null,
     lastRaw: last?.raw ?? '',
     turn: lastTurn ?? null,
@@ -112,9 +117,15 @@ const PANEL_STYLE = `
   font-family:var(--dt-font-mono,ui-monospace,monospace); font-size:12px; line-height:1.6;
 `;
 
-export function createDebugPanel({ store, registry, getCapabilities, getLastTurn, getLastRequest, getBreakStatus } = {}) {
+export function createDebugPanel({
+  store, registry, getCapabilities, getLastTurn, getLastRequest, getBreakStatus,
+  // P1-2：档位读配置里的那份（单一来源）
+  getAutomation,
+} = {}) {
   let el = null;
   let last = null;
+  // P1-3：默认显示清洗后的文本，可以切回原文对照
+  let showRawReply = false;
 
   function ensure() {
     if (el) return el;
@@ -136,8 +147,6 @@ export function createDebugPanel({ store, registry, getCapabilities, getLastTurn
   }
 
   /** T-407：把命中率 / 待验证的预测压成一行 */
-
-  /** T-407：把命中率 / 待验证的预测压成一行 */
   function speculationLine(spec) {
     if (!spec) return '未启用';
     const parts = [];
@@ -154,11 +163,18 @@ export function createDebugPanel({ store, registry, getCapabilities, getLastTurn
       lastTurn: getLastTurn?.() ?? null,
       lastRequest: getLastRequest?.() ?? null,
       breakStatus: getBreakStatus?.() ?? null,
+      automation: getAutomation?.() ?? null,
     });
+
+    // P1-3：默认看清洗后的（判定实际吃到的就是这份），可以切回原文对照
+    const charView = showRawReply
+      ? (s.turn?.charMessageRaw ?? s.turn?.charMessage ?? '—')
+      : (s.turn?.charMessage || '—');
 
     node.innerHTML = `
       <div style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:8px">
         <span style="flex:1">◆ 导演时间 · 调试</span>
+        <button id="dt-debug-clean" type="button" title="切换 char 回复显示：清洗后 / 原文" style="font:inherit;padding:3px 8px;cursor:pointer">${showRawReply ? '看清洗后' : '看原文'}</button>
         <button id="dt-debug-close" type="button" aria-label="关闭调试面板" title="关闭" style="font:inherit;padding:3px 8px;cursor:pointer">✕</button>
       </div>
       <hr style="border:none;border-top:1px dashed var(--dt-rule,rgba(43,39,33,.28))">
@@ -180,14 +196,23 @@ export function createDebugPanel({ store, registry, getCapabilities, getLastTurn
           ${row('本轮实际用的注入', s.turn?.usedInjection ? `${s.turn.usedInjection.length} 字` : '（空：生成这条回复时还没有注入）')}
           ${s.turn?.injectionDrift ? row('⚠️ 注入断了', `上一轮注册了 ${s.turn.previousNextInjection} 字，这一轮生成时却是空的 —— 可能被别的扩展覆盖了同一个 key，或中途换过聊天`) : ''}
           ${row('模型尾巴', s.turn?.tails?.length ? describeTails(s.turn.tails) : '无')}
-          ${row('char 回', (s.turn?.charMessage || '—').slice(0, 100))}
+          ${row('char 回', `${showRawReply ? '（原文）' : '（清洗后）'} ${String(charView).slice(0, 100)}${s.turn?.charCleaned ? ' ｜ 含 thinking 之类，已清洗' : ''}`)}
           ${row('判定', s.turn ? `${s.turn.action}（${s.turn.reason}）` : '—')}
           ${row('投机', s.turn?.speculation ? `${s.turn.speculation.hit ? '命中' : '失手'}（猜「${s.turn.speculation.guess}」）` : '—')}
         </div>
         <pre style="white-space:pre-wrap;margin:6px 0">${escapeHtml(s.turn?.usedInjection || '（本轮没有注入内容）')}</pre>
-        <details><summary>下轮将注入</summary>
-          <pre style="white-space:pre-wrap;margin:6px 0">${escapeHtml(s.turn?.nextInjection || '（空）')}</pre>
+        <details open><summary>下轮将注入（读的就是注入器当前注册的那份）</summary>
+          <pre style="white-space:pre-wrap;margin:6px 0">${escapeHtml(s.injection.text || '（空：当前没有注册注入）')}</pre>
         </details>
+      </details>
+      <details style="margin-top:6px"><summary>上一轮注入（快照，含当时投机结果）</summary>
+        <div style="margin:6px 0">
+          ${row('时间', s.lastInjection?.at ? new Date(s.lastInjection.at).toLocaleTimeString() : '—')}
+          ${row('那场戏', s.lastInjection?.stageTitle || '—')}
+          ${row('投机', s.lastInjection?.speculation ? `${s.lastInjection.speculation.hit ? '命中' : '失手'}（猜「${s.lastInjection.speculation.guess}」）` : '这一轮没投机')}
+          ${row('字数', s.lastInjection?.text ? `${s.lastInjection.text.length} 字` : '（空）')}
+        </div>
+        <pre style="white-space:pre-wrap;margin:6px 0">${escapeHtml(s.lastInjection?.text || '（还没有快照：跑一轮复盘后就有了）')}</pre>
       </details>
       <details style="margin-top:6px"><summary>注入全文</summary>
         <pre style="white-space:pre-wrap;margin:6px 0">${escapeHtml(s.injection.text || '（空）')}</pre>
@@ -201,11 +226,23 @@ export function createDebugPanel({ store, registry, getCapabilities, getLastTurn
       <details style="margin-top:6px"><summary>上次发给导演 API（实际文本）</summary>
         <pre style="white-space:pre-wrap;margin:6px 0">${escapeHtml(s.lastRequest || '（还没有请求过）')}</pre>
       </details>
+      <details style="margin-top:6px"><summary>流程说明（链路一眼回忆）</summary>
+        <div style="margin:6px 0;opacity:.85">
+          1. 复盘结束 → 重新注册注入（=「已注册（下一轮用）」）<br>
+          2. 你发下一句 → 注入跟着 userinput 进 prompt → 生成 char 回复<br>
+          3. 复盘判定（推进点 / 态度）→ advance / 熔断 / 让步<br>
+          4. 换场或改写 → 投机（猜下一句意图）→ 回到第 1 步
+        </div>
+      </details>
       <div style="margin-top:10px"><button id="dt-debug-export" style="font:inherit;padding:4px 10px">导出状态 JSON</button></div>
     `;
 
     node.querySelector('#dt-debug-close')?.addEventListener('click', hide);
     node.querySelector('#dt-debug-export')?.addEventListener('click', exportJson);
+    node.querySelector('#dt-debug-clean')?.addEventListener('click', () => {
+      showRawReply = !showRawReply;
+      render();
+    });
     return s;
   }
 
@@ -238,6 +275,7 @@ export function createDebugPanel({ store, registry, getCapabilities, getLastTurn
       lastTurn: getLastTurn?.() ?? null,
       lastRequest: getLastRequest?.() ?? null,
       breakStatus: getBreakStatus?.() ?? null,
+      automation: getAutomation?.() ?? null,
     });
     const json = JSON.stringify(s, null, 2);
     try {

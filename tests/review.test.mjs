@@ -732,4 +732,66 @@ await check('换聊天时把上一轮记录清掉（resetTurn），避免串聊�
   assert.equal(service.getLastTurn(), null);
 });
 
+console.log('文本清洗与上一轮快照（bugfix 0912 第二波）');
+
+await check('P1-3：判定吃的是清洗后的回复，原文另存一份给 Debug 对照', async () => {
+  const env = makeEnv();
+  seed(env);
+  let seen = '';
+  const service = createReviewService({
+    checkpoint: { judge: async ({ charMessage }) => { seen = charMessage; return { action: 'hold', reason: 'x' }; } },
+    stages: env.stages, registry: env.registry, store: env.store,
+    getSettings: () => ({}),
+    getCleanRules: () => ({ enabled: true, rules: [] }),
+  });
+
+  await service.run({ userMessage: '嗯', charMessage: '<thinking>要不要逼问</thinking>他抬头看了你一眼。' });
+  assert.equal(seen.includes('thinking'), false, '判定输入不能带 thinking');
+  assert.ok(seen.includes('他抬头看了你一眼'), seen);
+
+  const turn = service.getLastTurn();
+  assert.ok(turn.charMessageRaw.includes('thinking'), '原文要留着');
+  assert.equal(turn.charCleaned, true, '要标记"这条被清洗过"');
+});
+
+await check('P1-3：关掉清洗 → 判定看到原文（配置真的生效）', async () => {
+  const env = makeEnv();
+  seed(env);
+  let seen = '';
+  const service = createReviewService({
+    checkpoint: { judge: async ({ charMessage }) => { seen = charMessage; return { action: 'hold', reason: 'x' }; } },
+    stages: env.stages, registry: env.registry, store: env.store,
+    getSettings: () => ({}),
+    getCleanRules: () => ({ enabled: false, rules: [] }),
+  });
+  await service.run({ userMessage: '嗯', charMessage: '<thinking>x</thinking>正文' });
+  assert.ok(seen.includes('thinking'), '关了清洗就该看到原文');
+});
+
+await check('P2：每轮跑完都存一份「上一轮注入」快照（含投机结果）', async () => {
+  const env = makeEnv();
+  seed(env);
+  const service = createReviewService({
+    checkpoint: { judge: async () => ({ action: 'hold', reason: 'x' }) },
+    speculate: {
+      settle: () => ({ hit: false, speculation: { guess: 'user 会拒绝', injection: 'x' } }),
+    },
+    stages: env.stages, registry: env.registry, store: env.store,
+    getSettings: () => ({}),
+  });
+
+  await service.run({ userMessage: '第一句' });
+  const first = env.store.get().runtime.lastInjection;
+  assert.ok(first, '要存快照');
+  assert.equal(first.text, service.getLastTurn().usedInjection, '快照就是这一轮实际生效的注入');
+  assert.equal(first.speculation.hit, false, '要记下那一轮投机命中没有');
+
+  await service.run({ userMessage: '第二句' });
+  assert.equal(
+    env.store.get().runtime.lastInjection.text,
+    service.getLastTurn().usedInjection,
+    '每轮覆盖成最新的那一轮'
+  );
+});
+
 console.log(`\n通过 ${passed} 项`);

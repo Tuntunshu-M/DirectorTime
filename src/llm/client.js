@@ -114,6 +114,9 @@ export function createDirectorClient({
   timeoutMs = DEFAULT_TIMEOUT_MS,
   // T-411：破限词只在这里加 —— 导演 API 请求的唯一出口，角色回复端拿不到
   getBreakText = null,
+  // P0（bugfix 0912 第二波）：调用计数必须挂在**真正发请求**的地方。
+  // 以前计数器是个死字段（全仓库没人自增），Debug 永远显示"调用 0 次"。
+  onCall = null,
 } = {}) {
   if (typeof fetchImpl !== 'function') {
     throw createError('DirectorConfigError', 'fetch 不可用');
@@ -145,6 +148,15 @@ export function createDirectorClient({
       breakText = ''; // 破限词出错不该阻断导演调用
     }
     const outgoing = prependToSystem(messages ?? [], breakText);
+
+    // 请求真的发出去了才计数（配置不全 / 没走到这一步的都不算）
+    if (typeof onCall === 'function') {
+      try {
+        onCall({ endpoint, model });
+      } catch {
+        /* 计数出问题不该影响请求 */
+      }
+    }
 
     try {
       const response = await fetchImpl(chatCompletionsUrl(endpoint), {

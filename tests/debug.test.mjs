@@ -6,6 +6,7 @@ import { buildDebugState, breakFilterLine } from '../src/ui/debug.js';
 import { createStateStore } from '../src/core/state.js';
 import { createStageService } from '../src/director/stage.js';
 import { normalizeStages } from '../src/director/outline.js';
+import { createDefaultAutomation } from '../src/core/default-state.js';
 
 let passed = 0;
 function check(name, fn) {
@@ -162,14 +163,47 @@ check('没有状态 → 破折号，不崩', () => {
   assert.equal(breakFilterLine(undefined), '—');
 });
 
-check('档位一行（T-414）：排查时能直接确认是不是档位设错了', () => {
+check('档位一行（P1-2）：读的是传进来的那份（settings），改完立刻反映', () => {
   const env = makeEnv();
-  const fresh = buildDebugState({ store: env.store }).automation;
+  const automation = { ...createDefaultAutomation() };
+  const fresh = buildDebugState({ store: env.store, automation }).automation;
   assert.ok(fresh.includes('大纲 L1'), fresh);
   assert.ok(fresh.includes('一致性自检 L2'), fresh);
 
-  env.store.update((d) => ({ ...d, automation: { ...d.automation, outline: 'L0' } }));
-  assert.ok(buildDebugState({ store: env.store }).automation.includes('大纲 L0'), '改档位要立刻反映');
+  automation.outline = 'L0';
+  assert.ok(
+    buildDebugState({ store: env.store, automation }).automation.includes('大纲 L0'),
+    '改档位要立刻反映（不需要重开面板）'
+  );
+
+  // 聊天级状态里的同名残留不许影响显示（以前就是被它骗的）
+  env.store.update((d) => ({ ...d, automation: { outline: 'L2', stageRegen: 'L2', profile: 'L2' } }));
+  assert.ok(
+    buildDebugState({ store: env.store, automation }).automation.includes('大纲 L0'),
+    '聊天级那份必须是死的'
+  );
+});
+
+check('「上一轮注入」快照会出现在 Debug（P2）', () => {
+  const env = makeEnv();
+  env.store.update((d) => ({
+    ...d,
+    runtime: {
+      ...d.runtime,
+      lastInjection: { text: '上一轮的注入全文', at: 1700000000000, stageTitle: '询问', speculation: { hit: false, guess: 'user 会拒绝' } },
+    },
+  }), { track: false });
+  const s = buildDebugState({ store: env.store });
+  assert.equal(s.lastInjection.text, '上一轮的注入全文');
+  assert.equal(s.lastInjection.speculation.hit, false);
+});
+
+check('「下轮将注入」的来源是注册器（单一来源，P0）', () => {
+  const env = makeEnv();
+  const registry = { getStatus: () => ({ registered: true, length: 136, text: '注册器里的那份' }) };
+  const s = buildDebugState({ store: env.store, registry });
+  assert.equal(s.injection.text, '注册器里的那份', 'Debug 要读注入器实际要用的那份');
+  assert.equal(s.injection.length, 136);
 });
 
 console.log(`\n通过 ${passed} 项`);

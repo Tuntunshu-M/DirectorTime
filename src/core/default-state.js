@@ -89,7 +89,8 @@ export function createDefaultCost() {
 export function createDefaultState() {
   return {
     schemaVersion: SCHEMA_VERSION,
-    automation: createDefaultAutomation(),
+    // 注：档位（automation）**只在 settings 里**（全局偏好 + 跨聊天）——
+    // 聊天级曾经也存过一份，导致 Debug 与配置页各看一份（bugfix 0912 P1-2，已删）
     outline: null,
     tone: createDefaultTone(),
     // 世界书选择（chat 级：每个聊天记自己勾了哪些条目）
@@ -141,6 +142,10 @@ export function createDefaultSettings() {
     modelPreset: { kind: 'off', custom: { claude: '', gemini: '' } },
     // 一键更新：上次试成功的扩展路径（T-420），下次先试它
     updatePath: null,
+    // 文本清洗（P1-3）：内置两条 thinking 规则 + 用户自定义正则；只作用于本插件消费的文本
+    textClean: { enabled: true, rules: [] },
+    // 三级自动化档位（T-414）：**唯一来源**，跨聊天（Debug 与配置页读的都是这份）
+    automation: createDefaultAutomation(),
     // 世界书：勾选的条目（entryKey → true）与进 prompt 的条数上限（项目书 §F1 / 附录建议 20）
     worldSelection: {},
     worldLimit: 20,

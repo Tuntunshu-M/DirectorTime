@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 import {
-  resolve, shouldRunCheckpoint, willTier, createWillService,
+  resolve, shouldRunCheckpoint, willTier, createWillService, willTierLabel, WILL_TIER_LABELS,
   DEFAULT_WILL, WILL_LOW_MAX, WILL_MID_MAX, CONFIDENCE_FLOOR,
 } from '../src/director/will.js';
 
@@ -231,6 +231,27 @@ await check('没有进行中的阶段 → 不调 API', async () => {
   const r = await service.judge({ stage: null, userMessage: 'x' });
   assert.equal(r.ok, false);
   assert.equal(called, false);
+});
+
+console.log('意愿档位文案（P1-1：文案与阈值只有一个来源）');
+
+await check('档位说明跟着 will 值走，阈值与决策表一致', () => {
+  assert.equal(willTierLabel(0), '剧情优先（char 会坚持）');
+  assert.equal(willTierLabel(33), '剧情优先（char 会坚持）');
+  assert.equal(willTierLabel(34), '平衡');
+  assert.equal(willTierLabel(45), '平衡', '45 必须是平衡 —— 这就是报的那个 bug');
+  assert.equal(willTierLabel(66), '平衡');
+  assert.equal(willTierLabel(67), 'user 优先（char 会让步）');
+  assert.equal(willTierLabel(90), 'user 优先（char 会让步）');
+  // 非法值回落默认档
+  assert.equal(willTierLabel('abc'), willTierLabel(DEFAULT_WILL));
+  assert.equal(willTierLabel(undefined), willTierLabel(DEFAULT_WILL));
+});
+
+await check('文案与 willTier 用的是同一套阈值（不会各说各话）', () => {
+  for (const value of [0, 33, 34, 66, 67, 100]) {
+    assert.equal(willTierLabel(value), WILL_TIER_LABELS[willTier(value)]);
+  }
 });
 
 console.log(`\n通过 ${passed} 项`);

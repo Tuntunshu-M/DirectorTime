@@ -91,7 +91,15 @@ check('强制爱默认关闭（T-405 §七：不开启就不该有任何变化�
 check('旧数据缺字段时补齐，不崩', () => {
   const state = migrate({ stages: [], schemaVersion: 0 });
   assert.equal(state.schemaVersion, SCHEMA_VERSION);
-  assert.ok(state.automation && state.runtime && state.cost);
+  assert.ok(state.runtime && state.cost);
+});
+
+check('档位只在 settings 里：聊天级状态不许再存一份（P1-2 单一来源）', () => {
+  // 老数据里如果残留 automation，迁移时必须删掉 —— 否则 Debug 又会读到那份默认值
+  const state = migrate({ stages: [], schemaVersion: 1, automation: { outline: 'L0' } });
+  assert.equal('automation' in state, false, '聊天级不该有 automation');
+  assert.equal(createDefaultSettings().automation.outline, 'L1', '档位的默认值在 settings 里');
+  assert.deepEqual(Object.keys(createDefaultSettings().automation).length, 6, '六个功能点都在');
 });
 
 check('未来版本不猜，按默认结构兜底', () => {

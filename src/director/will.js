@@ -25,6 +25,22 @@ export const WILL_LOW_MAX = 33; // 0~33   剧情优先
 export const WILL_MID_MAX = 66; // 34~66  平衡；67~100 user 优先
 export const CONFIDENCE_FLOOR = 0.7;
 
+/**
+ * 档位的中文说明（配置页直接用）。
+ * 放在这里是为了**阈值只有一个来源** —— 以前配置页把文案写死了，
+ * 拖到 45 还显示"user 优先"（bugfix 0912 第二波 P1-1）。
+ */
+export const WILL_TIER_LABELS = {
+  low: '剧情优先（char 会坚持）',
+  mid: '平衡',
+  high: 'user 优先（char 会让步）',
+};
+
+/** will 值 → 给人看的一句话 */
+export function willTierLabel(will) {
+  return WILL_TIER_LABELS[willTier(will)] ?? WILL_TIER_LABELS.mid;
+}
+
 /** 0~100 → 三档（不引入第四档） */
 export function willTier(will) {
   const value = Number(will);

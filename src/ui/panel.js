@@ -122,6 +122,8 @@ export function createMainPanel({
       last: getLast?.() ?? null,
       capabilities: getCapabilities?.() ?? null,
       lastTurn: getLast?.() ?? null,
+      // P1-2：档位读 settings 那份（单一来源）
+      automation: automation?.get?.() ?? null,
     });
     const noStage = status.stage.total === 0;
     const enabled = Boolean(getEnabled?.());

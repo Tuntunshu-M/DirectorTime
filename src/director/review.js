@@ -18,6 +18,7 @@ import { buildInstruction } from '../inject/instruction.js';
 import { resolvePacing } from './checkpoint.js';
 import { resolve, shouldRunCheckpoint } from './will.js';
 import { findReplyTails, describeTails } from './tail-guard.js';
+import { cleanText, wasCleaned } from '../llm/text-clean.js';
 import { needsInitiative, profileStamp } from './initiative.js';
 
 const SKIP_TYPES = ['regenerate', 'swipe', 'impersonate', 'quiet'];
@@ -40,6 +41,8 @@ export function createReviewService({
   initiative,
   speculate,
   getProfile,
+  // P1-3：文本清洗配置（判定输入要洗净，聊天记录本体不动）
+  getCleanRules,
   // T-412：当前要生成的角色（多人卡里用来判断"这场戏是不是他的"）
   getSpeaker,
   // T-414：L1 档的待审核队列
@@ -252,17 +255,22 @@ export function createReviewService({
 
       // 用户反馈 ②：模型自己加的尾巴（思考块 / "请选择剧情导向"）。
       // **只识别、只报警，不改写回复** —— 要根治得去角色预设那边关。
-      const tails = findReplyTails(input.charMessage ?? '');
+      const rawCharMessage = input.charMessage ?? '';
+      const tails = findReplyTails(rawCharMessage);
       if (tails.length) {
         console.warn(
           `[导演时间] char 回复里有模型尾巴（不是本插件注入的）：${describeTails(tails)}\n`
           + '建议：检查角色预设 / 破限词里是不是带了 <thinking> 规则，或要求"输出选项菜单"'
         );
       }
+
+      // P1-3：判定输入先过清洗层（<thinking> 之类会污染判定；聊天记录本体不动）
+      const cleanConfig = getCleanRules?.() ?? null;
+      const charMessage = cleanText(rawCharMessage, cleanConfig);
+      const charCleaned = wasCleaned(rawCharMessage, cleanConfig);
       const active = stages?.getActive?.();
       const activeId = active?.id;
       const userMessage = input.userMessage ?? '';
-      const charMessage = input.charMessage ?? '';
       const settings = getSettings?.() ?? {};
 
       // 0) 硬禁区（T-410）：user 说了 / 角色回了沾边的内容 → 命中即停。
@@ -273,6 +281,8 @@ export function createReviewService({
         lastTurn = {
           userMessage,
           charMessage,
+          charMessageRaw: rawCharMessage,
+          charCleaned,
           usedInjection,
           previousNextInjection: previousNext.length,
           injectionDrift,
@@ -364,16 +374,32 @@ export function createReviewService({
       await refreshInitiative(stages?.getActive?.());
 
       const injected = result.action === 'follow' ? clearInjection() : syncInjection();
+      // P2：把"这一轮实际发出去的注入"存成快照 —— 排查投机命中率时，得知道上一轮到底注入了什么
       store?.update?.((draft) => ({
         ...draft,
-        runtime: { ...draft.runtime, lastReviewAt: Date.now() },
+        runtime: {
+          ...draft.runtime,
+          lastReviewAt: Date.now(),
+          lastInjection: {
+            text: usedInjection,
+            at: Date.now(),
+            stageTitle: active?.title ?? '',
+            action: result.action,
+            speculation: speculated.speculation
+              ? { hit: speculated.hit, guess: speculated.speculation.guess }
+              : null,
+          },
+        },
       }));
 
       // 本轮回放：云酒馆看不到后台，这个就是排查的主要依据
       const judgement = result.judgement ?? preJudged?.judgement ?? null;
       lastTurn = {
         userMessage,
+        // 判定用的是清洗后的；原文留着给 Debug 切换查看（聊天记录本体一直没动）
         charMessage,
+        charMessageRaw: rawCharMessage,
+        charCleaned,
         usedInjection,
         // 上一轮注册了多少字（用来判断"注册是不是中途丢了"）
         previousNextInjection: previousNext.length,

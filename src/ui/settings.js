@@ -11,6 +11,8 @@
 import { PROFILE_FIELDS, PROFILE_FIELD_LABELS } from '../world/character.js';
 import { FEATURES, LEVELS, FEATURE_LABELS, LEVEL_LABELS } from '../core/automation.js';
 import { TONE_KEYS, TONE_LABELS } from '../core/tone.js';
+import { willTierLabel } from '../director/will.js';
+import { normalizeCleanRules, isValidCleanPattern } from '../llm/text-clean.js';
 
 const BTN = 'font:inherit;padding:3px 9px;cursor:pointer';
 
@@ -214,12 +216,13 @@ function modelPresetSection(modelPreset) {
 function willSection(store) {
   const s = store.getSettings();
   const will = Number(s.will ?? 80);
-  const dec = will <= 33 ? '剧情优先（char 会坚持）' : (will <= 66 ? '平衡' : 'user 优先（char 会让步）');
+  // 文案与阈值都来自 will.js（唯一来源）—— 以前这里把说明写死了，拖到 45 还显示"user 优先"（P1-1）
+  const dec = willTierLabel(will);
   return `
     <details style="margin-top:12px">
       <summary>用户意愿（我反对时 char 怎么反应）</summary>
       <div style="margin:8px 0">
-        <div>意愿权重 <b id="dt-will-value">${will}</b>　<span style="opacity:.7">${dec}</span></div>
+        <div>意愿权重 <b id="dt-will-value">${will}</b>　<span style="opacity:.7" id="dt-will-tier">${dec}</span></div>
         <input type="range" id="dt-will" min="0" max="100" value="${will}" style="width:100%">
         <div style="font-size:11px;opacity:.7">0~33 剧情优先 / 34~66 平衡 / 67~100 user 优先</div>
       </div>
@@ -227,6 +230,35 @@ function willSection(store) {
         <input type="checkbox" id="dt-force-affection" ${s.forceAffection ? 'checked' : ''}> 强制爱（我口头拒绝也不让步）
       </label>
       <div id="dt-will-msg" style="opacity:.75">强制爱只管"口头拒绝"；触及硬禁区、关总开关、犹豫/无关/转向都不受它影响</div>
+    </details>`;
+}
+
+/** 文本清洗（P1-3）：thinking 块之类只清洗本插件消费的文本 */
+function textCleanSection(store) {
+  const config = store.getSettings().textClean ?? { enabled: true, rules: [] };
+  const rules = config.rules ?? [];
+  const custom = rules.map((rule) => String(rule?.pattern ?? rule ?? '')).filter(Boolean).join('\n');
+  const bad = rules.map((rule) => String(rule?.pattern ?? rule ?? '')).filter((p) => p && !isValidCleanPattern(p)).length;
+
+  return `
+    <details style="margin-top:12px">
+      <summary>文本清洗（thinking 之类）</summary>
+      <label style="display:block;margin:8px 0 4px">
+        <input type="checkbox" id="dt-clean-on" ${config.enabled !== false ? 'checked' : ''}> 启用清洗
+      </label>
+      <div style="font-size:11px;opacity:.7">
+        内置规则：<code>&lt;thinking&gt;…&lt;/thinking&gt;</code>、<code>&lt;think&gt;…&lt;/think&gt;</code>（含未闭合、截断到结尾的情况）。<br>
+        只作用于<b>判定输入</b>与 <b>Debug 回放</b>，<b>不改聊天记录</b>。
+      </div>
+      <div>自定义正则（一行一条）</div>
+      <textarea id="dt-clean-rules" rows="3" style="${fieldStyle()}" placeholder="例：&lt;status&gt;[\\s\\S]*?&lt;/status&gt;">${escapeAttr(custom)}</textarea>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button id="dt-clean-save" type="button" style="${BTN}">保存</button>
+        <button id="dt-clean-reset" type="button" style="${BTN}">清空自定义</button>
+      </div>
+      <div id="dt-clean-msg" style="margin-top:6px;opacity:.75">
+        ${bad ? `⚠️ 有 ${bad} 条正则编译不过，运行时会跳过` : '写错的正则会自动跳过，不影响主流程'}
+      </div>
     </details>`;
 }
 
@@ -316,6 +348,7 @@ export function renderSettingsForm({
     ${profile ? profileSection(profile, extras?.cast) : ''}
 ${presets ? presetSection(presets, extras?.breakFilter) : ''}
 ${hardLimitsSection(store)}
+${textCleanSection(store)}
 ${willSection(store)}
 ${automation ? automationSection(automation) : ''}
 ${extras?.modelPreset ? modelPresetSection(extras.modelPreset) : ''}
@@ -537,10 +570,13 @@ ${extras?.copy ? copySection(extras.copy) : ''}
   // ---------- 用户意愿（T-405）----------
   {
     const slider = node.querySelector('#dt-will');
+    // 拖动时**数字与档位说明一起变**（P1-1：以前说明写死了）
     slider?.addEventListener('input', () => {
       const value = Number(slider.value);
       const label = node.querySelector('#dt-will-value');
+      const tier = node.querySelector('#dt-will-tier');
       if (label) label.textContent = String(value);
+      if (tier) tier.textContent = willTierLabel(value);
     });
     slider?.addEventListener('change', () => {
       const value = Number(slider.value);
@@ -558,6 +594,36 @@ ${extras?.copy ? copySection(extras.copy) : ''}
       if (msg) msg.textContent = event.target.checked ? '已开启强制爱：口头拒绝也不让步' : '已关闭强制爱：按意愿权重处理';
     });
   }
+
+  // ---------- 文本清洗（P1-3）----------
+  node.querySelector('#dt-clean-on')?.addEventListener('change', (event) => {
+    const current = store.getSettings().textClean ?? {};
+    store.saveSettings({ textClean: { enabled: event.target.checked, rules: current.rules ?? [] } });
+    const msg = node.querySelector('#dt-clean-msg');
+    if (msg) msg.textContent = event.target.checked ? '已启用清洗' : '已关闭清洗：判定会看到原文（thinking 也在）';
+  });
+  node.querySelector('#dt-clean-save')?.addEventListener('click', () => {
+    const lines = node.querySelector('#dt-clean-rules').value
+      .split('\n').map((line) => line.trim()).filter(Boolean);
+    const rules = normalizeCleanRules(lines);
+    const enabled = (store.getSettings().textClean ?? {}).enabled !== false;
+    store.saveSettings({ textClean: { enabled, rules } });
+    const bad = lines.filter((line) => !isValidCleanPattern(line));
+    const msg = node.querySelector('#dt-clean-msg');
+    if (msg) {
+      msg.textContent = bad.length
+        ? `已保存 ${rules.length} 条；其中 ${bad.length} 条编译不过（运行时跳过）`
+        : `已保存 ${rules.length} 条自定义规则（内置两条始终生效）`;
+    }
+  });
+  node.querySelector('#dt-clean-reset')?.addEventListener('click', () => {
+    const enabled = (store.getSettings().textClean ?? {}).enabled !== false;
+    store.saveSettings({ textClean: { enabled, rules: [] } });
+    const area = node.querySelector('#dt-clean-rules');
+    if (area) area.value = '';
+    const msg = node.querySelector('#dt-clean-msg');
+    if (msg) msg.textContent = '已清空自定义规则（内置两条仍在）';
+  });
 
   // ---------- 硬禁区（T-410）----------
   node.querySelector('#dt-hard-limits-save')?.addEventListener('click', () => {

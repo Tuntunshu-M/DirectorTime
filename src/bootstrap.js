@@ -26,6 +26,7 @@ import {
   BUILTIN_PRESETS, PRESET_LABELS, PRESET_KINDS, normalizeModelPreset, modelPresetText,
 } from './core/model-preset.js';
 import { createEditorService } from './director/editor.js';
+import { normalizeCleanRules } from './llm/text-clean.js';
 import {
   extensionFolderFromUrl, createExtensionUpdater, createUpdateChecker, checkForUpdate,
 } from './core/update-check.js';
@@ -93,6 +94,15 @@ export function bootstrap({ ctx, store } = {}) {
   const redlineText = () => modelPresetText(settings().modelPreset);
   const client = createDirectorClient({
     getBreakText: () => [breakFilter.text(), redlineText()].filter(Boolean).join('\n\n'),
+    // P0（bugfix 0912 第二波）：调用计数挂在真正发请求的地方。
+    // 状态单一来源 = 本 store（聊天级，已持久化）—— 刷新页面不清零，且跟聊天走。
+    onCall: () => store.update((draft) => ({
+      ...draft,
+      cost: {
+        sessionTotal: (draft.cost?.sessionTotal ?? 0) + 1,
+        callCount: (draft.cost?.callCount ?? 0) + 1,
+      },
+    }), { track: false }),
   });
   const stages = createStageService({ store });
   const outline = createOutlineService({
@@ -158,6 +168,8 @@ export function bootstrap({ ctx, store } = {}) {
     topUp: topUpStages,
     queue,
     getProfile: () => profile.read(),
+    // P1-3：判定输入要过清洗层（thinking 块不污染判定）
+    getCleanRules: () => settings().textClean,
     // T-412 多人卡：当前生成者是谁
     getSpeaker: () => ({
       id: ctx.getCharacterId?.() ?? '',
@@ -182,6 +194,8 @@ export function bootstrap({ ctx, store } = {}) {
   const debug = createDebugPanel({
     store,
     registry,
+    // P1-2：档位只有一个来源（settings）—— 以前 Debug 读聊天级那份，永远是默认值
+    getAutomation: () => automationApi.get(),
     getCapabilities: () => ctx.capabilities,
     getLastTurn: () => review.getLastTurn(),
     getLastRequest: () => lastDirectorRequest,
@@ -913,6 +927,26 @@ export function bootstrap({ ctx, store } = {}) {
     editor: { ...editorApi, truncateAndRegen },
     // T-403：模型特化预设（红线）
     modelPreset: modelPresetApi,
+    // P1-3：文本清洗规则（内置 thinking + 用户自定义正则）
+    textClean: {
+      get: () => ({
+        enabled: settings().textClean?.enabled !== false,
+        rules: normalizeCleanRules(settings().textClean?.rules),
+      }),
+      set: (next) => {
+        const current = settings().textClean ?? {};
+        const merged = {
+          enabled: next?.enabled === undefined ? current.enabled !== false : Boolean(next.enabled),
+          rules: normalizeCleanRules(next?.rules === undefined ? current.rules : next.rules),
+        };
+        store.saveSettings({ textClean: merged });
+        return merged;
+      },
+      reset: () => {
+        store.saveSettings({ textClean: { enabled: true, rules: [] } });
+        return { enabled: true, rules: [] };
+      },
+    },
     // T-413 副本迁移：整个副本搬走 / 搬回来
     copy: copyApi,
     // T-412：主角设置（可多选、持久化）
