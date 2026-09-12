@@ -30,9 +30,9 @@ export function icon(name) {
   return `<svg viewBox="0 0 24 24">${ICONS[name] ?? ''}</svg>`;
 }
 
-/** 工具图标按钮（抬头那五个） */
-export function iconButton({ act, name, title, cls = '' }) {
-  return `<button class="dt-icon${cls ? ` ${cls}` : ''}" type="button" data-act="${esc(act)}" title="${esc(title)}" aria-label="${esc(title)}">${icon(name)}</button>`;
+/** 工具图标按钮（抬头那五个）；layer 用来标明这个图标开哪一层 */
+export function iconButton({ act, name, title, cls = '', layer = '' }) {
+  return `<button class="dt-icon${cls ? ` ${cls}` : ''}" type="button" data-act="${esc(act)}"${layer ? ` data-open-layer="${esc(layer)}"` : ''} title="${esc(title)}" aria-label="${esc(title)}">${icon(name)}</button>`;
 }
 
 /** 带返回/关闭头的弹层外壳 */

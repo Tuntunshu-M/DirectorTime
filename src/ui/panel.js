@@ -27,7 +27,7 @@ const TABS = [
 ];
 
 /** 界面版本号：控制台 `DirectorTime.uiVersion` 一看就知道跑的是不是新代码（旧代码没有这个键） */
-export const UI_VERSION = '0.9.4';
+export const UI_VERSION = '0.9.5';
 
 const PALETTE_KEY = 'dt-palette';
 const LAYER_NAMES = { world: '世界书', prompt: '提示词', settings: '设置', debug: '调试面板' };
@@ -65,9 +65,9 @@ export function renderPanel(state, uiState = {}) {
         <span class="dt-sub">DIRECTOR TIME</span>
         <span class="spacer"></span>
         <span class="dt-tools">
-          ${iconButton({ act: 'shell.layer', name: 'book', title: '世界书', cls: 'dt-tool-world' })}
-          ${iconButton({ act: 'shell.layer', name: 'bars', title: '提示词 / 预设 / 清洗', cls: 'dt-tool-prompt' })}
-          ${iconButton({ act: 'shell.layer', name: 'gear', title: '设置', cls: 'dt-tool-settings' })}
+          ${iconButton({ act: 'shell.layer', name: 'book', title: '世界书', cls: 'dt-tool-world', layer: 'world' })}
+          ${iconButton({ act: 'shell.layer', name: 'bars', title: '提示词 / 预设 / 清洗', cls: 'dt-tool-prompt', layer: 'prompt' })}
+          ${iconButton({ act: 'shell.layer', name: 'gear', title: '设置', cls: 'dt-tool-settings', layer: 'settings' })}
           ${iconButton({ act: 'shell.theme', name: normalizePalette(uiState.palette) === 'a' ? 'moon' : 'sun', title: normalizePalette(uiState.palette) === 'a' ? '切到日间牛皮纸' : '切到夜间场记板' })}
           ${iconButton({ act: 'shell.debug', name: 'chart', title: '调试面板' })}
         </span>
@@ -88,10 +88,8 @@ export function renderPanel(state, uiState = {}) {
   const realActions = {
     'shell.tab': (el, { ctx }) => { ctx.setState({ view: el.dataset.view, layer: null }); ctx.refresh(); },
     'shell.layer': (el, { ctx }) => {
-      const cls = el.className;
-      const layer = cls.includes('dt-tool-world') ? 'world'
-        : (cls.includes('dt-tool-prompt') ? 'prompt' : 'settings');
-      ctx.openLayer(layer);
+      // 目标层写在 data-open-layer 上（不再靠 class 名猜 —— 猜法脆，改个样式就失效）
+      ctx.openLayer(el.dataset.openLayer || 'settings');
     },
     'shell.debug': (el, { ctx }) => { ctx.openLayer('debug'); },
     'shell.theme': (el, { ctx }) => { ctx.togglePalette(); },
@@ -238,8 +236,12 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
         surface(`控件没有接线：${name}`, target);
         return;
       }
+      // 调用约定（全项目统一）：handler(元素, { ctx, api, state }, 事件)
+      // —— 第二个参数是**打包对象**，不是 ctx 本身。以前直接传 ctx()，
+      //    (el, { ctx }) 解构出来就是 undefined → "Cannot read properties of undefined (reading 'setState')"
+      const context = ctx();
       try {
-        const result = handler(target, ctx(), event);
+        const result = handler(target, { ctx: context, api: context?.api ?? getApi(), state }, event);
         if (result && typeof result.catch === 'function') {
           result.catch((error) => surface(`动作 ${name} 出错：${error?.message ?? error}`, error));
         }

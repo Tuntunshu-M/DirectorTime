@@ -25,6 +25,18 @@ function check(name, fn) {
   }
 }
 
+/** 异步断言（要 await —— 否则失败会变成"没接住的 promise"，测试照样显示通过） */
+async function acheck(name, fn) {
+  try {
+    await fn();
+    passed += 1;
+    console.log(`  ✓ ${name}`);
+  } catch (error) {
+    console.error(`  ✗ ${name}\n    ${error.message}`);
+    process.exitCode = 1;
+  }
+}
+
 /** 一份尽量齐全的假状态（每个渲染分支都要能跑过） */
 function fakeState(patch = {}) {
   return {
@@ -514,6 +526,88 @@ check('调用日志：client 每次请求记一条（成功记 tokens、失败�
   assert.equal(log.length, 2);
   assert.equal(log[1].ok, false);
   assert.ok(log[1].error, '失败要记原因');
+});
+
+console.log('T-429 调用约定：每个动作都必须能被真的调起来（这次瘫痪的根因）');
+
+/**
+ * 约定（**不要再改**）：`handler(元素, { ctx, api, state }, 事件)`。
+ * 2026-09-12 瘫痪原因：panel.js 里写成 `handler(target, ctx(), event)` —— 第二个参数是打包对象，
+ * 直接把 ctx 传进去 → 每个 handler 里 `(el, { ctx })` 解构出 undefined → 全界面点击都炸。
+ * 下面这条测试**真的把每个动作调一遍**，谁破坏了约定立刻红。
+ */
+function fakeApi() {
+  const fn = () => undefined;
+  return new Proxy({}, {
+    get: (_, key) => {
+      if (key === 'then') return undefined; // 别被当成 thenable
+      return new Proxy(fn, { get: () => fn, apply: () => undefined });
+    },
+  });
+}
+
+function fakeCtx() {
+  return {
+    getState: () => ({}),
+    setState: () => {},
+    setModels: () => {},
+    refresh: () => {},
+    flash: () => {},
+    flashGlobal: () => {},
+    busy: () => {},
+    busyGlobal: () => {},
+    openLayer: () => {},
+    closeLayers: () => {},
+    backLayer: () => {},
+    togglePalette: () => {},
+    root: () => null,
+    api: fakeApi(),
+  };
+}
+
+/** 最小元素桩：handler 只读得到这些 */
+function fakeElement(act) {
+  return {
+    dataset: { act, id: 'x1', key: 'strong', field: 'maxRounds', feature: 'outline', index: '0', openLayer: 'world' },
+    className: '',
+    value: '好 = accept',
+    checked: true,
+    files: [],
+    type: 'checkbox',
+    tagName: 'BUTTON',
+    textContent: '',
+    classList: { add: () => {}, remove: () => {}, toggle: () => {}, contains: () => false },
+    closest: () => null,
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    focus: () => {},
+    setSelectionRange: () => {},
+    click: () => {},
+    getAttribute: () => '',
+  };
+}
+
+await acheck('每个动作用约定签名调一遍都不抛（含异步拒绝）', async () => {
+  const { html, actions } = renderPanel(fakeState(), { worldSources });
+  assert.ok(Object.keys(actions).length >= 30, `动作太少（${Object.keys(actions).length}）`);
+
+  const failures = [];
+  for (const [name, handler] of Object.entries(actions)) {
+    try {
+      const result = handler(fakeElement(name), { ctx: fakeCtx(), api: fakeApi(), state: fakeState() }, { type: 'click' });
+      if (result && typeof result.then === 'function') await result;
+    } catch (error) {
+      failures.push(`${name}: ${error?.message ?? error}`);
+    }
+  }
+  assert.deepEqual(failures, [], `这些动作按约定调用会炸：\n${failures.join('\n')}`);
+  assert.ok(html.length > 0);
+});
+
+check('panel.js 里必须用约定签名（不许再写回 handler(target, ctx(), event)）', () => {
+  const code = fs.readFileSync(new URL('../src/ui/panel.js', import.meta.url), 'utf8');
+  assert.equal(code.includes('handler(target, ctx(), event)'), false, '这就是 2026-09-12 全界面瘫痪的直接原因 —— 不许再写回来');
+  assert.ok(code.includes('handler(target, { ctx: context, api:'), '约定：handler(元素, { ctx, api, state }, 事件)');
 });
 
 console.log(`\n通过 ${passed} 项`);
