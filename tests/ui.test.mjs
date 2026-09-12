@@ -1,4 +1,4 @@
-// T-427 测试：UI 重做（定稿 §2.1 的两条硬性验收）
+// UI 重做测试（定稿 §2.1 的两条硬性验收）
 //
 //   □ 每个控件都有对应动作 —— 点了必须有反应（data-act 必须能在动作表里找到 handler）
 //   □ 每个功能都有可达入口 —— 从 UI 真能走到（动作表里的每一项都要真的出现在界面上）
@@ -9,7 +9,7 @@
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { renderPanel, createMainPanel, normalizePalette } from '../src/ui/panel.js';
+import { renderPanel, createMainPanel, normalizePalette, UI_VERSION } from '../src/ui/panel.js';
 import { bootstrap } from '../src/bootstrap.js';
 import { createStateStore } from '../src/core/state.js';
 
@@ -659,6 +659,17 @@ check('panel.js 里必须用约定签名（不许再写回 handler(target, ctx()
   const code = fs.readFileSync(new URL('../src/ui/panel.js', import.meta.url), 'utf8');
   assert.equal(code.includes('handler(target, ctx(), event)'), false, '这就是 2026-09-12 全界面瘫痪的直接原因 —— 不许再写回来');
   assert.ok(code.includes('handler(target, { ctx: context, api:'), '约定：handler(元素, { ctx, api, state }, 事件)');
+});
+
+console.log('版本号一致性（防再次漂移）');
+
+check('UI_VERSION === manifest.version === package.json version', () => {
+  const manifest = JSON.parse(fs.readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
+  const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+
+  assert.match(UI_VERSION, /^\d+\.\d+\.\d+$/, `UI_VERSION 得像版本号：${UI_VERSION}`);
+  assert.equal(UI_VERSION, manifest.version, '界面版本号必须与 manifest.json 一致（不然更新后会互相打脸）');
+  assert.equal(pkg.version, manifest.version, 'package.json 必须与 manifest.json 一致');
 });
 
 console.log(`\n通过 ${passed} 项`);
