@@ -142,4 +142,45 @@ await acheck('总开关关闭时收到消息不复盘（强制爱开着也一样
   }
 });
 
+await acheck('世界书选择 / 剧本 / 进度都按聊天记（切聊天不串）', async () => {
+  const chats = { A: {}, B: {} };
+  let current = 'A';
+  const ctx = {
+    capabilities: {},
+    getExtensionSettings: () => ({}),
+    saveSettings: () => true,
+    getChatState: () => chats[current],
+    saveChatState: () => {},
+    getMessages: () => [],
+    on: () => () => {},
+    showSystemMessage: () => {},
+    setExtensionPrompt: () => true,
+    clearExtensionPrompt: () => true,
+    characters: [{ name: 'C', data: { extensions: {} } }],
+    getCharacterId: () => 0,
+  };
+  const store = createStateStore(ctx, 'dt_chat_scope_test');
+  const api = bootstrap({ ctx, store });
+
+  // A 聊天：勾一个世界书条目 + 装载一份剧本
+  api.stages.load(normalizeStages([{ goal: 'A 的戏', checkpoint: { criteria: 'c', antiCriteria: 'a' } }]));
+  store.update((draft) => ({ ...draft, worldSelection: { k1: true } }));
+  assert.deepEqual(chats.A.dt_chat_scope_test.worldSelection, { k1: true }, '世界书选择要落进这一聊天的记录');
+  assert.equal(chats.A.dt_chat_scope_test.stages.length, 1, '剧本也在这一聊天的记录里');
+
+  // 切到 B：看不见 A 的东西
+  current = 'B';
+  store.load();
+  assert.deepEqual(store.get().worldSelection, {}, 'B 不该看到 A 的世界书选择');
+  assert.equal(store.get().stages.length, 0, 'B 不该看到 A 的剧本');
+  assert.equal(store.get().activeStageId, null, '进度也不串');
+
+  // 切回 A：原样还在
+  current = 'A';
+  store.load();
+  assert.deepEqual(store.get().worldSelection, { k1: true });
+  assert.equal(store.get().stages[0].goal, 'A 的戏');
+  assert.equal(store.get().activeStageId, store.get().stages[0].id, '进度（当前场）也恢复');
+});
+
 console.log(`\n通过 ${passed} 项`);

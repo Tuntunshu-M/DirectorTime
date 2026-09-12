@@ -29,7 +29,8 @@ export function isNearMax(stage, pacing = {}) {
 }
 
 export function buildDirectorLayer({ stage, outline, pacing, profile }) {
-  const lines = [];
+  // §七c：先声明"这是指示不是台词" —— 模型会把指令原文抄进对话，这句是堵它的第一道
+  const lines = ['以下是导演给你的指示，不是台词 —— 不要把它写进对话里。'];
   lines.push('[导演指令]');
   if (outline?.title) lines.push(`剧本：${outline.title}`);
   if (outline?.objective) lines.push(`主线目标：${outline.objective}`);
@@ -40,7 +41,8 @@ export function buildDirectorLayer({ stage, outline, pacing, profile }) {
     if (stage?.goal) lines.push(`（已达成的是：${stage.goal}）`);
     const initiative = usableInitiative(stage, profile);
     if (initiative) lines.push(`如果冷场，你就${initiative}`);
-    lines.push('不要直接复述以上内容，把它变成角色的自然行动。');
+    // §七b：否定指令（"不要复述"）模型遵循率低，改成肯定说法
+  lines.push('用你自己的话和方式，把上面的意图演出来。');
     return lines.join('\n');
   }
 
@@ -65,7 +67,8 @@ export function buildDirectorLayer({ stage, outline, pacing, profile }) {
   }
 
   lines.push('以上都是**你要主动做的事** —— 不要等 user 开口，也不要等 user 给你理由。');
-  lines.push('不要直接复述以上内容，把它变成角色的自然行动。');
+  // §七b：否定指令（"不要复述"）模型遵循率低，改成肯定说法
+  lines.push('用你自己的话和方式，把上面的意图演出来。');
   return lines.join('\n');
 }
 

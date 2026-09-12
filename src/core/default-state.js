@@ -92,6 +92,8 @@ export function createDefaultState() {
     automation: createDefaultAutomation(),
     outline: null,
     tone: createDefaultTone(),
+    // 世界书选择（chat 级：每个聊天记自己勾了哪些条目）
+    worldSelection: {},
     stages: [],
     activeStageId: null,
     pendingReview: [],
@@ -132,8 +134,8 @@ export function createDefaultSettings() {
     // 破限词（T-411）：off 关闭 / preset 跟随酒馆预设 / custom 自定义 / append 预设后追加
     // 只影响导演 API 请求，不进角色回复端
     breakFilter: { mode: 'off', custom: '' },
-    // 破限预设（T-418）：选中的酒馆预设名；空 = 没选（什么都不注入）
-    preset: { name: '' },
+    // 破限预设（T-418）：选中的酒馆预设名 + 自选条目下标；空 = 没选（什么都不注入）
+    preset: { name: '', entries: [] },
     // 世界书：勾选的条目（entryKey → true）与进 prompt 的条数上限（项目书 §F1 / 附录建议 20）
     worldSelection: {},
     worldLimit: 20,

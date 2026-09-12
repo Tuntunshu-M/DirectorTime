@@ -67,6 +67,44 @@ export function findUserDirectives(stages = []) {
   return issues;
 }
 
+/**
+ * §七：剧本里写死了"成品"（台词、完整句子）→ 模型会原样抄进对话，指令就露馅了。
+ * 只认"引用/说出+引号"这类痕迹，不误伤正常叙述。
+ */
+export const FINISHED_LINE_PATTERNS = [
+  // 引号里包着一整句（中英文引号都算）—— 用 \u 转义，免得被编辑器/编码偷偷换掉
+  /[\u201c"][^\u201c\u201d"]{2,}[\u201d"]/,
+  /[\u2018'][^\u2018\u2019']{2,}[\u2019']/,
+  /[「『][^」』]{2,}[」』]/,
+  // "他说：xxx" / "他问：xxx" —— 冒号后面就是成品台词
+  /(说|问|答|吼|喊|道)[:：]\s*\S/,
+];
+
+/** 找出把台词写死的字段（同上：只报警，不改剧本） */
+export function findFinishedLines(stages = []) {
+  const issues = [];
+  (Array.isArray(stages) ? stages : []).forEach((stage, stageIndex) => {
+    const fields = [
+      ['goal', stage?.goal],
+      ['activity', stage?.activity],
+      ...(stage?.beats ?? []).map((beat, index) => [`beats[${index}]`, beat]),
+      ['checkpoint.criteria', stage?.checkpoint?.criteria],
+    ];
+    for (const [field, value] of fields) {
+      const text = String(value ?? '');
+      if (!text.trim()) continue;
+      for (const pattern of FINISHED_LINE_PATTERNS) {
+        const hit = text.match(pattern);
+        if (hit) {
+          issues.push({ stageIndex, field, text, pattern: String(pattern), hit: hit[0] });
+          break;
+        }
+      }
+    }
+  });
+  return issues;
+}
+
 /** 报警文案（控制台用） */
 export function describeIssues(issues = []) {
   return issues

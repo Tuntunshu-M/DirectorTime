@@ -32,6 +32,9 @@ export function createMainPanel({
   profile,
   // T-418：破限预设（只读酒馆预设）
   presets,
+  // T-414：档位设置 + 待审核队列
+  automation,
+  queue,
   loadWorldSources,
   getWorldSelection,
   saveWorldSelection,
@@ -111,6 +114,19 @@ export function createMainPanel({
       `)
       : '<div style="margin-top:10px;opacity:.75">总开关没开，导演时间处于停用状态</div>';
 
+    // T-414：L1 档位的产物都在这儿等着 —— 没有这块，生成的剧本就没法启用
+    const pending = queue?.list?.() ?? [];
+    const pendingBlock = pending.length ? `
+      <div style="margin-top:10px">
+        <div style="opacity:.6;margin-bottom:4px">待确认 ${pending.length} 条（档位 L1，确认后才生效）</div>
+        ${pending.map((entry) => `
+          <div style="display:flex;gap:6px;align-items:flex-start;margin-bottom:4px">
+            <div style="flex:1">${escapeHtml(entry.summary || entry.feature)} <span style="opacity:.6">[${escapeHtml(entry.feature)}]</span></div>
+            <button data-dt-approve="${escapeHtml(entry.id)}" type="button" style="font:inherit;padding:2px 8px;cursor:pointer">采用</button>
+            <button data-dt-reject="${escapeHtml(entry.id)}" type="button" style="font:inherit;padding:2px 8px;cursor:pointer">丢弃</button>
+          </div>`).join('')}
+      </div>` : '';
+
     body.innerHTML = `
       <div style="opacity:.6;margin-bottom:4px">运行状态</div>
       ${row('阶段', noStage ? '还没有剧本' : `${status.stage.index}/${status.stage.total} ${status.stage.title}`)}
@@ -125,7 +141,25 @@ export function createMainPanel({
         ${enabled && !noStage ? '<button id="dt-panel-extend" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">重新续写</button>' : ''}
         <button id="dt-panel-debug" type="button" style="font:inherit;padding:4px 10px;cursor:pointer">打开调试面板</button>
       </div>
+      ${pendingBlock}
     `;
+
+    // 待确认：采用 = 让判别结果真正生效（T-414 L1）
+    body.querySelectorAll('[data-dt-approve]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        button.textContent = '处理中…';
+        const result = await queue.approve?.(button.dataset.dtApprove);
+        if (result && result.ok === false) console.warn('[导演时间] 采用失败：', result.error);
+        render();
+      });
+    });
+    body.querySelectorAll('[data-dt-reject]').forEach((button) => {
+      button.addEventListener('click', () => {
+        queue.reject?.(button.dataset.dtReject);
+        render();
+      });
+    });
 
     function wireBusy(selector, action) {
       body.querySelector(selector)?.addEventListener('click', async (event) => {
@@ -269,7 +303,7 @@ export function createMainPanel({
 
     const body = node.querySelector('#dt-panel-body');
     if (view === 'config') {
-      renderSettingsForm({ container: body, store, onTest, onSave, profile, presets });
+      renderSettingsForm({ container: body, store, onTest, onSave, profile, presets, automation });
     } else if (view === 'world') {
       renderWorld(body);
     } else {

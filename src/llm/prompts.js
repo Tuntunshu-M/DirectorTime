@@ -25,10 +25,10 @@ const OUTLINE_SHAPE = `{
       "goal": "这一场要达成什么",
       "activity": "char 的主要活动（只能写 char 做什么）",
     "checkpoint": {
-        "criteria": "达成条件（意图级、可观测；写 char 能独立完成的事）",
+        "criteria": "达成条件（char 单方面就能完成、意图级、可观测）",
         "antiCriteria": "明确的反意图（必填；这里可以写 user 的反应，但它是判定条件）"
       },
-      "beats": ["char 的动作一", "char 的动作二"],
+      "beats": ["char 的意图一（不要写成品台词）", "char 的意图二"],
       "initiative": "如果冷场，char 会主动做的一件事",
       "actorId": "这一场由哪个主角主导（填主角列表里的名字；只有一个主角就填空字符串）"
     }
@@ -49,10 +49,20 @@ const ACTOR_RULES = `【演员界定 —— 最重要的一条，违反则整份
 - goal：char 要达成什么，主语是 char —— 例："char 主动挑明昨晚的事，不让 user 回避"
 - activity：char 做什么，主语是 char —— 例："char 发来新消息，假装无事地提起"
 - beats：每一条都是 char 的动作 —— 例："char 发消息 → char 追问 → char 逼问到底"
-- checkpoint.criteria：char 能独立完成的事 —— 例："char 已把话题挑明，user 无法回避"
+- checkpoint.criteria：**char 单方面就能完成的事** —— 例："char 已把话题挑明，user 无法回避"。
+  **需要 user 配合才能达成的一律不合格**（"user 与某人见面""user 决定…"）——
+  user 不配合时这场也必须能走下去，否则剧情就卡死了。
 - checkpoint.antiCriteria：**唯一例外** —— 可以写 user 的反应，但它是**判定条件**，
   不是"让 user 这样做"（写"user 明确表示不想谈"可以；写"让 user 拒绝"不行）
 - 一句话原则：**每个字段的主语都必须是 char**，写 char 能独立完成的事。
+
+写**意图**，不要写成**成品**：
+- 禁止把台词、动作描述写死进 goal / activity / beats。
+  错："他打出了'随便你怎么想'这句话"
+  对："他不想多解释，冷冷地回一句"（具体台词由演员自己想）
+- 写死的成品会被模型原样抄进对话里，指令原文就露馅了。
+
+
 
 `;
 
@@ -171,12 +181,15 @@ user 说：{{userMessage}}
 输出要求：
 - 只输出 JSON，不要解释，不要 markdown 代码块标记
 - 严格遵循这个结构：
-{ "stages": [ { "title": "阶段名", "goal": "char 这一场要达成什么", "activity": "char 的主要活动（只能写 char 做什么）", "checkpoint": { "criteria": "达成条件（意图级、可观测；写 char 能独立完成的事）", "antiCriteria": "明确的反意图（必填；这里可以写 user 的反应，但它是判定条件）" }, "beats": ["char 的动作一", "char 的动作二"], "initiative": "如果冷场，char 会主动做的一件事", "actorId": "这一场由哪个主角主导（填主角列表里的名字）" } ] }
+{ "stages": [ { "title": "阶段名", "goal": "char 这一场要达成什么", "activity": "char 要做什么（写意图，不要写成品台词）", "checkpoint": { "criteria": "达成条件（char 单方面就能完成、意图级、可观测）", "antiCriteria": "明确的反意图（必填；这里可以写 user 的反应，但它是判定条件）" }, "beats": ["char 的意图一", "char 的意图二"], "initiative": "如果冷场，char 会主动做的一件事", "actorId": "这一场由哪个主角主导（填主角列表里的名字）" } ] }
 - 只写 {{count}} 个阶段，紧接着已经发生过的剧情往下走，不要重复已有阶段
 - 一个阶段只推进一件事；criteria 写意图级，不要写死具体名词；antiCriteria 必填
 - initiative 由「人物侧写」推导（同 GEN_OUTLINE）：侧写为空就填空字符串，不要瞎编
 - 每个字段的主语都必须是 char（goal / activity / beats / criteria 全一样）；
-  只有 antiCriteria 例外：它可以写 user 的反应，但那是判定条件，不是"让 user 这样做"`,
+  criteria 必须是 **char 单方面就能完成的事**（别写"user 走到某地"这种要 user 配合的）；
+  只有 antiCriteria 例外：它可以写 user 的反应，但那是判定条件，不是"让 user 这样做"
+- 写**意图**，不要写成**成品**：不要把台词写死（错："他打出了'随便你怎么想'这句话"；
+  对："他不想多解释，冷冷地回一句"）—— 写死的成品会被原样抄进对话里`,
     user: `剧本：{{title}}
 前提：{{premise}}
 当前主目标：{{objective}}

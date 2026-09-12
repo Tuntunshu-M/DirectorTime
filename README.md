@@ -91,8 +91,11 @@ DirectorTime.debug.show()
 
 ```js
 // 三级自动化档位：大纲 / 阶段重生成 / 侧写 / 立场判定 / 推进点判定 / 一致性自检
+// （配置页有下拉，直接点也行）
 DirectorTime.automation.set('outline', 'L2')   // L0 全手动 / L1 待确认 / L2 全自动
-DirectorTime.queue.list()                      // L1 档下待你确认的东西
+
+// L1 的产物都在「运行状态 → 待确认」里，面板上点「采用」才生效
+DirectorTime.queue.list()                      // 看还有哪些等着确认
 DirectorTime.queue.approve('pr_xxx')           // 确认后才生效
 
 // 剧情占比（三条线联动，和恒为 100）
@@ -105,9 +108,12 @@ DirectorTime.store.saveSettings({ hardLimits: ['自杀', '自残'] })
 DirectorTime.breakFilter.set({ mode: 'custom', custom: '……' })
 
 // 破限预设：直接选一个酒馆里已经调好的预设当破限词（只读，不改编它）
-DirectorTime.presets.list()          // 列出酒馆预设
-DirectorTime.presets.select('预设名') // 选中（配合 breakFilter 的 preset / append 模式）
-DirectorTime.presets.probe()         // 列不出来时，把这行结果发我 —— 它显示这个酒馆到底暴露了什么
+// 配置页的「预设」折叠区可以勾选：只取勾中的那几条（一个不勾 = 用全部启用的条目）
+DirectorTime.presets.list()            // 列出酒馆预设
+DirectorTime.presets.select('预设名')   // 选中（配合 breakFilter 的 preset / append 模式）
+DirectorTime.presets.entries()         // 看这个预设有哪些条目
+DirectorTime.presets.selectEntries([0, 2]) // 只取第 1、3 条
+DirectorTime.presets.probe()           // 列不出来时，把这行结果发我 —— 它显示这个酒馆到底暴露了什么
 
 // 主角（多人卡，可多选）
 DirectorTime.cast.set([{ name: '爱丽丝' }, { name: '鲍勃' }])

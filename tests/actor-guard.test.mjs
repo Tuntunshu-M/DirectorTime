@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { buildMessages } from '../src/llm/prompts.js';
 import { buildInstruction, buildDirectorLayer } from '../src/inject/instruction.js';
-import { findUserDirectives, describeIssues } from '../src/director/actor-guard.js';
+import { findUserDirectives, findFinishedLines, describeIssues } from '../src/director/actor-guard.js';
 
 let passed = 0;
 async function check(name, fn) {
@@ -46,7 +46,7 @@ await check('字段样例全部改成 char 的动作（不再有"角色主要活
   assert.equal(outline.includes('角色主要活动'), false, 'GEN_OUTLINE 不该再有"角色"这种两义词');
   assert.equal(extend.includes('角色主要活动'), false);
   assert.ok(outline.includes('char 的主要活动'));
-  assert.ok(outline.includes('char 的动作一'), 'beats 样例要示范 char 的动作');
+  assert.ok(outline.includes('char 的意图一'), 'beats 样例要示范 char 的意图（不是成品台词）');
   assert.ok(outline.includes('char 主动挑明昨晚的事'), 'goal 要给出正确样例');
 });
 
@@ -151,6 +151,63 @@ await check('收尾场 / 快到点的场保留既有话术（不回归）', () =
 await check('没内容的阶段依旧返回空串（不凭空注入）', () => {
   assert.equal(buildInstruction({}), '');
   assert.equal(buildInstruction({ stage: {} }), '');
+});
+
+console.log('P0 · §九 criteria 必须 char 单方面能完成');
+
+await check('prompt 写明：要 user 配合才能达成的 criteria 一律不合格', () => {
+  const outline = buildMessages('GEN_OUTLINE', {}).find((m) => m.role === 'system').content;
+  assert.ok(outline.includes('单方面就能完成'), '要写清判定标准');
+  assert.ok(outline.includes('需要 user 配合才能达成的一律不合格'), '要点名不合格的情况');
+  assert.ok(outline.includes('user 不配合'), '要说明理由（否则剧情卡死）');
+
+  const extend = buildMessages('EXTEND_OUTLINE', {}).find((m) => m.role === 'system').content;
+  assert.ok(extend.includes('单方面就能完成'));
+  assert.ok(extend.includes('要 user 配合'));
+});
+
+console.log('P0 · §七 写意图不给成品 + 复述防护');
+
+await check('prompt 写明：写意图，不要把台词写死', () => {
+  for (const name of ['GEN_OUTLINE', 'EXTEND_OUTLINE']) {
+    const system = buildMessages(name, {}).find((m) => m.role === 'system').content;
+    assert.ok(system.includes('写**意图**，不要写成**成品**'), `${name} 要讲清写意图`);
+    assert.ok(system.includes('随便你怎么想'), `${name} 要给"错"的样例`);
+    assert.ok(system.includes('冷冷地回一句'), `${name} 要给"对"的样例`);
+  }
+});
+
+await check('判据 7：注入开头标注"不是台词"', () => {
+  const text = buildInstruction({ stage: STAGE });
+  assert.ok(text.startsWith('以下是导演给你的指示，不是台词'), '必须放在最开头');
+  assert.ok(text.includes('不要把它写进对话里'));
+});
+
+await check('判据 6（本地可查部分）：台词写死的字段能被抓出来', () => {
+  const bad = [
+    { activity: '他打出了"随便你怎么想"这句话' },
+    { beats: ['他冷冷地说：随便你怎么想'] },
+    { beats: ['char 说「我们分手吧」'] },
+    { goal: 'char 原样说出“我不在乎”' },
+  ];
+  for (const stage of bad) {
+    const issues = findFinishedLines([{ ...stage, checkpoint: {} }]);
+    assert.equal(issues.length, 1, `应该抓出来：${JSON.stringify(stage)}`);
+  }
+  const good = [
+    { activity: '他不想多解释，冷冷地回一句' },
+    { beats: ['char 发消息', 'char 追问'] },
+    { goal: 'char 主动挑明昨晚的事' },
+  ];
+  for (const stage of good) {
+    assert.deepEqual(findFinishedLines([{ ...stage, checkpoint: {} }]), [], `不该误报：${JSON.stringify(stage)}`);
+  }
+});
+
+await check('§七b：复述那句否定指令换成肯定说法', () => {
+  const text = buildInstruction({ stage: STAGE });
+  assert.equal(text.includes('不要直接复述'), false, '否定指令要去掉');
+  assert.ok(text.includes('用你自己的话和方式，把上面的意图演出来'), '改成肯定说法');
 });
 
 console.log(`\n通过 ${passed} 项`);

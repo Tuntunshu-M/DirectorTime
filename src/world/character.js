@@ -119,9 +119,17 @@ export function createProfileService({ ctx, client, getConnection, now = Date.no
     }
 
     const data = parseDirectorResponse(raw, 'profile');
-    if (!data) return { ok: false, code: 'PARSE_FAILED', error: '侧写结果无法解析，未写入', raw };
+    if (!data) {
+      // 别让用户对着"一片空白"猜：原始返回直接打到控制台
+      console.warn('[导演时间] 侧写结果无法解析（需要至少 4 个字段有内容）。原始返回：\n', raw);
+      return { ok: false, code: 'PARSE_FAILED', error: '侧写结果无法解析（至少要 4 个字段有内容），未写入；原始返回已打到控制台', raw };
+    }
 
-    return { ok: true, fields: data, request: messages };
+    // 补齐八项：模型没写的按空字符串存，面板上看得见、改得动（P0 修正）
+    const fields = Object.fromEntries(
+      PROFILE_FIELDS.map((key) => [key, String(data[key] ?? '').trim()])
+    );
+    return { ok: true, fields, request: messages };
   }
 
   /** 生成并写入；**locked 的字段保留旧值**，只重生成未锁定的 */

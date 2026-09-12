@@ -72,12 +72,22 @@ export function isValidStages(data) {
   return data.stages.every(isValidStage);
 }
 
-/** 人物侧写八字段（T-402） */
+export const PROFILE_REQUIRED_FIELDS = ['coreDesire', 'fear', 'speech', 'attitudeToUser',
+  'conflictStyle', 'proactivity', 'intimacy', 'taboo'];
+
+/**
+ * 人物侧写八字段（T-402）。
+ *
+ * ⚠️ 修正：**不再要求八项全非空**。实测模型经常会留一两项写不出来（比如"亲密表达"对一个
+ * 不涉及亲密的角色就是空的），全非空的门槛会把整份侧写判死 —— 界面表现为"生成成功但一片空白"。
+ * 现在只要有 >= 4 项写出了内容就算合格，缺的按空字符串存下来（用户可以在面板上补）。
+ */
+export const PROFILE_MIN_FIELDS = 4;
+
 export function isValidProfile(data) {
   if (!data || typeof data !== 'object') return false;
-  const required = ['coreDesire', 'fear', 'speech', 'attitudeToUser',
-    'conflictStyle', 'proactivity', 'intimacy', 'taboo'];
-  return required.every((key) => typeof data[key] === 'string' && data[key].trim());
+  const filled = PROFILE_REQUIRED_FIELDS.filter((key) => typeof data[key] === 'string' && data[key].trim());
+  return filled.length >= PROFILE_MIN_FIELDS;
 }
 
 /** 一致性自检：{ ok: boolean, reason: string }（T-402 §六） */

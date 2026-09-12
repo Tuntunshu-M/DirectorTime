@@ -18,7 +18,7 @@ import { createPresetService } from './inject/preset.js';
 import { createSpeculationService } from './director/speculate.js';
 import { carryOver, foreshadowText, openForeshadows, resolveRecalled } from './director/foreshadow.js';
 import { hardLimitText } from './director/hard-limits.js';
-import { findUserDirectives, describeIssues } from './director/actor-guard.js';
+import { findUserDirectives, findFinishedLines, describeIssues } from './director/actor-guard.js';
 import { normalizeProtagonists, protagonistText } from './world/cast.js';
 import { gate, setLevel, normalizeAutomation } from './core/automation.js';
 import { createReviewQueue } from './core/review-queue.js';
@@ -68,11 +68,11 @@ export function shouldResetScript(rounds, maxRounds, defaultLimit = 15) {
 export function bootstrap({ ctx, store } = {}) {
   const settings = () => store.getSettings();
 
-  // T-418 破限预设：选一个酒馆预设当破限词（只读）
+  // T-418 破限预设：选一个酒馆预设、并可自选条目当破限词（只读）
   const presets = createPresetService({
     ctx,
-    getSelected: () => settings().preset?.name,
-    setSelected: (name) => store.saveSettings({ preset: { ...(settings().preset ?? {}), name } }),
+    getPreset: () => settings().preset,
+    setPreset: (next) => store.saveSettings({ preset: next }),
   });
 
   // T-411 破限词：只影响导演 API 请求（client.js 的 getBreakText 是唯一出口）
@@ -205,24 +205,48 @@ export function bootstrap({ ctx, store } = {}) {
 
   /** 勾选条目 → 喂给 {{world}} 的文本；一条没勾就返回空串，不占 prompt */
   async function worldText() {
-    const selection = settings().worldSelection ?? {};
+    // 世界书选择是 **chat 级**的（每个聊天记自己那份），不再是全局设置
+    const selection = store.get().worldSelection ?? {};
     if (!Object.keys(selection).length) return '';
     const sources = await collectWorldSources();
     return lorebook.buildText(lorebook.pick(sources, selection), { limit: settings().worldLimit ?? 20 });
   }
 
   /**
-   * P0 兜底：检查剧本有没有在指挥 user。只报警，不改剧本、不打断生成。
-   * prompt 里已经写死了【演员界定】，这里是第二道网 —— 万一模型还是跑偏，控制台能立刻看出来。
+   * 老数据兼容：世界书选择以前存在全局 settings 里，现在搬到 chat 级。
+   * 当前聊天还没有选择、而全局设置里有 → 先把全局那份搬过来（只搬一次）。
    */
-  function warnActorSlip(stages, where = '剧本') {
-    const issues = findUserDirectives(stages);
-    if (!issues.length) return issues;
-    console.warn(
-      `[导演时间] ${where}又把 user 写成了演员（P0）：\n${describeIssues(issues)}\n`
-      + '建议点「重新生成剧本」；若反复出现，把这段贴给维护者。'
-    );
-    return issues;
+  function seedWorldSelection() {
+    const stateSelection = store.get().worldSelection ?? {};
+    if (Object.keys(stateSelection).length) return;
+    const legacy = settings().worldSelection ?? {};
+    if (!Object.keys(legacy).length) return;
+    store.update((draft) => ({ ...draft, worldSelection: { ...legacy } }), { track: false });
+  }
+
+  // 开局也迁一次：老用户的全局勾选不至于丢
+  seedWorldSelection();
+
+  /**
+   * P0 兜底：检查剧本有没有在指挥 user（演员错位）、有没有把台词写死（会被原样复述）。
+   * **只报警，不改剧本、不打断生成** —— prompt 是第一道网，这里是第二道。
+   */
+  function warnScriptIssues(stages, where = '剧本') {
+    const actorIssues = findUserDirectives(stages);
+    if (actorIssues.length) {
+      console.warn(
+        `[导演时间] ${where}又把 user 写成了演员（P0）：\n${describeIssues(actorIssues)}\n`
+        + '建议点「重新生成剧本」；若反复出现，把这段贴给维护者。'
+      );
+    }
+    const lineIssues = findFinishedLines(stages);
+    if (lineIssues.length) {
+      console.warn(
+        `[导演时间] ${where}把台词写死了（会被 char 原样复述）：\n${describeIssues(lineIssues)}\n`
+        + '应改成"写意图不给成品"。'
+      );
+    }
+    return { actorIssues, lineIssues };
   }
 
   /** 记录最近一次发给导演 API 的 user 文本，供 Debug 核对实际发送内容（T-401 验收） */
@@ -304,8 +328,8 @@ export function bootstrap({ ctx, store } = {}) {
 
       // 一致性自检（默认开，T-402 §六）：不合人设最多重生成 2 次
       result = await ensureConsistent(result, () => outline.generate(vars));
-      // P0：剧本不许指挥 user（只报警）
-      warnActorSlip(result.stages, '生成的剧本');
+      // P0：剧本不许指挥 user、不许把台词写死（只报警）
+      warnScriptIssues(result.stages, '生成的剧本');
 
       const loaded = {
         // T-408：重生成剧本时，上一份**还没回收的伏笔不能丢**（验收判据 1）
@@ -459,8 +483,8 @@ export function bootstrap({ ctx, store } = {}) {
 
     // 一致性自检（默认开，T-402 §六）
     const result = await ensureConsistent(generated, () => outline.extend(vars));
-    // P0：续写的阶段同样不许指挥 user（只报警）
-    warnActorSlip(result.stages, '续写的阶段');
+    // P0：续写的阶段同样不许指挥 user、不许写死台词（只报警）
+    warnScriptIssues(result.stages, '续写的阶段');
     // T-417：同样盖章
     const fresh = stampInitiative(result.stages, profile.read());
 
@@ -500,6 +524,8 @@ export function bootstrap({ ctx, store } = {}) {
   registry.installLifecycle();
   ctx.on?.(CHAT_CHANGED, () => {
     store.load();
+    // 切聊天：剧本 / 进度 / 世界书选择都跟着这一聊天的记录走（存在 chatMetadata 里）
+    seedWorldSelection();
     registry.clear();
     // 换了聊天，上一轮的投机预测作废（否则会拿别的聊天的预测去猜）
     store.update((draft) => ({ ...draft, runtime: { ...draft.runtime, speculation: null } }), { track: false });
@@ -618,12 +644,30 @@ export function bootstrap({ ctx, store } = {}) {
   }
 
   // 主页面：总开关 + 运行状态 + 配置 + 生成剧本；由菜单栏入口打开
+  // T-414：档位与待确认队列的读写口（面板与配置页共用）
+  const automationApi = {
+    get: () => normalizeAutomation(settings().automation),
+    set: (feature, level) => {
+      store.saveSettings({ automation: setLevel(settings().automation, feature, level) });
+      return normalizeAutomation(settings().automation);
+    },
+  };
+  const queueApi = {
+    list: () => queue.list(),
+    approve: (id) => queue.approve(id, queueHandlers),
+    reject: (id) => queue.reject(id),
+    clear: () => queue.clear(),
+  };
+
   const panel = createMainPanel({
     store,
     registry,
     profile: profileApi,
     // T-418：配置页的「预设」折叠区（只读酒馆预设）
     presets,
+    // T-414：档位设置 + 待确认队列（生成出来的剧本要在这儿「采用」才生效）
+    automation: automationApi,
+    queue: queueApi,
     getCapabilities: () => ctx.capabilities,
     getLast: () => review.getLastTurn(),
     onTest: () => client.testConnection(settings().connection ?? {}),
@@ -631,8 +675,12 @@ export function bootstrap({ ctx, store } = {}) {
     onGenerate: () => regenerateScript(),
     onExtend: () => topUpStages({ force: true }),
     loadWorldSources: (force) => collectWorldSources(force),
-    getWorldSelection: () => settings().worldSelection ?? {},
-    saveWorldSelection: (selection) => store.saveSettings({ worldSelection: selection }),
+    // 世界书选择：chat 级（T-418 追加 —— 每个聊天记自己的世界书）
+    getWorldSelection: () => store.get().worldSelection ?? {},
+    saveWorldSelection: (selection) => {
+      store.update((draft) => ({ ...draft, worldSelection: { ...selection } }), { label: '勾选世界书' });
+      return store.get().worldSelection;
+    },
     getWorldText: () => worldText(),
     getEnabled: () => Boolean(settings().enabled),
     onToggleEnabled: (value) => setEnabled(value),
@@ -654,7 +702,9 @@ export function bootstrap({ ctx, store } = {}) {
     // T-418：破限预设（只读酒馆预设）—— UI 未做，先用控制台
     presets: {
       list: () => presets.list(),
+      entries: () => presets.entries(),
       select: (name) => presets.select(name),
+      selectEntries: (indices) => presets.selectEntries(indices),
       clear: () => presets.clear(),
       text: () => presets.text(),
       status: () => presets.status(),
@@ -672,20 +722,9 @@ export function bootstrap({ ctx, store } = {}) {
       },
       text: () => coreToneText(store.get().tone),
     },
-    // T-414：三级自动化档位 + 待审核队列（UI 未做，先用控制台）
-    automation: {
-      get: () => normalizeAutomation(settings().automation),
-      set: (feature, level) => {
-        store.saveSettings({ automation: setLevel(settings().automation, feature, level) });
-        return normalizeAutomation(settings().automation);
-      },
-    },
-    queue: {
-      list: () => queue.list(),
-      approve: (id) => queue.approve(id, queueHandlers),
-      reject: (id) => queue.reject(id),
-      clear: () => queue.clear(),
-    },
+    // T-414：三级自动化档位 + 待审核队列（同上面板/配置页用的那份）
+    automation: automationApi,
+    queue: queueApi,
     // T-413 副本迁移：整个副本搬走 / 搬回来
     copy: {
       export: () => exportCopy({ state: store.get(), settings: settings(), profile: profile.read() }),

@@ -165,13 +165,44 @@ await check('checkConsistency：不合格 ok:false；解析失败/调用失败�
   assert.equal((await boom.checkConsistency({ profile: emptyProfile(), stages: [] })).ok, true);
 });
 
-await check('isValidProfile：八字段缺一不可，缺字段判非法返回 null（G5）', () => {
+await check('isValidProfile：允许个别字段为空（P0 修正 —— 模型常有一两项写不出来）', () => {
   assert.equal(parseDirectorResponse(VALID_PROFILE_JSON, 'profile').coreDesire, '被需要但不想承认');
+
+  // 少写一项 / 某项留空 → 仍然合格（以前是"八项缺一不可"，会把整份侧写判死）
   const missing = JSON.parse(VALID_PROFILE_JSON);
   delete missing.taboo;
-  assert.equal(parseDirectorResponse(JSON.stringify(missing), 'profile'), null);
+  assert.ok(parseDirectorResponse(JSON.stringify(missing), 'profile'), '少一项也该收下');
   const blank = { ...JSON.parse(VALID_PROFILE_JSON), taboo: '   ' };
-  assert.equal(parseDirectorResponse(JSON.stringify(blank), 'profile'), null);
+  assert.ok(parseDirectorResponse(JSON.stringify(blank), 'profile'), '留空也该收下');
+
+  // 但只剩一两项的残次品仍然不合格（G5：不注入来路不明的东西）
+  assert.equal(parseDirectorResponse(JSON.stringify({ coreDesire: 'x', fear: 'y' }), 'profile'), null);
+});
+
+await check('生成侧写：缺的字段补空串、全部写进角色卡（P0 修正）', async () => {
+  const slots = {};
+  const ctx = {
+    getCharacterId: () => 0,
+    getCharacterData: () => ({ name: 'C' }),
+    getCharacterField: (key) => slots[key] ?? null,
+    writeCharacterField: (key, value) => { slots[key] = JSON.parse(JSON.stringify(value)); },
+  };
+  const partial = {
+    coreDesire: '看海', fear: '被丢下', speech: '话少', attitudeToUser: '嘴硬心软',
+    conflictStyle: '先退一步', proactivity: '被动', intimacy: '', taboo: '',
+  };
+  const profile = createProfileService({
+    ctx,
+    client: { request: async () => JSON.stringify(partial) },
+    getConnection: () => ({}),
+  });
+
+  const result = await profile.regenerate({});
+  assert.equal(result.ok, true, '不能因为一两项为空就整份失败');
+  assert.equal(result.profile.fields.intimacy, '', '缺的补空串，而不是丢掉');
+  assert.equal(slots.director_time.fields.coreDesire, '看海', '要真的落到角色卡上');
+  assert.equal(profile.read().fields.coreDesire, '看海', '面板读得到（判据：生成后自动填入）');
+  assert.equal(profile.read().fields.intimacy, '');
 });
 
 console.log(`\n通过 ${passed} 项`);

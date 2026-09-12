@@ -9,6 +9,7 @@
 //   2. 独立浮层 createSettingsPanel —— 传 onClose，自带关闭按钮
 
 import { PROFILE_FIELDS, PROFILE_FIELD_LABELS } from '../world/character.js';
+import { FEATURES, LEVELS, FEATURE_LABELS, LEVEL_LABELS } from '../core/automation.js';
 
 const PANEL_STYLE = `
   position:fixed; top:60px; left:20px; width:340px; max-width:calc(100vw - 40px);
@@ -68,9 +69,18 @@ function presetOptions(list, current) {
 function presetSection(presets) {
   const list = presets?.list?.() ?? [];
   const status = presets?.status?.() ?? { name: '', length: 0 };
+  const entries = status.name ? (presets?.entries?.() ?? []) : [];
   const message = status.name
     ? `当前：${status.name}（${status.active ? `${status.length} 字` : '读不到内容，未生效'}）`
     : '未选：不注入任何破限内容';
+
+  // 自选条目：不勾 = 用全部启用的条目（与 T-418 原本行为一致）
+  const entryBoxes = entries.length > 1 ? `
+      <div style="margin-top:6px">
+        <div style="opacity:.6">自选条目（一个都不勾 = 用全部启用的条目）</div>
+        ${entries.map((entry) => `
+          <label style="display:block;margin:2px 0"><input type="checkbox" data-dt-preset-entry="${entry.index}"${entry.selected ? ' checked' : ''}> ${escapeAttr(entry.name)}${entry.enabled ? '' : '<span style="opacity:.6">（酒馆里禁用了）</span>'}</label>`).join('')}
+      </div>` : '';
 
   return `
     <details style="margin-top:12px">
@@ -82,10 +92,32 @@ function presetSection(presets) {
         <button id="dt-preset-refresh" type="button" style="font:inherit;padding:5px 12px">刷新列表</button>
       </div>
       <div id="dt-preset-msg" style="margin-top:6px;opacity:.75">${message}</div>
+      ${entryBoxes}
     </details>`;
 }
 
-export function renderSettingsForm({ container, store, onTest, onSave, onClose, profile, presets } = {}) {
+/** T-414：六个功能点的档位下拉（L0 全手动 / L1 待确认 / L2 全自动） */
+function automationSection(automation) {
+  const current = automation?.get?.() ?? {};
+  const rows = FEATURES.map((feature) => `
+    <div style="display:flex;gap:6px;align-items:center;margin:4px 0">
+      <div style="flex:1">${FEATURE_LABELS[feature]}</div>
+      <select data-dt-automation="${feature}" style="${fieldStyle()}">
+        ${LEVELS.map((level) => `<option value="${level}"${current[feature] === level ? ' selected' : ''}>${level} ${LEVEL_LABELS[level]}</option>`).join('')}
+      </select>
+    </div>`).join('');
+
+  return `
+    <details style="margin-top:12px">
+      <summary>自动化档位（L0 全手动 / L1 待确认 / L2 全自动）</summary>
+      <div style="margin:8px 0">${rows}</div>
+      <div id="dt-automation-msg" style="margin-top:6px;opacity:.75">L1 的产物会进主面板的「待确认」，确认后才生效</div>
+    </details>`;
+}
+
+export function renderSettingsForm({
+  container, store, onTest, onSave, onClose, profile, presets, automation,
+} = {}) {
   const node = container;
   const s = store.getSettings();
   const c = s.connection ?? {};
@@ -123,6 +155,7 @@ export function renderSettingsForm({ container, store, onTest, onSave, onClose, 
     <div id="dt-msg" style="margin-top:8px;opacity:.75">—</div>
     ${profile ? profileSection(profile) : ''}
 ${presets ? presetSection(presets) : ''}
+${automation ? automationSection(automation) : ''}
   `;
 
   node.querySelector('#dt-settings-close')?.addEventListener('click', () => onClose?.());
@@ -165,6 +198,18 @@ ${presets ? presetSection(presets) : ''}
   });
 
   // ---------- 人物侧写折叠区（T-402）----------
+  if (automation) {
+    const autoMsg = () => node.querySelector('#dt-automation-msg');
+    node.querySelectorAll('select[data-dt-automation]').forEach((select) => {
+      select.addEventListener('change', (event) => {
+        const feature = event.target.dataset.dtAutomation;
+        automation.set?.(feature, event.target.value);
+        const msg = autoMsg();
+        if (msg) msg.textContent = `${feature} → ${event.target.value}（L1 的产物进「待确认」）`;
+      });
+    });
+  }
+
   if (presets) {
     const presetMsg = () => node.querySelector('#dt-preset-msg');
     node.querySelector('#dt-preset-select')?.addEventListener('change', (event) => {
@@ -174,6 +219,21 @@ ${presets ? presetSection(presets) : ''}
           ? `当前：${status.name}（${status.active ? `${status.length} 字` : '读不到内容，未生效'}）`
           : '未选：不注入任何破限内容';
       }
+      // 换预设 → 条目列表跟着换，重绘一次最省事（面板是临时界面，不做局部刷新）
+      renderSettingsForm({ container: node, store, onTest, onSave, onClose, profile, presets, automation });
+    });
+    node.querySelectorAll('input[data-dt-preset-entry]').forEach((input) => {
+      input.addEventListener('change', () => {
+        const picked = [...node.querySelectorAll('input[data-dt-preset-entry]')]
+          .filter((box) => box.checked)
+          .map((box) => Number(box.dataset.dtPresetEntry));
+        const status = presets.selectEntries?.(picked) ?? {};
+        if (presetMsg()) {
+          presetMsg().textContent = picked.length
+            ? `已选 ${picked.length} 条（生效 ${status.length ?? 0} 字）`
+            : `未勾条目：用全部启用的条目（生效 ${status.length ?? 0} 字）`;
+        }
+      });
     });
     node.querySelector('#dt-preset-refresh')?.addEventListener('click', () => {
       const list = presets.list?.() ?? [];
@@ -216,9 +276,14 @@ ${presets ? presetSection(presets) : ''}
       button.textContent = '生成中…';
       try {
         const result = await profile.regenerate?.();
+        // 先重绘再写提示 —— 反过来的话提示会被重绘冲掉，用户只能看到"一片空白"（P0 修正）
+        if (result?.ok) renderSettingsForm({ container: node, store, onTest, onSave, onClose, profile, presets });
         const msg = profileMsg();
-        if (msg) msg.textContent = result?.ok ? '侧写已重新生成（已锁定字段保持不变）' : `失败：${result?.error ?? '未知'}`;
-        if (result?.ok) renderSettingsForm({ container: node, store, onTest, onSave, onClose, profile });
+        if (msg) {
+          msg.textContent = result?.ok
+            ? (result?.pending ? '侧写已生成，等你在「待确认」里采用（侧写档位 L1）' : '侧写已重新生成（已锁定字段保持不变）')
+            : `失败：${result?.error ?? '未知'}`;
+        }
       } finally {
         button.disabled = false;
         button.textContent = '重新生成侧写';
