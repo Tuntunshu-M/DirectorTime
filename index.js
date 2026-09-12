@@ -59,6 +59,10 @@ function boot() {
   booted = true;
   store.load();
   const api = bootstrap({ ctx, store });
+  // 挂到 window —— 那些"还没有界面入口、先用控制台"的功能（剧情占比 / 主角 / 伏笔销账 / 副本迁移）
+  // 全靠这个 api 才够得着。注意用合并式赋值：boot 可能在模块末尾那行之前就跑起来，
+  // 整体覆盖会把这里挂的 api 冲掉（冒烟抓到过）。
+  window.DirectorTime = { ...(window.DirectorTime ?? {}), api };
   console.log('[导演时间] 已加载', ctx.capabilities);
   bus.emit('boot', { capabilities: ctx.capabilities, api });
   pollUpdate({ log: true });
@@ -75,6 +79,6 @@ if (!ctx.capabilities.events) boot();
 // 错过就永远不 boot —— 菜单入口和面板都不会出现。2 秒后仍未启动就强制启动。
 setTimeout(() => { if (!booted) boot(); }, 2000);
 
-window.DirectorTime = { ctx, bus, store, MODULE_NAME };
+window.DirectorTime = { ...(window.DirectorTime ?? {}), ctx, bus, store, MODULE_NAME };
 
 export { ctx, bus, store, lastTurnMessages };
