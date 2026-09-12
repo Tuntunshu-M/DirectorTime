@@ -1,12 +1,22 @@
-// 导演时间 · 文本清洗层（bugfix 0912 第二波 P1-3）
+// 导演时间 · 输出清洗层（T-425）
 //
 // 模型经常把 `<thinking>…</thinking>`（或截断到结尾没闭合）漏进正文，
 // 会污染**判定输入**和 Debug 回放。这里做一层可自定义的清洗。
 //
-// 拍板的作用范围：**只清洗导演时间自己消费的数据** ——
+// 拍板的作用范围（规格 §作用范围）：**只清洗导演时间自己消费的数据** ——
 //   ① 判定用的 char 回复（推进点判定 / 态度判定 / 硬禁区匹配）
 //   ② Debug 回放显示（默认清洗后，可切换看原文）
-// **绝不改聊天记录本体**（禁则 G2/G3 不变）。
+// **绝不改聊天记录本体**（禁则 G3 不变）。
+//
+// 配置：`settings.sanitizeEnabled`（总开关）+ `settings.sanitizeRules`（自定义正则数组）。
+
+/** 从设置里取出清洗配置（规格 T-425 的两个键） */
+export function sanitizeConfig(settings) {
+  return {
+    enabled: settings?.sanitizeEnabled !== false,
+    rules: settings?.sanitizeRules ?? [],
+  };
+}
 
 /** 内置默认规则（用户可以在配置里再加自己的） */
 export const BUILTIN_CLEAN_RULES = [
@@ -55,7 +65,7 @@ export function resolveCleanRules(config) {
 /**
  * 清洗文本。
  * @param {string} text 原文
- * @param {{enabled?: boolean, rules?: Array}} config 清洗配置（来自 settings.textClean）
+ * @param {{enabled?: boolean, rules?: Array}} config 清洗配置（用 sanitizeConfig(settings) 取）
  * @returns {string} 清洗后的文本（没配规则 / 关了 → 原样返回）
  */
 export function cleanText(text, config) {

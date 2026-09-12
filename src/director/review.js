@@ -18,7 +18,8 @@ import { buildInstruction } from '../inject/instruction.js';
 import { resolvePacing } from './checkpoint.js';
 import { resolve, shouldRunCheckpoint } from './will.js';
 import { findReplyTails, describeTails } from './tail-guard.js';
-import { cleanText, wasCleaned } from '../llm/text-clean.js';
+import { cleanText, wasCleaned } from '../core/sanitize.js';
+import { normalizeIntensity } from '../core/intensity.js';
 import { needsInitiative, profileStamp } from './initiative.js';
 
 const SKIP_TYPES = ['regenerate', 'swipe', 'impersonate', 'quiet'];
@@ -35,6 +36,8 @@ import { gate } from '../core/automation.js';
 
 export function createReviewService({
   checkpoint,
+  // T-426：合并判定（stance + judgement + 投机段，一次调用）
+  combinedJudge,
   beats,
   topUp,
   will,
@@ -43,6 +46,8 @@ export function createReviewService({
   getProfile,
   // P1-3：文本清洗配置（判定输入要洗净，聊天记录本体不动）
   getCleanRules,
+  // P1-4：最近对话（判定要带上下文，否则"铺垫型推进"会虚放行/提前跳阶段）
+  getContext,
   // T-412：当前要生成的角色（多人卡里用来判断"这场戏是不是他的"）
   getSpeaker,
   // T-414：L1 档的待审核队列
@@ -55,6 +60,15 @@ export function createReviewService({
 } = {}) {
   let running = false;
   let lastTurn = null;
+
+  /** P1-4：判定用的最近对话（与生成类模板同一份来源，最多 8 条，已经清洗过缓存） */
+  function recentContext() {
+    try {
+      return String(getContext?.() ?? '');
+    } catch {
+      return '';
+    }
+  }
 
   function syncInjection() {
     const state = store?.get?.();
@@ -80,6 +94,8 @@ export function createReviewService({
         pacing,
         // T-410：硬禁区每轮都要带上（角色回复端的约束）
         hardLimits: settings.hardLimits ?? [],
+        // T-424：导演强度只改注入语气（判定 / 状态机一律不受影响）
+        intensity: normalizeIntensity(settings.directorIntensity),
       })
       : '';
     registry?.register?.(text);
@@ -304,6 +320,7 @@ export function createReviewService({
       let decision = null;
       let judgedTurn = null;
       let preJudged = null;
+      let combinedResult = null;
       const forceAffection = Boolean(settings.forceAffection);
       const threshold = settings.confidenceThreshold ?? 0.7;
 
@@ -312,17 +329,57 @@ export function createReviewService({
       const stanceGate = gate(automation, 'stanceJudge');
       const cpGate = gate(automation, 'checkpointJudge');
 
-      if (active && will?.judge && stanceGate.auto) {
-        judgedTurn = await will.judge({ stage: active, userMessage });
+      if (active && (will?.classify || will?.judge) && stanceGate.auto) {
+        // 1) 本地规则先来（T-406 零成本路径）：够准就**一次调用都不发**
+        const local = will?.classify?.(userMessage) ?? null;
+        if (local && !local.needsLlm && local.stance) {
+          judgedTurn = {
+            ok: true,
+            source: 'rules',
+            stance: local.stance,
+            confidence: local.confidence,
+            matched: local.matched,
+          };
+        } else if (combinedJudge?.judge) {
+          // 2) T-426：一次调用同时拿 stance + judgement + 投机段（站子按次计费）
+          const combined = await combinedJudge.judge({
+            userMessage,
+            charMessage,
+            context: recentContext(),
+            // L0（全手动）就不要 judgement 段；投机开关关掉就不要 speculation 段
+            wantJudgement: cpGate.auto,
+            wantSpeculation: settings.speculation !== false,
+          });
+          combinedResult = combined;
+          judgedTurn = {
+            ok: combined.ok,
+            source: 'combined',
+            stance: combined.stance,
+            confidence: combined.confidence,
+            reason: combined.reason,
+            raw: combined.raw,
+            sections: combined.ok_sections,
+          };
+          // judgement 段：拿到了就直接算放行规则，不再单独发一次判定调用
+          if (combined.judgement) {
+            preJudged = checkpoint?.fromJudgement?.({ judgement: combined.judgement, raw: combined.raw }) ?? null;
+          }
+          // 投机搭车：这一段现在就用掉（bootstrap 那边不会再单独发投机调用）
+          if (combined.speculation) speculate?.accept?.({ ...combined.speculation, stage: active });
+        } else if (will?.judge) {
+          // 兜底：没有合并服务时退回老路径（老构建 / 单测）
+          judgedTurn = await will.judge({ stage: active, userMessage, context: recentContext() });
+        }
 
         // 强制爱开着且 user 明确拒绝 → 先确认没触及硬禁区（硬禁区不被强制爱覆盖，§七）
-        if (forceAffection && judgedTurn.stance === 'reject') {
-          preJudged = await checkpoint.judge({ userMessage, charMessage });
+        // 合并调用已经带回过 judgement 就不再花第二次
+        if (forceAffection && judgedTurn?.stance === 'reject' && !preJudged) {
+          preJudged = await checkpoint.judge({ userMessage, charMessage, context: recentContext() });
         }
 
         decision = resolve({
-          stance: judgedTurn.stance,
-          confidence: judgedTurn.confidence,
+          stance: judgedTurn?.stance,
+          confidence: judgedTurn?.confidence,
           will: active?.will ?? settings.will,
           stuckCount: active?.stuckCount ?? 0,
           stuckThreshold: settings.stuckThreshold ?? 3,
@@ -339,7 +396,7 @@ export function createReviewService({
       let result = fromCheckpoint
         ? (preJudged ?? (active
           ? (cpGate.auto
-            ? await checkpoint.judge({ userMessage, charMessage })
+            ? await checkpoint.judge({ userMessage, charMessage, context: recentContext() })
             : { action: 'hold', reason: '推进点判定是 L0（全手动），本轮不自动判定' })
           : { action: 'hold', reason: '没有进行中的阶段' }))
         : { action: decision.action, reason: decision.reason };
@@ -362,6 +419,15 @@ export function createReviewService({
 
       // T-408：判定顺手报回来的伏笔编号，在这里销账
       const recalled = settleRecalled(result.judgement ?? preJudged?.judgement);
+      // T-426：合并调用只发了一次，Debug 要能看到"三段各自的解析结果"
+      if (combinedResult?.ok_sections) {
+        const missing = Object.entries(combinedResult.ok_sections)
+          .filter(([, ok]) => !ok)
+          .map(([key]) => key);
+        if (missing.length) {
+          console.warn(`[导演时间] 合并判定里这些段没解析出来（已各自降级）：${missing.join(' / ')}`);
+        }
+      }
 
       await applyAction(result, { active, activeId, userMessage, charMessage, decision });
 
@@ -428,6 +494,8 @@ export function createReviewService({
             action: decision.action,
             reason: decision.reason,
             ok: judgedTurn?.ok ?? false,
+            // T-426：这一轮判定是"本地规则 / 合并调用"给的，以及三段各自解析到了没有
+            sections: judgedTurn?.sections ?? null,
             // T-406：这一轮的态度是本地规则判的，还是问了 LLM
             source: judgedTurn?.source ?? '',
             matched: judgedTurn?.matched ?? judgedTurn?.rule?.matched ?? [],

@@ -88,7 +88,7 @@ export function createCheckpointService({ client, stages, getConnection, getSett
    * 判定当前阶段是否推进。
    * @returns {Promise<{ action: string, reason: string, judgement?: object, raw?: string }>}
    */
-  async function judge({ userMessage = '', charMessage = '' } = {}) {
+  async function judge({ userMessage = '', charMessage = '', context = '' } = {}) {
     const active = stages?.getActive?.();
     if (!active) return { action: 'hold', reason: '没有进行中的阶段' };
 
@@ -99,6 +99,8 @@ export function createCheckpointService({ client, stages, getConnection, getSett
       antiCriteria: active.checkpoint?.antiCriteria ?? '',
       // T-408：顺手让模型回答"这一轮回收了哪几条伏笔"，不额外花一次调用
       foreshadows: foreshadowText(getOutline?.() ?? null),
+      // P1-4：判定不能"单轮失忆" —— 前几楼的铺垫要带上，否则置信度虚低会提前跳阶段
+      context: context || '（没有历史对话）',
       userMessage,
       charMessage,
     });
@@ -130,5 +132,27 @@ export function createCheckpointService({ client, stages, getConnection, getSett
     return { ...result, judgement, raw, pacing };
   }
 
-  return { judge, decide, resolvePacing };
+  /**
+   * T-426：判定结果已经在手上（合并调用顺手带回来的），这里只负责跑"放行规则"。
+   * 与 judge() 的区别：不发请求、不解析 —— 免得为了同一份判定再花一次调用。
+   */
+  function fromJudgement({ judgement = null, raw = '' } = {}) {
+    const active = stages?.getActive?.();
+    if (!active || !judgement) return null;
+
+    const settings = getSettings?.() ?? {};
+    const pacing = resolvePacing(active, settings);
+    const result = decide(judgement, {
+      threshold: settings.confidenceThreshold ?? 0.7,
+      stuckCount: active.stuckCount ?? 0,
+      stuckThreshold: settings.stuckThreshold ?? 3,
+      turnCount: active.turnCount ?? 0,
+      minTurns: pacing.min,
+      maxTurns: pacing.max,
+    });
+
+    return { ...result, judgement, raw, pacing };
+  }
+
+  return { judge, fromJudgement, decide, resolvePacing };
 }

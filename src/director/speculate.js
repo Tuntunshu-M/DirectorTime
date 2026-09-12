@@ -100,6 +100,9 @@ export function hitRate(stats) {
 }
 
 export function createSpeculationService({ client, getConnection, store, now = Date.now } = {}) {
+  /** T-426：本轮投机是不是随合并调用一起回来的 */
+  let combinedTaken = false;
+
   /**
    * 猜下一句 + 提前写好针对性指令。返回 null 表示这次不投机（静默）。
    */
@@ -166,5 +169,35 @@ export function createSpeculationService({ client, getConnection, store, now = D
     return { hit, speculation: current };
   }
 
-  return { guess, settle };
+  /**
+   * T-426：合并判定顺手带回来的投机段，直接存下来 —— 不再单独发一次投机调用。
+   * 没 injection（模型没给 / 解析失败）就当没有，静默。
+   */
+  function accept({ guess: rawGuess, keywords, injection, stage } = {}) {
+    const text = String(injection ?? '').trim();
+    if (!text) return null;
+
+    const record = {
+      guess: String(rawGuess ?? ''),
+      keywords: normalizeSpeculationKeywords(keywords),
+      injection: text,
+      at: now(),
+      stageId: stage?.id ?? '',
+    };
+    store?.update?.((draft) => ({
+      ...draft,
+      runtime: { ...draft.runtime, speculation: record },
+    }), { track: false });
+    combinedTaken = true;
+    return record;
+  }
+
+  /** 本轮投机是不是"搭车"来的 —— 是的话调用方就别再单独发投机调用了 */
+  function consumeCombined() {
+    const flag = combinedTaken;
+    combinedTaken = false;
+    return flag;
+  }
+
+  return { guess, settle, accept, consumeCombined };
 }

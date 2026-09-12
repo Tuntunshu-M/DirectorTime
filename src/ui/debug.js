@@ -146,6 +146,21 @@ export function createDebugPanel({
     return `<div><span style="opacity:.6">${escapeHtml(label)}</span> ${escapeHtml(value)}</div>`;
   }
 
+  /**
+   * T-426：这一轮判定是谁给的 —— 本地规则（零调用）/ 合并调用（1 次拿三段）/ 老路径单独判。
+   * 合并调用还顺带标出三段各自解析到了没有（哪段坏掉就在这儿看得见）。
+   */
+  function stanceSourceLine(stance) {
+    if (!stance) return '—';
+    const source = stance.source === 'rules' ? '本地规则（零调用）'
+      : (stance.source === 'combined' ? '合并调用（1 次拿三段）' : (stance.source === 'llm' ? '单独调用' : (stance.source || '—')));
+    const sections = stance.sections;
+    if (!sections) return source;
+    const got = Object.entries(sections).filter(([, ok]) => ok).map(([key]) => key);
+    const lost = Object.entries(sections).filter(([, ok]) => !ok).map(([key]) => key);
+    return `${source} · 解析到 ${got.join('/') || '无'}${lost.length ? ` · 降级 ${lost.join('/')}` : ''}`;
+  }
+
   /** T-407：把命中率 / 待验证的预测压成一行 */
   function speculationLine(spec) {
     if (!spec) return '未启用';
@@ -195,6 +210,7 @@ export function createDebugPanel({
           ${row('user 说', s.turn?.userMessage || '—')}
           ${row('本轮实际用的注入', s.turn?.usedInjection ? `${s.turn.usedInjection.length} 字` : '（空：生成这条回复时还没有注入）')}
           ${s.turn?.injectionDrift ? row('⚠️ 注入断了', `上一轮注册了 ${s.turn.previousNextInjection} 字，这一轮生成时却是空的 —— 可能被别的扩展覆盖了同一个 key，或中途换过聊天`) : ''}
+          ${row('判定来源', stanceSourceLine(s.turn?.stance))}
           ${row('模型尾巴', s.turn?.tails?.length ? describeTails(s.turn.tails) : '无')}
           ${row('char 回', `${showRawReply ? '（原文）' : '（清洗后）'} ${String(charView).slice(0, 100)}${s.turn?.charCleaned ? ' ｜ 含 thinking 之类，已清洗' : ''}`)}
           ${row('判定', s.turn ? `${s.turn.action}（${s.turn.reason}）` : '—')}

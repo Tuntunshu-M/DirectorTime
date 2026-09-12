@@ -15,7 +15,8 @@ import { createInitiativeService, stampInitiative } from './director/initiative.
 import { resolveRules } from './director/rules.js';
 import { createBreakFilterService, normalizeBreakFilter } from './llm/break-filter.js';
 import { createPresetService } from './inject/preset.js';
-import { createSpeculationService } from './director/speculate.js';
+import { createSpeculationService, hitRate } from './director/speculate.js';
+import { createCombinedJudge } from './director/judge-combined.js';
 import { carryOver, foreshadowText, openForeshadows, resolveRecalled } from './director/foreshadow.js';
 import { hardLimitText } from './director/hard-limits.js';
 import { findUserDirectives, findFinishedLines, describeIssues } from './director/actor-guard.js';
@@ -26,7 +27,8 @@ import {
   BUILTIN_PRESETS, PRESET_LABELS, PRESET_KINDS, normalizeModelPreset, modelPresetText,
 } from './core/model-preset.js';
 import { createEditorService } from './director/editor.js';
-import { normalizeCleanRules } from './llm/text-clean.js';
+import { normalizeCleanRules, sanitizeConfig } from './core/sanitize.js';
+import { INTENSITY_LEVELS, INTENSITY_LABELS, normalizeIntensity } from './core/intensity.js';
 import {
   extensionFolderFromUrl, createExtensionUpdater, createUpdateChecker, checkForUpdate,
 } from './core/update-check.js';
@@ -159,8 +161,17 @@ export function bootstrap({ ctx, store } = {}) {
   // T-414：L1 档的待审核队列（存 state.pendingReview，切页面不丢）
   const queue = createReviewQueue({ store });
 
+  // T-426：合并判定（一次调用拿三段）
+  const combinedJudge = createCombinedJudge({
+    client,
+    stages,
+    getConnection: () => settings().connection ?? {},
+    getOutline: () => store.get().outline,
+  });
+
   const review = createReviewService({
     checkpoint,
+    combinedJudge,
     will,
     initiative,
     speculate,
@@ -168,8 +179,10 @@ export function bootstrap({ ctx, store } = {}) {
     topUp: topUpStages,
     queue,
     getProfile: () => profile.read(),
-    // P1-3：判定输入要过清洗层（thinking 块不污染判定）
-    getCleanRules: () => settings().textClean,
+    // T-425：判定输入要过清洗层（thinking 块不污染判定）
+    getCleanRules: () => sanitizeConfig(settings()),
+    // P1-4：判定也要带最近对话（与生成类共用同一份 recentContext，不再"单轮失忆"）
+    getContext: () => recentContext(),
     // T-412 多人卡：当前生成者是谁
     getSpeaker: () => ({
       id: ctx.getCharacterId?.() ?? '',
@@ -452,6 +465,15 @@ export function bootstrap({ ctx, store } = {}) {
     if (speculating) return null;
     try {
       if (settings().speculation === false) return null;
+      // T-426：这一轮的投机已经随「合并判定」搭车回来了 → 别再单独发一次调用
+      if (speculate.consumeCombined?.()) {
+        const pending = store.get().runtime?.speculation;
+        if (pending?.injection) {
+          registry.register(pending.injection);
+          return pending;
+        }
+        return null;
+      }
       if (!settings().connection?.endpoint) return null;
       const active = stages.getActive();
       if (!active) return null;
@@ -834,13 +856,54 @@ export function bootstrap({ ctx, store } = {}) {
       return result;
     },
   };
-  // 配置页那五个折叠区共用这一份（面板与配置页读同一套，避免两处逻辑漂移）
+  // ---------- T-424：导演强度（只改注入文案；判定 / 状态机 / 熔断 / 意愿矩阵一律不受影响）----------
+  const intensityApi = {
+    get: () => normalizeIntensity(settings().directorIntensity),
+    levels: () => [...INTENSITY_LEVELS],
+    labels: () => ({ ...INTENSITY_LABELS }),
+    set: (level) => {
+      store.saveSettings({ directorIntensity: normalizeIntensity(level) });
+      refreshInjection(); // 切档即生效，不用重开聊天
+      return normalizeIntensity(settings().directorIntensity);
+    },
+  };
+
+  // ---------- P2-2：投机开关（以前只有闸门，没有入口）----------
+  const speculateApi = {
+    guess: (input) => speculate.guess(input),
+    settle: (userMessage) => speculate.settle(userMessage),
+    /** 开关（默认开）。关掉后本轮起不再发投机调用 */
+    setEnabled: (enabled) => {
+      store.saveSettings({ speculation: Boolean(enabled) });
+      return speculateApi.status();
+    },
+    status: () => ({
+      enabled: settings().speculation !== false,
+      ...hitRate(store.get().runtime?.speculationStats),
+      pending: store.get().runtime?.speculation?.guess ?? '',
+    }),
+  };
+
+  // 老数据兼容：v0.6.0 把清洗配置存在 settings.textClean 里，现在按规格换成
+  // sanitizeEnabled / sanitizeRules（只迁一次，迁完删掉旧键）
+  function migrateLegacySanitize() {
+    const legacy = settings().textClean;
+    if (!legacy || typeof legacy !== 'object') return;
+    const patch = { sanitizeEnabled: legacy.enabled !== false };
+    if (Array.isArray(legacy.rules) && legacy.rules.length) patch.sanitizeRules = normalizeCleanRules(legacy.rules);
+    store.saveSettings({ ...patch, textClean: undefined });
+  }
+  migrateLegacySanitize();
+
+  // 配置页那几个折叠区共用这一份（面板与配置页读同一套，避免两处逻辑漂移）
   const extras = {
     modelPreset: modelPresetApi,
     breakFilter: breakFilterApi,
     tone: toneApi,
     cast: castApi,
     copy: copyApi,
+    speculate: speculateApi,
+    intensity: intensityApi,
   };
 
   // 测试用配置面板：没有它就没法填 API（控制台 DirectorTime.settingsPanel.show() 仍可用）
@@ -903,7 +966,9 @@ export function bootstrap({ ctx, store } = {}) {
 
   const api = {
     client, stages, outline, beats, lorebook, profile, profileApi,
-    registry, checkpoint, will, initiative, rules: rulesApi, speculate, review, debug,
+    registry, checkpoint, will, initiative, rules: rulesApi, speculate: speculateApi, review, debug,
+    // T-426：合并判定（控制台可直接调，便于排查"三段各自解析到了没有"）
+    judgeCombined: combinedJudge,
     // T-418：破限预设（只读酒馆预设）—— UI 未做，先用控制台
     presets: {
       list: () => presets.list(),
@@ -927,26 +992,23 @@ export function bootstrap({ ctx, store } = {}) {
     editor: { ...editorApi, truncateAndRegen },
     // T-403：模型特化预设（红线）
     modelPreset: modelPresetApi,
-    // P1-3：文本清洗规则（内置 thinking + 用户自定义正则）
-    textClean: {
-      get: () => ({
-        enabled: settings().textClean?.enabled !== false,
-        rules: normalizeCleanRules(settings().textClean?.rules),
-      }),
+    // T-425：输出清洗规则（内置 thinking + 用户自定义正则）
+    sanitize: {
+      get: () => sanitizeConfig(settings()),
       set: (next) => {
-        const current = settings().textClean ?? {};
-        const merged = {
-          enabled: next?.enabled === undefined ? current.enabled !== false : Boolean(next.enabled),
-          rules: normalizeCleanRules(next?.rules === undefined ? current.rules : next.rules),
-        };
-        store.saveSettings({ textClean: merged });
-        return merged;
+        const current = sanitizeConfig(settings());
+        const enabled = next?.enabled === undefined ? current.enabled : Boolean(next.enabled);
+        const rules = normalizeCleanRules(next?.rules === undefined ? current.rules : next.rules);
+        store.saveSettings({ sanitizeEnabled: enabled, sanitizeRules: rules });
+        return sanitizeConfig(settings());
       },
       reset: () => {
-        store.saveSettings({ textClean: { enabled: true, rules: [] } });
-        return { enabled: true, rules: [] };
+        store.saveSettings({ sanitizeEnabled: true, sanitizeRules: [] });
+        return sanitizeConfig(settings());
       },
     },
+    // T-424：导演强度（只改注入语气；判定 / 状态机不受影响）
+    intensity: intensityApi,
     // T-413 副本迁移：整个副本搬走 / 搬回来
     copy: copyApi,
     // T-412：主角设置（可多选、持久化）

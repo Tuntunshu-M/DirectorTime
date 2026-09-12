@@ -1,9 +1,9 @@
-// bugfix 0912 第二波 P1-3 测试：文本清洗（thinking 块 + 自定义正则）
+// T-425 测试：输出清洗（thinking 块 + 自定义正则）—— 规格：core/sanitize.js + settings.sanitizeRules
 
 import assert from 'node:assert/strict';
 import {
-  BUILTIN_CLEAN_RULES, cleanText, normalizeCleanRules, resolveCleanRules, isValidCleanPattern, wasCleaned,
-} from '../src/llm/text-clean.js';
+  BUILTIN_CLEAN_RULES, cleanText, normalizeCleanRules, resolveCleanRules, isValidCleanPattern, wasCleaned, sanitizeConfig,
+} from '../src/core/sanitize.js';
 
 let passed = 0;
 function check(name, fn) {
@@ -77,6 +77,24 @@ check('空输入安全', () => {
   assert.equal(cleanText(''), '');
   assert.equal(cleanText(null), '');
   assert.equal(cleanText(undefined), '');
+});
+
+console.log('T-425 规格对齐：配置取自 settings.sanitizeEnabled / settings.sanitizeRules');
+
+check('sanitizeConfig 从设置里取出配置（规格的两个键）', () => {
+  assert.deepEqual(sanitizeConfig({ sanitizeEnabled: true, sanitizeRules: ['<a>.*</a>'] }), {
+    enabled: true,
+    rules: ['<a>.*</a>'],
+  });
+  assert.equal(sanitizeConfig({}).enabled, true, '默认开');
+  assert.equal(sanitizeConfig({ sanitizeEnabled: false }).enabled, false);
+  assert.deepEqual(sanitizeConfig(undefined).rules, []);
+});
+
+check('设置里关掉 → 判定拿到的是原文（端到端一致）', () => {
+  const settings = { sanitizeEnabled: false, sanitizeRules: [] };
+  const config = sanitizeConfig(settings);
+  assert.equal(cleanText('<thinking>x</thinking>正文', config), '<thinking>x</thinking>正文');
 });
 
 console.log(`\n通过 ${passed} 项`);

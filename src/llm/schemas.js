@@ -4,6 +4,7 @@
 // 绝不能把解析不出来的东西注入进 prompt。
 
 import { extractPlot } from './break-filter.js';
+import { extractField, extractNumberField, extractStringField, firstJsonObject } from './sections.js';
 
 /** 从模型返回文本里抠出 JSON。兼容纯 JSON、```json 代码块、前后夹带废话三种情况。 */
 export function extractJson(text) {
@@ -144,11 +145,64 @@ export function isValidStance(data) {
 }
 
 /**
+ * T-426：合并调用的分段解析。
+ *
+ * 两档：
+ *   1. 整份 JSON 能解析 → 逐段校验（正常路径）
+ *   2. 整份坏了 / 被截断 → 按字段名单独抠，**每段独立降级**（规格 §3）
+ * 返回里 `ok` 逐段标出哪一段拿到了 —— 调用方按段决定怎么降级。
+ */
+export function parseJudgeCombined(text) {
+  const raw = String(text ?? '');
+  const whole = firstJsonObject(extractPlot(raw));
+
+  /**
+   * 取某一段：优先用"整份解析"的结果；整份坏了 / 那个键不在里面 → 单独抠。
+   * （注意：整份坏掉时 firstJsonObject 可能只抓到某个内层对象，这时必须回退到逐字段抠）
+   */
+  const pick = (key) => {
+    const fromWhole = whole && typeof whole === 'object' ? whole[key] : undefined;
+    if (fromWhole !== undefined && fromWhole !== null) return fromWhole;
+    return extractField(raw, key);
+  };
+
+  const stanceValue = extractStringField(raw, 'stance');
+  const stance = VALID_STANCES.includes(stanceValue) ? stanceValue : null;
+  const confidence = extractNumberField(raw, 'confidence');
+
+  const judgementRaw = pick('judgement');
+  const speculationRaw = pick('speculation');
+  // whole 里的 judgement 可能是对象；逐段校验统一交给已有的校验函数
+  const judgementData = judgementRaw && typeof judgementRaw === 'object' ? judgementRaw : null;
+  const speculationData = speculationRaw && typeof speculationRaw === 'object' ? speculationRaw : null;
+
+  const judgement = isValidJudgement(judgementData) ? judgementData : null;
+  const speculation = isValidSpeculation(speculationData) ? speculationData : null;
+
+  // 最后一道：推测段缺 keywords 也照样能用（命中判定会退化成相似度）
+  return {
+    stance,
+    confidence: Number.isFinite(confidence) && confidence >= 0 && confidence <= 1 ? confidence : null,
+    judgement,
+    speculation,
+    ok: {
+      stance: Boolean(stance),
+      judgement: Boolean(judgement),
+      speculation: Boolean(speculation),
+    },
+    raw,
+  };
+}
+
+/**
  * 统一入口：解析 + 校验。任何一步失败都返回 null。
  * @param {string} text 模型返回的原始文本
- * @param {'outline'|'stages'|'beats'|'profile'|'consistency'|'judgement'|'stance'|'initiative'|'speculation'} kind
+ * @param {'outline'|'stages'|'beats'|'profile'|'consistency'|'judgement'|'stance'|'initiative'|'speculation'|'judgeCombined'} kind
  */
 export function parseDirectorResponse(text, kind) {
+  // T-426：合并调用**不能**走"整份解析失败就全没"的路 —— 它要分段独立降级
+  if (kind === 'judgeCombined') return parseJudgeCombined(text);
+
   // T-411 清洗：开了破限词时模型会把剧情包进 <plot>…</plot>，标签外（可能混着破限指令残渣）一律丢弃
   const data = extractJson(extractPlot(text));
   if (data === null) return null;

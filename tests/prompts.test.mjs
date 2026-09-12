@@ -1,7 +1,7 @@
 // T-202 测试：模板渲染 + JSON 解析降级
 
 import assert from 'node:assert/strict';
-import { buildMessages, renderTemplate, PROMPTS } from '../src/llm/prompts.js';
+import { buildMessages, renderTemplate, PROMPTS, PERSONA_RESPECT } from '../src/llm/prompts.js';
 import { extractJson, parseDirectorResponse, isValidOutline } from '../src/llm/schemas.js';
 
 let passed = 0;
@@ -138,6 +138,30 @@ check('parseDirectorResponse 支持 beats 与 stages（T-205④ / 续写）', ()
   const stages = parseDirectorResponse('{"stages":[{"goal":"g","checkpoint":{"criteria":"c","antiCriteria":"a"}}]}', 'stages');
   assert.equal(stages.stages.length, 1);
   assert.equal(parseDirectorResponse('{"stages":[]}', 'stages'), null);
+});
+
+console.log('T-424 A · 模板层人设尊重（恒开）');
+
+await check('GEN_OUTLINE / EXTEND_OUTLINE / GEN_PROFILE 都带上「符合人设」那句', () => {
+  for (const key of ['GEN_OUTLINE', 'EXTEND_OUTLINE', 'GEN_PROFILE']) {
+    const system = PROMPTS[key].system;
+    assert.ok(system.includes(PERSONA_RESPECT), `${key} 缺人设尊重段`);
+    assert.ok(system.includes('必须符合角色既有性格'), key);
+    assert.ok(system.includes('不必热情外放'), key);
+  }
+});
+
+await check('渲染出来的请求里也能看到（不是只写在常量里）', () => {
+  const messages = buildMessages('GEN_PROFILE', { char: '卡', world: '', context: '' });
+  assert.ok(messages[0].content.includes('必须符合角色既有性格'));
+});
+
+await check('GEN_INITIATIVE 带 intensityNote 变量（克制档降调用）', () => {
+  assert.ok(PROMPTS.GEN_INITIATIVE.user.includes('{{intensityNote}}'));
+  const messages = buildMessages('GEN_INITIATIVE', {
+    profile: '', goal: 'g', activity: 'a', beats: 'b', intensityNote: '（注意：这个角色内敛）',
+  });
+  assert.ok(messages[1].content.includes('这个角色内敛'));
 });
 
 console.log(`\n通过 ${passed} 项`);

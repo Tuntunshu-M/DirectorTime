@@ -12,7 +12,8 @@ import { PROFILE_FIELDS, PROFILE_FIELD_LABELS } from '../world/character.js';
 import { FEATURES, LEVELS, FEATURE_LABELS, LEVEL_LABELS } from '../core/automation.js';
 import { TONE_KEYS, TONE_LABELS } from '../core/tone.js';
 import { willTierLabel } from '../director/will.js';
-import { normalizeCleanRules, isValidCleanPattern } from '../llm/text-clean.js';
+import { normalizeCleanRules, isValidCleanPattern } from '../core/sanitize.js';
+import { INTENSITY_LEVELS, INTENSITY_LABELS, intensityHint, normalizeIntensity } from '../core/intensity.js';
 
 const BTN = 'font:inherit;padding:3px 9px;cursor:pointer';
 
@@ -233,18 +234,53 @@ function willSection(store) {
     </details>`;
 }
 
-/** 文本清洗（P1-3）：thinking 块之类只清洗本插件消费的文本 */
+/**
+ * 偏好（T-424 导演强度 + P2-2 投机开关）
+ * 导演强度只改注入语气；投机开关关掉后本轮起不再发投机调用。
+ */
+function preferenceSection(store, extras) {
+  const s = store.getSettings();
+  const level = normalizeIntensity(s.directorIntensity);
+  // 投机状态读的是运行时那份（单一来源），不是另算一遍
+  const spec = extras?.speculate?.status?.() ?? { enabled: true, hits: 0, misses: 0, total: 0, rate: 0 };
+  const rate = spec.total ? `命中 ${spec.hits}/${spec.total}（${Math.round(spec.rate * 100)}%）` : '还没跑过';
+
+  return `
+    <details style="margin-top:12px">
+      <summary>偏好（导演强度 / 投机预生成）</summary>
+      <div style="margin:8px 0">
+        <div style="opacity:.6">导演强度（只改注入语气，判定逻辑一律不受影响）</div>
+        ${INTENSITY_LEVELS.map((key) => `<label style="display:block;margin:2px 0">
+          <input type="radio" name="dt-intensity" value="${key}" ${level === key ? 'checked' : ''}> ${escapeAttr(INTENSITY_LABELS[key])}
+        </label>`).join('')}
+        <div id="dt-intensity-hint" style="font-size:11px;opacity:.7">${escapeAttr(intensityHint(level))}</div>
+      </div>
+      <div style="${SUBSECTION}">
+        <label style="display:block">
+          <input type="checkbox" id="dt-speculation" ${spec.enabled ? 'checked' : ''}> 投机预生成
+        </label>
+        <div style="font-size:11px;opacity:.7">
+          每轮多一次预判调用（猜你下一句的意图），命中才用得上针对性注入；猜不中静默丢弃。<br>
+          当前：${spec.enabled ? `已开启 · ${rate}` : '已关闭（不再发投机调用）'}
+        </div>
+      </div>
+      <div id="dt-pref-msg" style="margin-top:6px;opacity:.75">—</div>
+    </details>`;
+}
+
+/** 文本清洗（T-425）：thinking 块之类只清洗本插件消费的文本 */
 function textCleanSection(store) {
-  const config = store.getSettings().textClean ?? { enabled: true, rules: [] };
-  const rules = config.rules ?? [];
+  const settings = store.getSettings();
+  const enabled = settings.sanitizeEnabled !== false;
+  const rules = settings.sanitizeRules ?? [];
   const custom = rules.map((rule) => String(rule?.pattern ?? rule ?? '')).filter(Boolean).join('\n');
   const bad = rules.map((rule) => String(rule?.pattern ?? rule ?? '')).filter((p) => p && !isValidCleanPattern(p)).length;
 
   return `
     <details style="margin-top:12px">
-      <summary>文本清洗（thinking 之类）</summary>
+      <summary>输出清洗（thinking 之类）</summary>
       <label style="display:block;margin:8px 0 4px">
-        <input type="checkbox" id="dt-clean-on" ${config.enabled !== false ? 'checked' : ''}> 启用清洗
+        <input type="checkbox" id="dt-clean-on" ${enabled ? 'checked' : ''}> 启用清洗
       </label>
       <div style="font-size:11px;opacity:.7">
         内置规则：<code>&lt;thinking&gt;…&lt;/thinking&gt;</code>、<code>&lt;think&gt;…&lt;/think&gt;</code>（含未闭合、截断到结尾的情况）。<br>
@@ -349,6 +385,7 @@ export function renderSettingsForm({
 ${presets ? presetSection(presets, extras?.breakFilter) : ''}
 ${hardLimitsSection(store)}
 ${textCleanSection(store)}
+${preferenceSection(store, extras)}
 ${willSection(store)}
 ${automation ? automationSection(automation) : ''}
 ${extras?.modelPreset ? modelPresetSection(extras.modelPreset) : ''}
@@ -595,10 +632,10 @@ ${extras?.copy ? copySection(extras.copy) : ''}
     });
   }
 
-  // ---------- 文本清洗（P1-3）----------
+  // ---------- 输出清洗（T-425）----------
   node.querySelector('#dt-clean-on')?.addEventListener('change', (event) => {
-    const current = store.getSettings().textClean ?? {};
-    store.saveSettings({ textClean: { enabled: event.target.checked, rules: current.rules ?? [] } });
+    store.saveSettings({ sanitizeEnabled: event.target.checked });
+    if (event.target.checked) onSave?.();
     const msg = node.querySelector('#dt-clean-msg');
     if (msg) msg.textContent = event.target.checked ? '已启用清洗' : '已关闭清洗：判定会看到原文（thinking 也在）';
   });
@@ -606,8 +643,8 @@ ${extras?.copy ? copySection(extras.copy) : ''}
     const lines = node.querySelector('#dt-clean-rules').value
       .split('\n').map((line) => line.trim()).filter(Boolean);
     const rules = normalizeCleanRules(lines);
-    const enabled = (store.getSettings().textClean ?? {}).enabled !== false;
-    store.saveSettings({ textClean: { enabled, rules } });
+    store.saveSettings({ sanitizeRules: rules });
+    onSave?.();
     const bad = lines.filter((line) => !isValidCleanPattern(line));
     const msg = node.querySelector('#dt-clean-msg');
     if (msg) {
@@ -617,12 +654,32 @@ ${extras?.copy ? copySection(extras.copy) : ''}
     }
   });
   node.querySelector('#dt-clean-reset')?.addEventListener('click', () => {
-    const enabled = (store.getSettings().textClean ?? {}).enabled !== false;
-    store.saveSettings({ textClean: { enabled, rules: [] } });
+    store.saveSettings({ sanitizeRules: [] });
+    onSave?.();
     const area = node.querySelector('#dt-clean-rules');
     if (area) area.value = '';
     const msg = node.querySelector('#dt-clean-msg');
     if (msg) msg.textContent = '已清空自定义规则（内置两条仍在）';
+  });
+
+  // ---------- 偏好：导演强度（T-424）+ 投机开关（P2-2）----------
+  node.querySelectorAll('input[name="dt-intensity"]').forEach((radio) => {
+    radio.addEventListener('change', () => {
+      const next = extras?.intensity?.set?.(radio.value) ?? normalizeIntensity(radio.value);
+      const hint = node.querySelector('#dt-intensity-hint');
+      if (hint) hint.textContent = intensityHint(next);
+      const msg = node.querySelector('#dt-pref-msg');
+      if (msg) msg.textContent = `导演强度已切到「${INTENSITY_LABELS[next] ?? next}」（下一轮注入立刻生效）`;
+    });
+  });
+  node.querySelector('#dt-speculation')?.addEventListener('change', (event) => {
+    const status = extras?.speculate?.setEnabled?.(event.target.checked);
+    const msg = node.querySelector('#dt-pref-msg');
+    if (msg) {
+      msg.textContent = event.target.checked
+        ? '已开启投机预生成（每轮多一次预判调用）'
+        : `已关闭投机预生成（不再发投机调用${status?.total ? `；历史命中 ${status.hits}/${status.total}` : ''}）`;
+    }
   });
 
   // ---------- 硬禁区（T-410）----------

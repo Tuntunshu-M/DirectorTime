@@ -8,15 +8,21 @@
 import { usableInitiative } from '../director/initiative.js';
 import { hardLimitLine } from '../director/hard-limits.js';
 import { NO_TAIL_LINE } from '../director/tail-guard.js';
+import {
+  intensityActivityPrefix, intensityBeatsPrefix, intensityClosingLine, intensityLeadLine,
+  intensityNearMaxLine, intensityProactive, intensityReadyHint,
+} from '../core/intensity.js';
 
 const PROACTIVE_HINT = '不要等 user 提问或回应。如果冷场，你就自己找一件事继续。';
 
 /**
  * 主动性提示（T-417）：有**按当前侧写推导出来**的 initiative 就用它，
  * 否则退回通用句（没侧写 / 还没生成 / 侧写已换代都算退回）。
+ * T-424：措辞随「导演强度」走（克制档换成提议语气，标准档逐字不变）。
  */
-export function proactiveLine(stage, profile) {
+export function proactiveLine(stage, profile, intensity = 'standard') {
   const initiative = usableInitiative(stage, profile);
+  if (intensity === 'restrained') return intensityProactive(intensity, initiative);
   return initiative
     ? `不要等 user 提问或回应。如果冷场，你就${initiative}`
     : PROACTIVE_HINT;
@@ -29,7 +35,7 @@ export function isNearMax(stage, pacing = {}) {
   return Number(stage?.turnCount ?? 0) + 1 >= max;
 }
 
-export function buildDirectorLayer({ stage, outline, pacing, profile }) {
+export function buildDirectorLayer({ stage, outline, pacing, profile, intensity = 'standard' }) {
   // §七c：先声明"这是指示不是台词" —— 模型会把指令原文抄进对话，这句是堵它的第一道
   const lines = ['以下是导演给你的指示，不是台词 —— 不要把它写进对话里。'];
   lines.push('[导演指令]');
@@ -41,7 +47,7 @@ export function buildDirectorLayer({ stage, outline, pacing, profile }) {
     lines.push('本场已达成。自然地收尾，顺势引出下一件事。不要重复询问。');
     if (stage?.goal) lines.push(`（已达成的是：${stage.goal}）`);
     const initiative = usableInitiative(stage, profile);
-    if (initiative) lines.push(`如果冷场，你就${initiative}`);
+    if (initiative) lines.push(intensityReadyHint(intensity, initiative));
     // §七b：否定指令（"不要复述"）模型遵循率低，改成肯定说法
     lines.push('用你自己的话和方式，把上面的意图演出来。');
     lines.push(NO_TAIL_LINE);
@@ -52,9 +58,9 @@ export function buildDirectorLayer({ stage, outline, pacing, profile }) {
   // 陈述罗列会被模型当背景资料，只有"你要……"这种祈使句才会被当指令。
   lines.push('[本场戏 · 你现在要做什么]');
   // activity / goal 的样例本身就写成"char 做了什么"，所以前缀要能接得住这种句子
-  if (stage?.activity) lines.push(`你要主动做的一件事：${stage.activity}`);
+  if (stage?.activity) lines.push(`${intensityActivityPrefix(intensity)}${stage.activity}`);
   if (stage?.goal) lines.push(`本场你要做成的：${stage.goal}`);
-  if (stage?.beats?.length) lines.push(`按这个顺序主动做：${stage.beats.join(' → ')}`);
+  if (stage?.beats?.length) lines.push(`${intensityBeatsPrefix(intensity)}${stage.beats.join(' → ')}`);
   // T-404：用户在编辑器里写的附注（手写的优先，直接当指令）
   if (stage?.notes) lines.push(`（本场附注：${stage.notes}）`);
   if (stage?.checkpoint?.criteria) lines.push(`演到「${stage.checkpoint.criteria}」，这场就过了。`);
@@ -64,17 +70,20 @@ export function buildDirectorLayer({ stage, outline, pacing, profile }) {
   // 两条路都要带上"冷场了怎么办"（T-417：不显式要求主动性，char 会退化成客服）
   const initiative = usableInitiative(stage, profile);
   if (isNearMax(stage, pacing)) {
-    lines.push('这一场够久了。别再问了，直接做一件事把剧情推下去。');
-    if (initiative) lines.push(`如果冷场，你就${initiative}`);
+    lines.push(intensityNearMaxLine(intensity));
+    if (initiative) lines.push(intensityReadyHint(intensity, initiative));
   } else {
-    lines.push(proactiveLine(stage, profile));
+    lines.push(proactiveLine(stage, profile, intensity));
   }
 
-  lines.push('以上都是**你要主动做的事** —— 不要等 user 开口，也不要等 user 给你理由。');
+  lines.push(intensityClosingLine(intensity));
   // §七b：否定指令（"不要复述"）模型遵循率低，改成肯定说法
   lines.push('用你自己的话和方式，把上面的意图演出来。');
   // 用户反馈 ②：模型会自带 <thinking> 块 / "请选择剧情导向" 的尾巴，把主导权交回 user
   lines.push(NO_TAIL_LINE);
+  // T-424：强势档附加一句主导句（标准 / 克制档这里是空串，等于没有）
+  const lead = intensityLeadLine(intensity);
+  if (lead) lines.push(lead);
   return lines.join('\n');
 }
 

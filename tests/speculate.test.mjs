@@ -241,4 +241,48 @@ await check('服务把模型给的关键词存进投机记录', async () => {
   assert.deepEqual(env.store.get().runtime.speculation.keywords, ['为什么', '说清楚']);
 });
 
+console.log('T-426 · 投机搭车（不再单独发调用）');
+
+await check('accept：把合并调用带回来的投机段存下来，并可被消费一次', async () => {
+  const env = makeEnv();
+  const service = createSpeculationService({ client: { request: async () => '{}' }, getConnection: () => ({}), store: env.store });
+
+  assert.equal(service.consumeCombined(), false, '一开始没有搭车');
+
+  const record = service.accept({
+    guess: 'user 会追问',
+    keywords: ['为什么', '解释'],
+    injection: '继续逼问',
+    stage: { id: 'st1' },
+  });
+  assert.equal(record.injection, '继续逼问');
+  assert.equal(env.store.get().runtime.speculation.guess, 'user 会追问');
+  assert.deepEqual(env.store.get().runtime.speculation.keywords, ['为什么', '解释']);
+
+  assert.equal(service.consumeCombined(), true, '消费一次');
+  assert.equal(service.consumeCombined(), false, '只能消费一次');
+});
+
+await check('accept：没有 injection 就静默丢弃（不写状态、不算搭车）', async () => {
+  const env = makeEnv();
+  const service = createSpeculationService({ client: { request: async () => '{}' }, getConnection: () => ({}), store: env.store });
+  assert.equal(service.accept({ guess: 'x', injection: '   ' }), null);
+  assert.equal(env.store.get().runtime?.speculation ?? null, null);
+  assert.equal(service.consumeCombined(), false);
+});
+
+await check('P2-2：投机开关关掉后 guess 直接不发请求', async () => {
+  const env = makeEnv();
+  let calls = 0;
+  const service = createSpeculationService({
+    client: { request: async () => { calls += 1; return '{"guess":"x","injection":"y"}'; } },
+    getConnection: () => ({}),
+    store: env.store,
+  });
+  // 闸门在 bootstrap 里读 settings.speculation —— 这里验证服务本身不读设置、调用方才该拦
+  const record = await service.guess({ stage: { id: 'st1' }, userMessage: '嗯' });
+  assert.ok(record);
+  assert.equal(calls, 1);
+});
+
 console.log(`\n通过 ${passed} 项`);

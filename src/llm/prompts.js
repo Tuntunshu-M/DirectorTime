@@ -66,6 +66,59 @@ const ACTOR_RULES = `【演员界定 —— 最重要的一条，违反则整份
 
 `;
 
+/**
+ * T-424 A：人设尊重（恒开，无开关）。
+ * 反馈 #6：一味"主动推进"会把内敛角色写 OOC。这句同时进剧本生成与侧写生成。
+ */
+export const PERSONA_RESPECT = `推进剧情的表达方式必须符合角色既有性格。
+内敛 / 冷淡角色的"主动"可以是微小动作与试探，不必热情外放；
+禁止为了推进而让角色做出违背人设的热络举动。`;
+
+/**
+ * T-426：判定三段的口径抽成常量 —— 单条判定模板与合并模板共用同一份措辞
+ * （否则合并版和单条版会各说各话，判定结果就对不上了）。
+ */
+const STANCE_SYSTEM = `判断 user 这句话对当前剧情方向的态度。按意图判断，不做字面匹配。
+
+输出 JSON（不要解释）：
+{ "stance": "accept" | "reject" | "hesitate" | "irrelevant" | "redirect", "confidence": 0到1之间的数 }
+
+- accept：接受、同意
+- reject：拒绝、反对
+- hesitate：犹豫、模糊
+- irrelevant：与剧情无关
+- redirect：想改变方向`;
+
+const CHECKPOINT_SYSTEM = `你是场记，负责判断这一场戏是否拍完了。
+
+**按意图判断，不要字面匹配关键词。**
+- 达成条件写的是 **char 做到的事**：char 做到了就算达成，即使他一个字都没说出口
+- 判定看 **char 做到没有**，不是 user 有没有配合 —— user 不配合不代表没达成
+- 但 user **完全没回应**不算达成：他一直聊别的、没接这一场的话 → 判 pending
+  （一句话：**不要求 user 说什么，但要求 user 有在说**）
+- user 说"好啊那就去吧"，即使没提具体地名的字面，也算达成
+- 只有明确表达相反意图，才算 violated
+
+输出 JSON（不要解释）：
+{ "status": "achieved" | "partial" | "pending" | "violated", "confidence": 0到1之间的数, "reason": "一句话理由", "recalled": ["这一轮回收了的伏笔编号"] }
+
+recalled：只填这一轮剧情里**真的回收/解答了**的伏笔编号（没有就留空数组），不要臆测。
+
+档位含义：
+- achieved：意图明确达成
+- partial：沾边但不够明确
+- pending：完全没碰到
+- violated：明确表达了相反意图
+
+confidence 填你的把握程度。**不确定就给低值** —— 系统对低 confidence 一律按推进处理，因为剧情卡住比跳一步的危害大得多。`;
+
+const SPECULATE_SYSTEM = `另外顺便猜一下 **user 接下来想干什么**，并提前把下一轮该怎么演的导演指令写好。
+- speculation.guess 是**意图 / 方向**，不是台词：写"user 会试探性地靠近""user 会拒绝并转移话题"，每句不超过 15 字
+  **绝对不要写完整台词**（写"我顺势坐下，深吸一口气，说：谢谢你…"这种整句永远猜不中）
+- speculation.keywords：2 到 4 个**如果真是这个意图、他大概率会用到**的词或短语
+  （例：意图是"拒绝" → ["算了","不必","不想"]）
+- speculation.injection：写成给角色的行为指令（本场该做什么、不要做什么），不写心理描写`;
+
 export const PROMPTS = {
   GEN_OUTLINE: {
     system: `${ACTOR_RULES}你是电影导演，正在为一部即兴戏剧编写分场剧本。
@@ -94,7 +147,9 @@ ${OUTLINE_SHAPE}
 - criteria 写**意图级**，不要写死具体名词：
   错误："char 说出 D 市"——user 换个说法就判不中，剧情会卡死
 - antiCriteria 必填，描述明确的反意图（唯一可以写 user 反应的地方，但那是判定条件）
-- 一次只判一件事，复合条件拆成两个连续阶段`,
+- 一次只判一件事，复合条件拆成两个连续阶段
+
+${PERSONA_RESPECT}`,
     user: `当前情况：
 - 用户想法：{{premise}}
 - 用户指定的主目标：{{objective}}
@@ -111,33 +166,15 @@ ${OUTLINE_SHAPE}
   },
 
   JUDGE_CHECKPOINT: {
-    system: `你是场记，负责判断这一场戏是否拍完了。
-
-**按意图判断，不要字面匹配关键词。**
-- 达成条件写的是 **char 做到的事**：char 做到了就算达成，即使他一个字都没说出口
-- 判定看 **char 做到没有**，不是 user 有没有配合 —— user 不配合不代表没达成
-- 但 user **完全没回应**不算达成：他一直聊别的、没接这一场的话 → 判 pending
-  （一句话：**不要求 user 说什么，但要求 user 有在说**）
-- user 说"好啊那就去吧"，即使没提具体地名的字面，也算达成
-- 只有明确表达相反意图，才算 violated
-
-输出 JSON（不要解释）：
-{ "status": "achieved" | "partial" | "pending" | "violated", "confidence": 0到1之间的数, "reason": "一句话理由", "recalled": ["这一轮回收了的伏笔编号"] }
-
-recalled：只填这一轮剧情里**真的回收/解答了**的伏笔编号（没有就留空数组），不要臆测。
-
-档位含义：
-- achieved：意图明确达成
-- partial：沾边但不够明确
-- pending：完全没碰到
-- violated：明确表达了相反意图
-
-confidence 填你的把握程度。**不确定就给低值** —— 系统对低 confidence 一律按推进处理，因为剧情卡住比跳一步的危害大得多。`,
+    system: CHECKPOINT_SYSTEM,
     user: `本场目标：{{goal}}
 达成条件：{{criteria}}
 反意图：{{antiCriteria}}
 待回收伏笔：
 {{foreshadows}}
+
+最近的对话（背景参考 —— 用来判断他是不是一直在朝这个方向走；判定主依据仍是本轮 user 消息与达成条件，别被无关闲聊带偏）：
+{{context}}
 
 user 刚才说：{{userMessage}}
 角色回复：{{charMessage}}
@@ -146,21 +183,55 @@ user 刚才说：{{userMessage}}
   },
 
   JUDGE_STANCE: {
-    system: `判断 user 这句话对当前剧情方向的态度。按意图判断，不做字面匹配。
-
-输出 JSON（不要解释）：
-{ "stance": "accept" | "reject" | "hesitate" | "irrelevant" | "redirect", "confidence": 0到1之间的数 }
-
-- accept：接受、同意
-- reject：拒绝、反对
-- hesitate：犹豫、模糊
-- irrelevant：与剧情无关
-- redirect：想改变方向`,
+    system: STANCE_SYSTEM,
     user: `当前剧情方向：{{goal}}
+
+最近的对话（背景参考 —— 判定主依据仍是 user 刚才那一句，前文只用来看他是不是在延续之前的态度）：
+{{context}}
 
 user 刚才说：{{userMessage}}
 
 判断 user 的态度。`,
+  },
+
+  /**
+   * T-426：判定合一 —— 一次调用同时返回 stance / judgement / speculation 三段，
+   * 把每轮 2~3 次调用压到 1 次（站子按次计费）。
+   * 三段各自独立解析、独立降级（见 llm/sections.js），任何一段坏掉不连坐其它段。
+   */
+  JUDGE_COMBINED: {
+    system: `你要一次做完三件事，并把结果合成**一个** JSON 输出。
+
+【第一件：态度判定】
+${STANCE_SYSTEM}
+
+【第二件：推进点判定】
+${CHECKPOINT_SYSTEM}
+
+【第三件：投机预生成（可选）】
+${SPECULATE_SYSTEM}
+
+输出要求：
+- 只输出**一个** JSON 对象，不要解释、不要 markdown 代码块标记
+- 结构固定为：
+{ "stance": "accept|reject|hesitate|irrelevant|redirect", "confidence": 0到1之间的数,
+  "judgement": { "status": "achieved|partial|pending|violated", "confidence": 0到1之间的数, "reason": "一句话理由", "recalled": [] },
+  "speculation": { "guess": "≤15字意图", "keywords": ["…"], "injection": "下一轮该怎么演" } }
+- judgement 与 speculation **不要求时就不要输出这两个字段**（省 token）
+- 三段互不影响：某一段拿不准就按该段自己的降级规则给保守值，不要因为一段不确定就整份不作答`,
+    user: `当前剧情方向：{{goal}}
+达成条件：{{criteria}}
+反意图：{{antiCriteria}}
+待回收伏笔：
+{{foreshadows}}
+
+最近的对话（背景参考 —— 判定主依据仍是本轮 user 消息与达成条件，别被无关闲聊带偏）：
+{{context}}
+
+user 刚才说：{{userMessage}}
+角色回复：{{charMessage}}
+
+{{asks}}`,
   },
 
   REWRITE_BEATS: {
@@ -196,7 +267,9 @@ user 说：{{userMessage}}
   criteria 必须是 **char 单方面就能完成的事**（别写"user 走到某地"这种要 user 配合的）；
   只有 antiCriteria 例外：它可以写 user 的反应，但那是判定条件，不是"让 user 这样做"
 - 写**意图**，不要写成**成品**：不要把台词写死（错："他打出了'随便你怎么想'这句话"；
-  对："他不想多解释，冷冷地回一句"）—— 写死的成品会被原样抄进对话里`,
+  对："他不想多解释，冷冷地回一句"）—— 写死的成品会被原样抄进对话里
+
+${PERSONA_RESPECT}`,
     user: `剧本：{{title}}
 前提：{{premise}}
 当前主目标：{{objective}}
@@ -232,7 +305,8 @@ user 说：{{userMessage}}
 char 的主要活动：{{activity}}
 本场走位：{{beats}}
 
-这一场如果冷场了，这个角色会主动做什么？`,
+这一场如果冷场了，这个角色会主动做什么？
+{{intensityNote}}`,
   },
 
   SPECULATE_NEXT: {
@@ -284,7 +358,10 @@ user 刚说：{{userMessage}}
 禁止：
 - 不要把角色卡原文抄进来
 - 不要写成人物小传（不要生平、不要经历）
-- 不要评价角色好坏`,
+- 不要评价角色好坏
+
+${PERSONA_RESPECT}
+（写 proactivity 时尤其注意：内敛角色的主动性就是"微小动作与试探"，不要把它写成热情外放）`,
     user: `角色卡：
 {{char}}
 

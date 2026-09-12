@@ -254,4 +254,48 @@ await check('文案与 willTier 用的是同一套阈值（不会各说各话）
   }
 });
 
+console.log('P1-4 · 判定要带上下文（不再单轮失忆）');
+
+await check('JUDGE_STANCE 请求里带上了最近对话，并写明"主依据仍是本轮"', async () => {
+  let sent = '';
+  const service = createWillService({
+    client: { request: async ({ messages }) => { sent = messages.map((m) => m.content).join('\n'); return '{"stance":"accept","confidence":0.9}'; } },
+    getConnection: () => ({}),
+  });
+  await service.judge({
+    stage: makeStage(),
+    userMessage: '那就去吧',
+    context: 'user：我前几天一直在说要走\nchar：那就走吧',
+  });
+  assert.ok(sent.includes('我前几天一直在说要走'), '前几楼的铺垫要进请求');
+  assert.ok(sent.includes('背景参考'), sent.slice(0, 200));
+  assert.ok(sent.includes('判定主依据仍是 user 刚才那一句'));
+});
+
+await check('没有历史对话时也不留空变量（写成"（没有历史对话）"）', async () => {
+  let sent = '';
+  const service = createWillService({
+    client: { request: async ({ messages }) => { sent = messages.map((m) => m.content).join('\n'); return '{"stance":"accept","confidence":0.9}'; } },
+    getConnection: () => ({}),
+  });
+  await service.judge({ stage: makeStage(), userMessage: '嗯' });
+  assert.ok(sent.includes('（没有历史对话）'));
+});
+
+await check('T-426：classify 只跑本地规则，一趟 API 都不发', async () => {
+  let called = 0;
+  const service = createWillService({
+    client: { request: async () => { called += 1; return '{}'; } },
+    getConnection: () => ({}),
+    getRules: () => null,
+  });
+  const hit = service.classify('好啊，走吧');
+  assert.equal(called, 0, 'classify 不许发请求');
+  assert.equal(hit.needsLlm, false, '强词应被本地规则定下来');
+
+  const miss = service.classify('这件事你怎么看');
+  assert.equal(miss.needsLlm, true, '规则定不了 → 交给合并调用');
+  assert.equal(called, 0);
+});
+
 console.log(`\n通过 ${passed} 项`);

@@ -142,8 +142,11 @@ export function createDefaultSettings() {
     modelPreset: { kind: 'off', custom: { claude: '', gemini: '' } },
     // 一键更新：上次试成功的扩展路径（T-420），下次先试它
     updatePath: null,
-    // 文本清洗（P1-3）：内置两条 thinking 规则 + 用户自定义正则；只作用于本插件消费的文本
-    textClean: { enabled: true, rules: [] },
+    // 文本清洗（T-425）：内置两条 thinking 规则 + 用户自定义正则；只作用于本插件消费的文本
+    sanitizeEnabled: true,
+    sanitizeRules: [],
+    // 导演强度（T-424）：restrained / standard / assertive，默认标准档（零回归）
+    directorIntensity: 'standard',
     // 三级自动化档位（T-414）：**唯一来源**，跨聊天（Debug 与配置页读的都是这份）
     automation: createDefaultAutomation(),
     // 世界书：勾选的条目（entryKey → true）与进 prompt 的条数上限（项目书 §F1 / 附录建议 20）

@@ -172,4 +172,42 @@ await check('API 调用失败 → hold 且不计入卡住', async () => {
   assert.equal(r.reason, '超时');
 });
 
+console.log('P1-4 · 判定带上下文 + T-426 复用判定结果');
+
+await check('JUDGE_CHECKPOINT 请求里带上了最近对话', async () => {
+  let sent = '';
+  const service = createCheckpointService({
+    client: {
+      request: async ({ messages }) => {
+        sent = messages.map((message) => message.content).join('\n');
+        return '{"status":"pending","confidence":0.9,"reason":"没碰到","recalled":[]}';
+      },
+    },
+    stages: makeStages({ id: 'st1', goal: 'g', checkpoint: { criteria: 'c', antiCriteria: 'a' }, turnCount: 0, stuckCount: 0 }),
+    getSettings: () => ({}),
+  });
+
+  await service.judge({ userMessage: '嗯', charMessage: '他看你一眼', context: 'user：我一直在说要走' });
+  assert.ok(sent.includes('我一直在说要走'), '前几楼的铺垫要进判定请求');
+  assert.ok(sent.includes('背景参考'));
+  assert.ok(sent.includes('判定主依据仍是本轮 user 消息与达成条件'), sent.slice(0, 300));
+});
+
+await check('T-426 fromJudgement：判定已在手上时不再重复发调用', async () => {
+  let calls = 0;
+  const service = createCheckpointService({
+    client: { request: async () => { calls += 1; return '{}'; } },
+    stages: makeStages({ id: 'st1', goal: 'g', checkpoint: { criteria: 'c', antiCriteria: 'a' }, turnCount: 1, stuckCount: 0 }),
+    getSettings: () => ({}),
+  });
+
+  const result = service.fromJudgement({ judgement: { status: 'achieved', confidence: 0.95 }, raw: 'raw' });
+  assert.equal(calls, 0, '不该发请求');
+  assert.equal(result.judgement.status, 'achieved');
+  assert.ok(result.action, '要算出放行动作');
+  assert.equal(result.raw, 'raw');
+
+  assert.equal(service.fromJudgement({ judgement: null }), null, '没有判定就不产出结果');
+});
+
 console.log(`\n通过 ${passed} 项`);

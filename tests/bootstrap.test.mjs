@@ -183,4 +183,70 @@ await acheck('世界书选择 / 剧本 / 进度都按聊天记（切聊天不串
   assert.equal(store.get().activeStageId, store.get().stages[0].id, '进度（当前场）也恢复');
 });
 
+console.log('T-424 / T-425 / P2-2 · 新入口的装配');
+
+await acheck('api.intensity：三档、默认标准、切档走 saveSettings', async () => {
+  const env = makeBootEnv();
+  const api = bootstrap({ ctx: env.ctx, store: env.store });
+
+  assert.equal(api.intensity.get(), 'standard', '默认必须是标准档（零回归）');
+  assert.deepEqual(api.intensity.levels(), ['restrained', 'standard', 'assertive']);
+  assert.equal(api.intensity.set('restrained'), 'restrained');
+  assert.equal(env.store.getSettings().directorIntensity, 'restrained', '要走 saveSettings 持久化');
+  assert.equal(api.intensity.set('瞎填'), 'standard', '认不出的回落标准档');
+});
+
+await acheck('api.sanitize：按 T-425 的键读写（sanitizeEnabled / sanitizeRules）', async () => {
+  const env = makeBootEnv();
+  const api = bootstrap({ ctx: env.ctx, store: env.store });
+
+  assert.deepEqual(api.sanitize.get(), { enabled: true, rules: [] }, '默认开、无自定义');
+  api.sanitize.set({ rules: ['<status>.*</status>', '  ', '<status>.*</status>'] });
+  assert.deepEqual(env.store.getSettings().sanitizeRules.map((rule) => rule.pattern), ['<status>.*</status>'], '去空去重');
+  api.sanitize.set({ enabled: false });
+  assert.equal(api.sanitize.get().enabled, false);
+  api.sanitize.reset();
+  assert.deepEqual(api.sanitize.get(), { enabled: true, rules: [] });
+});
+
+await acheck('老数据迁移：v0.6.0 的 settings.textClean → sanitizeEnabled / sanitizeRules', async () => {
+  const env = makeBootEnv();
+  env.store.saveSettings({ textClean: { enabled: false, rules: ['<x>.*</x>'] } });
+  bootstrap({ ctx: env.ctx, store: env.store });
+
+  const settings = env.store.getSettings();
+  assert.equal(settings.sanitizeEnabled, false, '开关要迁过来');
+  assert.deepEqual(settings.sanitizeRules.map((rule) => rule.pattern), ['<x>.*</x>'], '自定义规则要迁过来');
+  assert.equal(settings.textClean, undefined, '旧键要清掉（不然又是两份）');
+});
+
+await acheck('api.speculate：开关 + 状态（P2-2 以前只有闸门没有入口）', async () => {
+  const env = makeBootEnv();
+  const api = bootstrap({ ctx: env.ctx, store: env.store });
+
+  assert.equal(api.speculate.status().enabled, true, '默认开');
+  const off = api.speculate.setEnabled(false);
+  assert.equal(off.enabled, false);
+  assert.equal(env.store.getSettings().speculation, false, '要走 saveSettings 持久化');
+  api.speculate.setEnabled(true);
+  assert.equal(api.speculate.status().enabled, true);
+  assert.ok('hits' in api.speculate.status() && 'total' in api.speculate.status(), '要能报命中率');
+});
+
+await acheck('配置改了 → Debug 的「下轮将注入」跟着变（导演强度接线）', async () => {
+  const env = makeBootEnv();
+  const api = bootstrap({ ctx: env.ctx, store: env.store });
+  env.store.saveSettings({ enabled: true, injectEnabled: true, connection: { endpoint: 'https://x/v1' } });
+  api.stages.load(normalizeStages([{ goal: 'g', activity: 'a', checkpoint: { criteria: 'c', antiCriteria: 'a' }, beats: ['b'] }]));
+
+  api.intensity.set('standard');
+  const standard = api.review.syncInjection();
+  api.intensity.set('restrained');
+  const restrained = api.review.syncInjection();
+
+  assert.ok(standard.includes('你要主动做的一件事'), standard);
+  assert.ok(restrained.includes('可以试着做的一件事'), restrained);
+  assert.notEqual(standard, restrained, '切档要真的改变注入文本');
+});
+
 console.log(`\n通过 ${passed} 项`);

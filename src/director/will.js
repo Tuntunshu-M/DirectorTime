@@ -144,11 +144,20 @@ export function shouldRunCheckpoint(decision) {
 
 export function createWillService({ client, getConnection, getRules } = {}) {
   /**
+   * T-426：**只跑本地规则**（零调用）。
+   * review 用它决定"够不够准"：够准就不发合并调用；不够准才发一次合并调用。
+   */
+  function classify(userMessage = '') {
+    const local = judgeByRules(userMessage, getRules?.() ?? null);
+    return { ...local, needsLlm: Boolean(local.needsLlm) };
+  }
+
+  /**
    * 判 user 这一句的态度。
    * 顺序（T-406）：**先本地规则，够准就不花 API；不够准再问 JUDGE_STANCE**。
    * 调用失败 / 解析失败一律降级为 accept：拿不准就当接受，让流程照常走推进点判定（禁则 G5）。
    */
-  async function judge({ stage, userMessage = '' } = {}) {
+  async function judge({ stage, userMessage = '', context = '' } = {}) {
     if (!stage) return { ok: false, stance: 'accept', confidence: 0, reason: '没有进行中的阶段' };
 
     // 1) 规则引擎（本地、免费、不会解析失败）
@@ -164,9 +173,11 @@ export function createWillService({ client, getConnection, getRules } = {}) {
     }
 
     // 2) 规则不够准 → 老实交给 LLM（复用已有的 JUDGE_STANCE，不新写 prompt）
+    //    P1-4：带上最近对话 —— 以前只喂这一句，判"铺垫型推进"时是单轮失忆，置信度虚低会提前跳阶段
     const messages = buildMessages('JUDGE_STANCE', {
       goal: stage.goal ?? '',
       userMessage,
+      context: context || '（没有历史对话）',
     });
 
     let raw;
@@ -191,5 +202,5 @@ export function createWillService({ client, getConnection, getRules } = {}) {
     };
   }
 
-  return { judge };
+  return { judge, classify };
 }
