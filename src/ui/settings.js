@@ -10,6 +10,9 @@
 
 import { PROFILE_FIELDS, PROFILE_FIELD_LABELS } from '../world/character.js';
 import { FEATURES, LEVELS, FEATURE_LABELS, LEVEL_LABELS } from '../core/automation.js';
+import { TONE_KEYS, TONE_LABELS } from '../core/tone.js';
+
+const BTN = 'font:inherit;padding:3px 9px;cursor:pointer';
 
 const PANEL_STYLE = `
   position:fixed; top:60px; left:20px; width:340px; max-width:calc(100vw - 40px);
@@ -115,8 +118,102 @@ function automationSection(automation) {
     </details>`;
 }
 
+/** 模型特化预设（T-403 / F10）：Gemini 角色塑造红线，默认关闭，双端注入 */
+function modelPresetSection(modelPreset) {
+  const current = modelPreset?.get?.() ?? { enabled: false, custom: '' };
+  const text = modelPreset?.text?.() ?? '';
+  return `
+    <details style="margin-top:12px">
+      <summary>模型特化预设（Gemini 角色塑造红线）</summary>
+      <label style="display:block;margin:8px 0 4px">
+        <input type="checkbox" id="dt-redline-on" ${current.enabled ? 'checked' : ''}> 启用
+      </label>
+      <div style="font-size:11px;opacity:.7">
+        开启后<b>两端都注入</b>：导演请求（剧情生成）+ 每轮指令（角色回复）。只开一端会撕裂。
+        当前${text ? `生效 ${text.length} 字` : '未注入任何内容'}。
+      </div>
+      <textarea id="dt-redline-text" rows="8" style="${fieldStyle()}">${escapeAttr(current.custom || modelPreset?.defaultText?.() || '')}</textarea>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button id="dt-redline-save" type="button" style="${BTN}">保存</button>
+        <button id="dt-redline-reset" type="button" style="${BTN}">恢复内置</button>
+      </div>
+      <div id="dt-redline-msg" style="margin-top:6px;opacity:.75">—</div>
+    </details>`;
+}
+
+/** 破限词模式（T-411 的界面入口）：off / preset / custom / append */
+function breakFilterSection(breakFilter, presets) {
+  const current = breakFilter?.get?.() ?? { mode: 'off', custom: '' };
+  const presetName = presets?.status?.().name ?? '';
+  const modes = [
+    ['off', '关闭（不注入破限词）'],
+    ['preset', '跟随酒馆预设'],
+    ['custom', '只用下面自定义'],
+    ['append', '预设 + 自定义'],
+  ];
+  return `
+    <details style="margin-top:12px">
+      <summary>破限词模式</summary>
+      <div style="margin:8px 0">
+        <select id="dt-break-mode" style="${fieldStyle()}">
+          ${modes.map(([value, label]) => `<option value="${value}"${current.mode === value ? ' selected' : ''}>${label}</option>`).join('')}
+        </select>
+      </div>
+      <div>自定义破限词（custom / append 模式用）</div>
+      <textarea id="dt-break-custom" rows="4" style="${fieldStyle()}">${escapeAttr(current.custom)}</textarea>
+      <div id="dt-break-msg" style="opacity:.75">
+        ${current.mode === 'off' ? '当前不注入任何破限词' : (presetName ? `当前预设：${escapeAttr(presetName)}` : '还没选预设（在上面「预设」区里选）')}
+        <button id="dt-break-save" type="button" style="${BTN}">保存</button>
+      </div>
+    </details>`;
+}
+
+/** 剧情占比（T-415 的界面入口）：三条线联动配平，和恒为 100 */
+function toneSection(tone) {
+  const current = tone?.get?.() ?? {};
+  const rows = TONE_KEYS.map((key) => `
+    <div style="display:flex;gap:6px;align-items:center;margin:4px 0">
+      <div style="flex:1">${escapeAttr(TONE_LABELS[key] ?? key)}</div>
+      <input type="number" min="0" max="100" data-dt-tone="${key}" value="${Number(current[key] ?? 0)}" style="width:5em;font:inherit;padding:3px 5px">
+    </div>`).join('');
+  return `
+    <details style="margin-top:12px">
+      <summary>剧情占比（三条线联动，和恒为 100）</summary>
+      <div style="margin:8px 0">${rows}</div>
+      <div id="dt-tone-msg" style="opacity:.75">拖一条，另外两条按原比例配平</div>
+    </details>`;
+}
+
+/** 主角（T-412 多人卡的界面入口） */
+function castSection(cast) {
+  const names = (cast?.get?.() ?? []).map((item) => item.name).filter(Boolean).join('、');
+  return `
+    <details style="margin-top:12px">
+      <summary>主角（多人卡）</summary>
+      <input id="dt-cast-names" style="${fieldStyle()}" placeholder="用、或逗号分隔；留空 = 单卡老行为" value="${escapeAttr(names)}">
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button id="dt-cast-save" type="button" style="${BTN}">保存</button>
+      </div>
+      <div id="dt-cast-msg" style="margin-top:6px;opacity:.75">只在这些主角说话时注入；不是他的戏不注入</div>
+    </details>`;
+}
+
+/** 副本迁移（T-413 的界面入口）：导出 / 导入 */
+function copySection(copy) {
+  return `
+    <details style="margin-top:12px">
+      <summary>副本迁移（导出 / 导入）</summary>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0">
+        <button id="dt-copy-export" type="button" style="${BTN}">导出到下面</button>
+        <button id="dt-copy-import" type="button" style="${BTN}">从下面导入</button>
+      </div>
+      <textarea id="dt-copy-area" rows="5" style="${fieldStyle()}" placeholder="副本 JSON"></textarea>
+      <div id="dt-copy-msg" style="opacity:.75">副本不含端点与密钥；导入前会给你看概览与警告</div>
+    </details>`;
+}
+
 export function renderSettingsForm({
-  container, store, onTest, onSave, onClose, profile, presets, automation,
+  container, store, onTest, onSave, onClose, profile, presets, automation, extras,
 } = {}) {
   const node = container;
   const s = store.getSettings();
@@ -156,6 +253,11 @@ export function renderSettingsForm({
     ${profile ? profileSection(profile) : ''}
 ${presets ? presetSection(presets) : ''}
 ${automation ? automationSection(automation) : ''}
+${extras?.modelPreset ? modelPresetSection(extras.modelPreset) : ''}
+${extras?.breakFilter ? breakFilterSection(extras.breakFilter, presets) : ''}
+${extras?.tone ? toneSection(extras.tone) : ''}
+${extras?.cast ? castSection(extras.cast) : ''}
+${extras?.copy ? copySection(extras.copy) : ''}
   `;
 
   node.querySelector('#dt-settings-close')?.addEventListener('click', () => onClose?.());
@@ -220,7 +322,7 @@ ${automation ? automationSection(automation) : ''}
           : '未选：不注入任何破限内容';
       }
       // 换预设 → 条目列表跟着换，重绘一次最省事（面板是临时界面，不做局部刷新）
-      renderSettingsForm({ container: node, store, onTest, onSave, onClose, profile, presets, automation });
+      renderSettingsForm({ container: node, store, onTest, onSave, onClose, profile, presets, automation, extras });
     });
     node.querySelectorAll('input[data-dt-preset-entry]').forEach((input) => {
       input.addEventListener('change', () => {
@@ -277,7 +379,7 @@ ${automation ? automationSection(automation) : ''}
       try {
         const result = await profile.regenerate?.();
         // 先重绘再写提示 —— 反过来的话提示会被重绘冲掉，用户只能看到"一片空白"（P0 修正）
-        if (result?.ok) renderSettingsForm({ container: node, store, onTest, onSave, onClose, profile, presets });
+        if (result?.ok) renderSettingsForm({ container: node, store, onTest, onSave, onClose, profile, presets, automation, extras });
         const msg = profileMsg();
         if (msg) {
           msg.textContent = result?.ok
@@ -291,10 +393,97 @@ ${automation ? automationSection(automation) : ''}
     });
   }
 
+  // ---------- 模型特化预设（T-403）----------
+  if (extras?.modelPreset) {
+    const msg = () => node.querySelector('#dt-redline-msg');
+    node.querySelector('#dt-redline-on')?.addEventListener('change', (event) => {
+      extras.modelPreset.set({ enabled: event.target.checked });
+      if (msg()) {
+        msg().textContent = event.target.checked
+          ? `已启用：导演请求与每轮指令都会带上（${extras.modelPreset.text().length} 字）`
+          : '已关闭：两端都不注入红线';
+      }
+    });
+    node.querySelector('#dt-redline-save')?.addEventListener('click', () => {
+      const text = node.querySelector('#dt-redline-text').value;
+      extras.modelPreset.set({ custom: text });
+      if (msg()) msg().textContent = `已保存（${extras.modelPreset.text().length} 字生效）`;
+    });
+    node.querySelector('#dt-redline-reset')?.addEventListener('click', () => {
+      extras.modelPreset.set({ custom: '' });
+      const area = node.querySelector('#dt-redline-text');
+      if (area) area.value = extras.modelPreset.defaultText();
+      if (msg()) msg().textContent = '已恢复内置红线';
+    });
+  }
+
+  // ---------- 破限词模式（T-411）----------
+  if (extras?.breakFilter) {
+    const msg = () => node.querySelector('#dt-break-msg');
+    node.querySelector('#dt-break-save')?.addEventListener('click', () => {
+      const mode = node.querySelector('#dt-break-mode').value;
+      const custom = node.querySelector('#dt-break-custom').value;
+      const next = extras.breakFilter.set({ mode, custom });
+      if (msg()) {
+        msg().textContent = next.mode === 'off'
+          ? '已保存：不注入任何破限词'
+          : `已保存：模式 ${next.mode}；选中预设后才会真的注入`;
+      }
+    });
+  }
+
+  // ---------- 剧情占比（T-415）----------
+  if (extras?.tone) {
+    const boxes = () => [...node.querySelectorAll('input[data-dt-tone]')];
+    boxes().forEach((box) => {
+      box.addEventListener('change', () => {
+        const next = extras.tone.set(box.dataset.dtTone, Number(box.value));
+        // 联动配平：把另外两条的新值写回输入框（不重绘，免得丢焦点）
+        for (const other of boxes()) other.value = Number(next?.[other.dataset.dtTone] ?? 0);
+        const msg = node.querySelector('#dt-tone-msg');
+        if (msg) msg.textContent = `日常 ${next.daily} / 危机 ${next.crisis} / 亲密 ${next.intimate}（合计 ${next.daily + next.crisis + next.intimate}）`;
+      });
+    });
+  }
+
+  // ---------- 主角（T-412）----------
+  if (extras?.cast) {
+    node.querySelector('#dt-cast-save')?.addEventListener('click', () => {
+      const names = node.querySelector('#dt-cast-names').value
+        .split(/[、,，\s]+/).map((name) => name.trim()).filter(Boolean);
+      const list = extras.cast.set(names);
+      const msg = node.querySelector('#dt-cast-msg');
+      if (msg) {
+        msg.textContent = list.length
+          ? `已保存 ${list.length} 个主角：${list.map((item) => item.name).join('、')}`
+          : '已清空：回到单卡老行为';
+      }
+    });
+  }
+
+  // ---------- 副本迁移（T-413）----------
+  if (extras?.copy) {
+    const msg = () => node.querySelector('#dt-copy-msg');
+    node.querySelector('#dt-copy-export')?.addEventListener('click', () => {
+      const area = node.querySelector('#dt-copy-area');
+      if (area) area.value = JSON.stringify(extras.copy.export(), null, 2);
+      if (msg()) msg().textContent = '已导出（不含端点与密钥）';
+    });
+    node.querySelector('#dt-copy-import')?.addEventListener('click', async () => {
+      const area = node.querySelector('#dt-copy-area');
+      try {
+        const result = await extras.copy.import(JSON.parse(area?.value ?? '{}'));
+        if (msg()) msg().textContent = result?.ok ? '已导入' : `失败：${result?.error ?? '未知'}`;
+      } catch (error) {
+        if (msg()) msg().textContent = `失败：${error?.message ?? '不是合法 JSON'}`;
+      }
+    });
+  }
+
   return node;
 }
 
-export function createSettingsPanel({ store, onTest, onSave, profile } = {}) {
+export function createSettingsPanel({ store, onTest, onSave, profile, presets, automation, extras } = {}) {
   let el = null;
 
   function ensure() {
@@ -308,7 +497,7 @@ export function createSettingsPanel({ store, onTest, onSave, profile } = {}) {
 
   function render() {
     const node = ensure();
-    return renderSettingsForm({ container: node, store, onTest, onSave, onClose: hide, profile });
+    return renderSettingsForm({ container: node, store, onTest, onSave, onClose: hide, profile, presets, automation, extras });
   }
 
   function show() { ensure().style.display = 'block'; return render(); }

@@ -13,14 +13,19 @@ function nextId(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${seq}`;
 }
 
+/** 阶段状态词表（《清单》§0.3 + T-416 新增的 ready） */
+export const STAGE_STATUSES = ['pending', 'active', 'ready', 'done', 'dropped'];
+
 /**
  * 给阶段补上运行时字段。
  * - 新建剧本：默认第一个 active、其余 pending
  * - 续写：传 { startIndex, activateFirst: false }，序号接续、全部 pending（不动当前 active）
+ * - 导入 / 快照还原：传 { preserve: true } —— **保留 id / 状态 / 计数 / 锁定**
+ *   （不保留的话"导出导入往返无损"根本做不到：id 一换，activeStageId 就指空了）
  */
-export function normalizeStages(rawStages = [], { startIndex = 1, activateFirst = true } = {}) {
+export function normalizeStages(rawStages = [], { startIndex = 1, activateFirst = true, preserve = false } = {}) {
   return rawStages.map((stage, i) => ({
-    id: nextId('st'),
+    id: preserve && typeof stage.id === 'string' && stage.id ? stage.id : nextId('st'),
     index: startIndex + i,
     title: stage.title ?? `阶段 ${startIndex + i}`,
     goal: stage.goal ?? '',
@@ -32,11 +37,13 @@ export function normalizeStages(rawStages = [], { startIndex = 1, activateFirst 
       instruction: stage.checkpoint?.instruction ?? '',
     },
     beats: Array.isArray(stage.beats) ? stage.beats : [],
-    // 第一个阶段开工，其余排队（续写时全排队）
-    status: activateFirst && i === 0 ? 'active' : 'pending',
+    // 第一个阶段开工，其余排队（续写时全排队）；preserve 时用原来的状态
+    status: preserve && STAGE_STATUSES.includes(stage.status)
+      ? stage.status
+      : (activateFirst && i === 0 ? 'active' : 'pending'),
     // T-416：楼层节奏（null = 用全局 settings.pacing）
     pacing: stage.pacing ?? null,
-    turnCount: 0,
+    turnCount: preserve ? Number(stage.turnCount) || 0 : 0,
     // T-405：本场单独的意愿权重（null = 用全局 settings.will）
     will: stage.will ?? null,
     // T-412：这一场是谁的戏；空 = 没指定（不拦注入）
@@ -44,9 +51,11 @@ export function normalizeStages(rawStages = [], { startIndex = 1, activateFirst 
     // T-417：由侧写推导，随阶段一起生成（生成时侧写为空就是空串）
     // 侧写版本戳 initiativeFrom 由 bootstrap 盖章，见 director/initiative.js
     initiative: stage.initiative ?? '',
-    stuckCount: 0,
-    locked: false,
-    aiOriginal: null,
+    // T-404：用户手写的附注（编辑器里可改，会作为「本场附注」进注入）
+    notes: stage.notes ?? '',
+    stuckCount: preserve ? Number(stage.stuckCount) || 0 : 0,
+    locked: preserve ? Boolean(stage.locked) : false,
+    aiOriginal: preserve ? (stage.aiOriginal ?? null) : null,
   }));
 }
 

@@ -100,9 +100,31 @@ DirectorTime.debug.show()
 DirectorTime.store.saveSettings({ updatePath: { name: 'third-party/你的扩展目录名', global: true } })
 ```
 
-## 更多开关（暂时都要走控制台）
+## 剧本编辑器（面板右上角「剧本」）
 
-下面这些还没有界面入口，需要时在控制台改，改完立刻生效、重启不丢：
+AI 生成的剧本随时能改，改完立刻生效：
+
+- **大纲**：标题 / 主线目标 / 一句话前提
+- **阶段**：加一阶段、在其后插入、复制、删除、↑↓ 调顺序；每阶段的标题 / 本场目标 / 主要活动 / 达成条件 / 反意图 / 走位（一行一条）/ 附注都能手填
+- **附注**会作为「本场附注」进注入 —— 你写给自己看的提醒，也可以直接当指挥
+- **锁定**：勾上之后 AI 不再改这一场（重写走位、一致性自检、重生成都跳过它）；**你自己手改永远生效**
+- **从当前阶段往后截断重生成**：后面演偏了，砍掉重写一批新的
+- **快照**：导出 JSON 存下来、导入回去（往返无损，含阶段 id / 状态 / 进度），也可以拿别人的剧本导入
+- **伏笔**：列出待回收的伏笔，逐条点「标记已回收」
+
+## 模型特化预设（Gemini 角色塑造红线）
+
+Gemini 这类模型容易把角色写成极端控制狂 / 病娇模板。开启这个预设会把角色拉回合理边界（禁套路、占有欲必须有心理与动机、附 6 条生成前自检）：
+
+- **两端都注入**：导演请求（剧情生成）+ 每轮指令（角色回复）。只开一端会撕裂 —— 剧情写出了越界内容，角色那边却拒绝执行
+- 默认关闭；不开启时一个字都不注入
+- 文本可以随便改（改完用你自己的那份），点「恢复内置」回到默认
+
+配置页 → 折叠区「模型特化预设」。
+
+## 更多开关
+
+配置页里有折叠区的直接点；下面这些命令在控制台改也一样生效（改完立刻生效、重启不丢）：
 
 ```js
 // 三级自动化档位：大纲 / 阶段重生成 / 侧写 / 立场判定 / 推进点判定 / 一致性自检
@@ -113,13 +135,13 @@ DirectorTime.automation.set('outline', 'L2')   // L0 全手动 / L1 待确认 / 
 DirectorTime.queue.list()                      // 看还有哪些等着确认
 DirectorTime.queue.approve('pr_xxx')           // 确认后才生效
 
-// 剧情占比（三条线联动，和恒为 100）
+// 剧情占比（三条线联动，和恒为 100）—— 配置页也有入口，拖一条另两条自动配平
 DirectorTime.tone.set('daily', 60)
 
 // 硬禁区：命中即停，优先于侧写禁忌
 DirectorTime.store.saveSettings({ hardLimits: ['自杀', '自残'] })
 
-// 破限词：off / preset（跟随酒馆预设）/ custom / append
+// 破限词：off / preset（跟随酒馆预设）/ custom / append —— 配置页也有下拉，选「跟随酒馆预设」才会真的用上预设
 DirectorTime.breakFilter.set({ mode: 'custom', custom: '……' })
 
 // 破限预设：直接选一个酒馆里已经调好的预设当破限词（只读，不改编它）
@@ -130,10 +152,10 @@ DirectorTime.presets.entries()         // 看这个预设有哪些条目
 DirectorTime.presets.selectEntries([0, 2]) // 只取第 1、3 条
 DirectorTime.presets.probe()           // 列不出来时，把这行结果发我 —— 它显示这个酒馆到底暴露了什么
 
-// 主角（多人卡，可多选）
+// 主角（多人卡，可多选）—— 配置页也有入口
 DirectorTime.cast.set([{ name: '爱丽丝' }, { name: '鲍勃' }])
 
-// 伏笔 / 副本
+// 伏笔销账在「剧本」页点；副本导出导入在配置页点
 DirectorTime.foreshadows.list()
 const copy = DirectorTime.copy.export()        // 存成 JSON 就能搬走
 await DirectorTime.copy.import(copy)           // 导入前会给你看概览与警告

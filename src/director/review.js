@@ -39,6 +39,8 @@ export function createReviewService({
   initiative,
   speculate,
   getProfile,
+  // T-403：模型特化预设文本（红线，角色回复端用；关着时是空串）
+  getRedline,
   // T-412：当前要生成的角色（多人卡里用来判断"这场戏是不是他的"）
   getSpeaker,
   // T-414：L1 档的待审核队列
@@ -76,6 +78,8 @@ export function createReviewService({
         pacing,
         // T-410：硬禁区每轮都要带上（角色回复端的约束）
         hardLimits: settings.hardLimits ?? [],
+        // T-403：模型特化预设（红线）的角色回复端那一半
+        redline: getRedline?.() ?? '',
       })
       : '';
     registry?.register?.(text);
@@ -133,7 +137,8 @@ export function createReviewService({
           if (result.judgement?.status === 'partial') stages?.resetStuck?.(activeId);
           else stages?.bumpStuck?.(activeId);
         }
-        if (active && beats?.rewrite) {
+        // T-404：锁定 = 用户显式指定，AI 不许改这一场的走位
+      if (active && beats?.rewrite && !active.locked) {
           const rewritten = await beats.rewrite({
             stage: active,
             userMessage,

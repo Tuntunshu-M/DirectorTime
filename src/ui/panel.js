@@ -22,6 +22,11 @@ function row(label, value) {
   return `<div><span style="opacity:.6">${escapeHtml(label)}</span> ${escapeHtml(value)}</div>`;
 }
 
+// 剧本编辑页复用（T-404）：只求能用，不美化（G4）
+const EDIT_BTN = 'font:inherit;padding:3px 9px;cursor:pointer';
+const EDIT_FIELD = 'width:100%;box-sizing:border-box;margin:3px 0 8px;padding:4px 6px;font:inherit;'
+  + 'background:rgba(255,255,255,.4);color:inherit;border:1px solid var(--dt-rule,rgba(43,39,33,.3));border-radius:3px';
+
 export function createMainPanel({
   store,
   registry,
@@ -37,6 +42,14 @@ export function createMainPanel({
   queue,
   // T-420：一键更新
   update,
+  // T-404：剧本编辑器（增删改 / 排序 / 锁定 / 快照）
+  editor,
+  // T-408：伏笔销账入口
+  foreshadows,
+  // T-404：从当前阶段往后截断重生成
+  onTruncateRegen,
+  // 配置页里那几个折叠区（T-403 红线 / 破限词模式 / 剧情占比 / 主角 / 副本）
+  extras,
   loadWorldSources,
   getWorldSelection,
   saveWorldSelection,
@@ -65,6 +78,7 @@ export function createMainPanel({
           <label class="dt-switch" title="导演时间总开关">
             <input type="checkbox" id="dt-panel-enabled"> 总开关
           </label>
+          <button class="dt-btn" id="dt-panel-editor" type="button" title="剧本编辑器（T-404）">剧本</button>
           <button class="dt-btn" id="dt-panel-world" type="button" title="世界书接入">世界书</button>
           <button class="dt-btn" id="dt-panel-config" type="button" title="导演 API 配置">配置</button>
           <button class="dt-btn" id="dt-panel-close" type="button" aria-label="关闭导演时间" title="关闭">✕</button>
@@ -77,6 +91,7 @@ export function createMainPanel({
     el.querySelector('#dt-panel-close').addEventListener('click', close);
     el.querySelector('#dt-panel-config').addEventListener('click', () => setView(view === 'config' ? 'status' : 'config'));
     el.querySelector('#dt-panel-world').addEventListener('click', () => setView(view === 'world' ? 'status' : 'world'));
+    el.querySelector('#dt-panel-editor').addEventListener('click', () => setView(view === 'editor' ? 'status' : 'editor'));
     el.querySelector('#dt-panel-enabled').addEventListener('change', (event) => {
       onToggleEnabled?.(event.target.checked);
       render();
@@ -318,19 +333,187 @@ export function createMainPanel({
     refreshWorldPreview(body);
   }
 
+  /**
+   * 剧本编辑页（T-404）：大纲 + 阶段树（增删改 / 复制 / 上下移 / 锁定 / 附注）+ 快照 + 伏笔销账。
+   * 只做功能，不美化（G4）。字段改动不重绘（避免丢焦点），结构改动才重绘。
+   */
+  function renderEditor(body) {
+    const state = store?.get?.() ?? {};
+    const outline = state.outline ?? null;
+    const stages = state.stages ?? [];
+    const activeId = state.activeStageId ?? null;
+    const field = (row) => `<input style="${EDIT_FIELD}" ${row}>`;
+
+    if (!outline && !stages.length) {
+      body.innerHTML = `
+        <div style="opacity:.75;margin-bottom:8px">还没有剧本。可以手写一份，也可以让 AI 生成：</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button id="dt-edit-blank" type="button" style="${EDIT_BTN}">手动建空白剧本</button>
+          <button id="dt-edit-ai" type="button" style="${EDIT_BTN}">让 AI 生成</button>
+        </div>`;
+      body.querySelector('#dt-edit-blank')?.addEventListener('click', () => {
+        editor?.setOutline?.({ ...(editor.blankOutline?.() ?? {}), title: '未命名剧本' });
+        editor?.addStage?.(-1, { title: '第 1 场' });
+        render();
+      });
+      body.querySelector('#dt-edit-ai')?.addEventListener('click', () => onGenerate?.());
+      return;
+    }
+
+    const blocks = stages.map((stage, index) => {
+      const current = stage.id === activeId;
+      const patch = `data-dt-id="${escapeHtml(stage.id)}"`;
+      return `
+        <details ${current ? 'open' : ''} style="margin:6px 0;padding:6px;border:1px solid var(--dt-rule,rgba(43,39,33,.2))">
+          <summary style="cursor:pointer">${index + 1}. ${escapeHtml(stage.title)} ${current ? '← 当前' : ''} · ${escapeHtml(stage.status)}${stage.locked ? ' · 已锁定' : ''}</summary>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;margin:6px 0">
+            <button type="button" data-dt-move="${index}" data-dt-dir="-1" style="${EDIT_BTN}">↑</button>
+            <button type="button" data-dt-move="${index}" data-dt-dir="1" style="${EDIT_BTN}">↓</button>
+            <button type="button" data-dt-dup="${escapeHtml(stage.id)}" style="${EDIT_BTN}">复制</button>
+            <button type="button" data-dt-del="${escapeHtml(stage.id)}" style="${EDIT_BTN}">删除</button>
+            <button type="button" data-dt-insert="${index}" style="${EDIT_BTN}">在其后插入</button>
+            <label style="display:flex;align-items:center;gap:4px">
+              <input type="checkbox" data-dt-lock="${escapeHtml(stage.id)}" ${stage.locked ? 'checked' : ''}> 锁定（AI 不许改这一场）
+            </label>
+          </div>
+          <div>标题</div>${field(`data-dt-field="title" ${patch} value="${escapeHtml(stage.title)}"`)}
+          <div>本场要做成（goal · 主语是 char）</div>${field(`data-dt-field="goal" ${patch} value="${escapeHtml(stage.goal)}"`)}
+          <div>char 的主要活动</div>${field(`data-dt-field="activity" ${patch} value="${escapeHtml(stage.activity)}"`)}
+          <div>达成条件（char 单方面就能完成）</div>${field(`data-dt-field="checkpoint.criteria" ${patch} value="${escapeHtml(stage.checkpoint?.criteria)}"`)}
+          <div>反意图（antiCriteria）</div>${field(`data-dt-field="checkpoint.antiCriteria" ${patch} value="${escapeHtml(stage.checkpoint?.antiCriteria)}"`)}
+          <div>走位（一行一条）</div>
+          <textarea rows="3" style="${EDIT_FIELD}" data-dt-field="beats" ${patch}>${escapeHtml((stage.beats ?? []).join('\n'))}</textarea>
+          <div>附注（写给自己 / 会作为「本场附注」进注入）</div>${field(`data-dt-field="notes" ${patch} value="${escapeHtml(stage.notes)}"`)}
+        </details>`;
+    }).join('');
+
+    const openFs = foreshadows?.list?.() ?? [];
+
+    body.innerHTML = `
+      <details style="margin-bottom:8px"><summary>大纲</summary>
+        <div>剧本标题</div>${field(`data-dt-outline="title" value="${escapeHtml(outline?.title)}"`)}
+        <div>主线目标（统领所有阶段）</div>${field(`data-dt-outline="objective" value="${escapeHtml(outline?.objective)}"`)}
+        <div>一句话前提</div>${field(`data-dt-outline="premise" value="${escapeHtml(outline?.premise)}"`)}
+      </details>
+      <div style="opacity:.7;margin-bottom:4px">阶段 ${stages.length} 个 · 当前第 ${Math.max(1, stages.findIndex((s) => s.id === activeId) + 1)} 个</div>
+      ${blocks}
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+        <button id="dt-edit-add" type="button" style="${EDIT_BTN}">在末尾加一阶段</button>
+        <button id="dt-edit-truncate" type="button" style="${EDIT_BTN}">从当前阶段往后截断重生成</button>
+      </div>
+      <details style="margin-top:10px"><summary>快照（导出 / 导入 / 回滚）</summary>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0">
+          <button id="dt-edit-export" type="button" style="${EDIT_BTN}">导出到下面</button>
+          <button id="dt-edit-import" type="button" style="${EDIT_BTN}">从下面导入（覆盖当前剧本）</button>
+        </div>
+        <textarea id="dt-edit-snapshot" rows="6" style="${EDIT_FIELD}" placeholder="快照 JSON"></textarea>
+        <div id="dt-edit-msg" style="opacity:.75">—</div>
+      </details>
+      <details style="margin-top:8px"><summary>伏笔（待回收 ${openFs.length}）</summary>
+        ${openFs.length
+    ? openFs.map((item) => `<div style="margin:4px 0">· ${escapeHtml(item.text)} <button type="button" data-dt-fs="${escapeHtml(item.id)}" style="${EDIT_BTN}">标记已回收</button></div>`).join('')
+    : '<div style="opacity:.7">（没有待回收的伏笔）</div>'}
+      </details>
+    `;
+
+    const msg = (text) => {
+      const node = body.querySelector('#dt-edit-msg');
+      if (node) node.textContent = text;
+    };
+
+    // ---------- 大纲 ----------
+    body.querySelectorAll('input[data-dt-outline]').forEach((input) => {
+      input.addEventListener('change', () => {
+        editor?.setOutline?.({ [input.dataset.dtOutline]: input.value });
+        msg('大纲已保存');
+      });
+    });
+
+    // ---------- 字段（不重绘，避免丢焦点）----------
+    body.querySelectorAll('[data-dt-field]').forEach((input) => {
+      input.addEventListener('change', () => {
+        const key = input.dataset.dtField;
+        const id = input.dataset.dtId;
+        if (key === 'beats') {
+          editor?.updateStage?.(id, { beats: input.value.split('\n').map((line) => line.trim()).filter(Boolean) });
+        } else if (key.startsWith('checkpoint.')) {
+          const stage = store?.get?.().stages.find((item) => item.id === id);
+          editor?.updateStage?.(id, { checkpoint: { ...(stage?.checkpoint ?? {}), [key.slice('checkpoint.'.length)]: input.value } });
+        } else {
+          editor?.updateStage?.(id, { [key]: input.value });
+        }
+        msg('已保存（该阶段不会被 AI 自动改写）');
+      });
+    });
+
+    // ---------- 结构操作（重绘）----------
+    body.querySelectorAll('button[data-dt-move]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const from = Number(button.dataset.dtMove);
+        editor?.moveStage?.(from, from + Number(button.dataset.dtDir));
+        render();
+      });
+    });
+    body.querySelectorAll('button[data-dt-dup]').forEach((button) => {
+      button.addEventListener('click', () => { editor?.duplicateStage?.(button.dataset.dtDup); render(); });
+    });
+    body.querySelectorAll('button[data-dt-del]').forEach((button) => {
+      button.addEventListener('click', () => { editor?.removeStage?.(button.dataset.dtDel); render(); });
+    });
+    body.querySelectorAll('button[data-dt-insert]').forEach((button) => {
+      button.addEventListener('click', () => { editor?.addStage?.(Number(button.dataset.dtInsert)); render(); });
+    });
+    body.querySelectorAll('input[data-dt-lock]').forEach((box) => {
+      box.addEventListener('change', () => { editor?.setLocked?.(box.dataset.dtLock, box.checked); render(); });
+    });
+    body.querySelector('#dt-edit-add')?.addEventListener('click', () => { editor?.addStage?.(stages.length - 1); render(); });
+
+    body.querySelector('#dt-edit-export')?.addEventListener('click', () => {
+      const area = body.querySelector('#dt-edit-snapshot');
+      if (area) area.value = editor?.exportJson?.() ?? '';
+      msg('已导出（复制走即可备份）');
+    });
+    body.querySelector('#dt-edit-import')?.addEventListener('click', () => {
+      const area = body.querySelector('#dt-edit-snapshot');
+      const result = editor?.importJson?.(area?.value ?? '');
+      if (result?.ok) { render(); return; }
+      msg(`导入失败：${result?.error ?? '未知'}`);
+    });
+    body.querySelector('#dt-edit-truncate')?.addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      button.textContent = '处理中…';
+      try {
+        await onTruncateRegen?.();
+        render();
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    // ---------- 伏笔销账（T-408 的入口）----------
+    body.querySelectorAll('button[data-dt-fs]').forEach((button) => {
+      button.addEventListener('click', () => { foreshadows?.resolve?.(button.dataset.dtFs); render(); });
+    });
+  }
+
   function render() {
-    const title = view === 'config' ? '导演时间 · 配置' : (view === 'world' ? '导演时间 · 世界书' : '导演时间');
+    const title = view === 'config' ? '导演时间 · 配置'
+      : (view === 'world' ? '导演时间 · 世界书' : (view === 'editor' ? '导演时间 · 剧本' : '导演时间'));
     const node = ensure();
     node.querySelector('#dt-panel-title').textContent = title;
     node.querySelector('#dt-panel-enabled').checked = Boolean(getEnabled?.());
     node.querySelector('#dt-panel-config').textContent = view === 'config' ? '返回' : '配置';
     node.querySelector('#dt-panel-world').textContent = view === 'world' ? '返回' : '世界书';
+    node.querySelector('#dt-panel-editor').textContent = view === 'editor' ? '返回' : '剧本';
 
     const body = node.querySelector('#dt-panel-body');
     if (view === 'config') {
-      renderSettingsForm({ container: body, store, onTest, onSave, profile, presets, automation });
+      renderSettingsForm({ container: body, store, onTest, onSave, profile, presets, automation, extras });
     } else if (view === 'world') {
       renderWorld(body);
+    } else if (view === 'editor') {
+      renderEditor(body);
     } else {
       renderStatus(body);
     }

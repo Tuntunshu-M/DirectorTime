@@ -22,6 +22,8 @@ import { findUserDirectives, findFinishedLines, describeIssues } from './directo
 import { normalizeProtagonists, protagonistText } from './world/cast.js';
 import { gate, setLevel, normalizeAutomation } from './core/automation.js';
 import { createReviewQueue } from './core/review-queue.js';
+import { GEMINI_REDLINE, normalizeModelPreset, modelPresetText } from './core/model-preset.js';
+import { createEditorService } from './director/editor.js';
 import { extensionFolderFromUrl, createExtensionUpdater, checkForUpdate } from './core/update-check.js';
 import { toneText as coreToneText, rebalanceTone, normalizeTone, TONE_KEYS } from './core/tone.js';
 import { createDefaultRules } from './core/default-state.js';
@@ -83,7 +85,11 @@ export function bootstrap({ ctx, store } = {}) {
     getPresetText: () => presets.text(),
   });
 
-  const client = createDirectorClient({ getBreakText: () => breakFilter.text() });
+  // T-403 / F10 槽位管线：[破限词] → [模型特化预设] → [导演指令]
+  const redlineText = () => modelPresetText(settings().modelPreset);
+  const client = createDirectorClient({
+    getBreakText: () => [breakFilter.text(), redlineText()].filter(Boolean).join('\n\n'),
+  });
   const stages = createStageService({ store });
   const outline = createOutlineService({
     client,
@@ -148,6 +154,8 @@ export function bootstrap({ ctx, store } = {}) {
     topUp: topUpStages,
     queue,
     getProfile: () => profile.read(),
+    // T-403：模型特化预设（红线）—— 角色回复端那一半
+    getRedline: () => redlineText(),
     // T-412 多人卡：当前生成者是谁
     getSpeaker: () => ({
       id: ctx.getCharacterId?.() ?? '',
@@ -284,8 +292,12 @@ export function bootstrap({ ctx, store } = {}) {
     if (!consistencyGate.auto) return result;
 
     let current = result;
+    // T-404：锁定的阶段是用户显式写的，不参与一致性自检、也不会被重生成替换
+    const checkable = () => (current.stages ?? []).filter((stage) => !stage.locked);
+    if (!checkable().length) return current;
+
     for (let attempt = 1; attempt <= 2; attempt += 1) {
-      const verdict = await profile.checkConsistency({ profile: profile.read(), stages: current.stages });
+      const verdict = await profile.checkConsistency({ profile: profile.read(), stages: checkable() });
       if (verdict.ok) return current;
       console.log(`[导演时间] 阶段与人设不符，重生成（第 ${attempt} 次）：${verdict.reason}`);
       const retry = rememberRequest(await regenerate());
@@ -644,13 +656,6 @@ export function bootstrap({ ctx, store } = {}) {
     checkpointJudge: (payload) => review.applyConfirmed(payload),
   };
 
-  // 测试用配置面板：没有它就没法填 API（控制台 DirectorTime.settingsPanel.show() 仍可用）
-  const settingsPanel = createSettingsPanel({
-    store,
-    profile: profileApi,
-    onTest: () => client.testConnection(settings().connection ?? {}),
-    onSave: () => review.syncInjection(),
-  });
 
   // 同一时刻只允许一个面板在场：开哪个，就把另外两个收起来
   function openOnly(target) {
@@ -700,6 +705,113 @@ export function bootstrap({ ctx, store } = {}) {
     clear: () => queue.clear(),
   };
 
+  // ---------- T-404 剧本编辑器 ----------
+  const editorApi = createEditorService({
+    store,
+    onChanged: () => review.syncInjection(),
+  });
+  /** 从当前阶段往后截断，然后立刻续写一批新的（项目书 F1「截断重生成」） */
+  async function truncateAndRegen() {
+    const cut = editorApi.truncateAfterCurrent();
+    if (!cut) return { ok: false, error: '现在没有正在演出的阶段' };
+    const fresh = await topUpStages({ force: true });
+    return { ok: Boolean(fresh), stages: fresh?.length ?? 0 };
+  }
+
+  // ---------- T-403 模型特化预设（红线）----------
+  const modelPresetApi = {
+    get: () => normalizeModelPreset(settings().modelPreset),
+    text: () => redlineText(),
+    defaultText: () => GEMINI_REDLINE,
+    set: (patch) => {
+      const next = { ...normalizeModelPreset(settings().modelPreset), ...patch };
+      store.saveSettings({ modelPreset: normalizeModelPreset(next) });
+      review.syncInjection(); // 红线改了立刻重算注入（角色回复端那半）
+      return normalizeModelPreset(settings().modelPreset);
+    },
+    reset: () => modelPresetApi.set({ custom: '' }),
+  };
+
+  // ---------- 那几个"本来只有控制台"的功能，补上界面入口（T-415 / T-412 / T-413 / T-411）----------
+  const toneApi = {
+    get: () => normalizeTone(store.get().tone),
+    keys: () => [...TONE_KEYS],
+    set: (key, value) => {
+      const next = rebalanceTone(store.get().tone, key, value);
+      store.update((draft) => ({ ...draft, tone: next }), { label: '调整剧情占比' });
+      return next;
+    },
+    text: () => coreToneText(store.get().tone),
+  };
+  const castApi = {
+    get: () => normalizeProtagonists(settings().protagonists),
+    set: (list) => {
+      store.saveSettings({ protagonists: normalizeProtagonists(list) });
+      review.syncInjection(); // 改完主角立刻重算注入（不是他的戏就别注入）
+      return normalizeProtagonists(settings().protagonists);
+    },
+  };
+  const breakFilterApi = {
+    get: () => normalizeBreakFilter(settings().breakFilter),
+    set: (next) => {
+      store.saveSettings({ breakFilter: normalizeBreakFilter(next) });
+      return normalizeBreakFilter(settings().breakFilter);
+    },
+  };
+  const foreshadowApi = {
+    list: () => openForeshadows(store.get().outline),
+    resolve: (id) => {
+      let resolved = [];
+      store.update((draft) => {
+        const result = resolveRecalled(draft.outline, [id]);
+        resolved = result.resolved;
+        return { ...draft, outline: result.outline };
+      });
+      return resolved;
+    },
+  };
+  const copyApi = {
+    export: () => exportCopy({ state: store.get(), settings: settings(), profile: profile.read() }),
+    preview: (copy) => previewCopy(copy),
+    import: async (copy) => {
+      const preview = previewCopy(copy);
+      if (!preview.ok) return { ok: false, error: preview.error, warnings: preview.warnings };
+
+      const lines = [
+        `剧本：《${preview.summary.title || '未命名'}》 · ${preview.summary.stages} 个阶段`,
+        ...preview.warnings,
+        '导入会覆盖当前剧本与相关设置（导演 API 连接不受影响）。继续？',
+      ];
+      if (ctx.capabilities?.confirmation && !(await ctx.showConfirm?.(lines.join('\n')))) {
+        return { ok: false, error: '已取消', warnings: preview.warnings };
+      }
+
+      const result = applyCopy(copy, { store, writeProfile: (next) => profile.save(next) });
+      if (result.ok) review.syncInjection();
+      return result;
+    },
+  };
+  // 配置页那五个折叠区共用这一份（面板与配置页读同一套，避免两处逻辑漂移）
+  const extras = {
+    modelPreset: modelPresetApi,
+    breakFilter: breakFilterApi,
+    tone: toneApi,
+    cast: castApi,
+    copy: copyApi,
+  };
+
+  // 测试用配置面板：没有它就没法填 API（控制台 DirectorTime.settingsPanel.show() 仍可用）
+  // 放在 extras 之后建：配置页要读那五个折叠区（T-403 / T-411 / T-415 / T-412 / T-413 的入口）
+  const settingsPanel = createSettingsPanel({
+    store,
+    profile: profileApi,
+    presets,
+    automation: automationApi,
+    extras,
+    onTest: () => client.testConnection(settings().connection ?? {}),
+    onSave: () => review.syncInjection(),
+  });
+
   const panel = createMainPanel({
     store,
     registry,
@@ -711,6 +823,13 @@ export function bootstrap({ ctx, store } = {}) {
     queue: queueApi,
     // T-420：一键更新（面板上的「更新插件」）
     update: updateApi,
+    // T-404：剧本编辑器（面板「剧本」页）
+    editor: editorApi,
+    onTruncateRegen: () => truncateAndRegen(),
+    // T-408：伏笔销账（剧本页里那块）
+    foreshadows: foreshadowApi,
+    // T-403 / T-411 / T-415 / T-412 / T-413 的入口（配置页折叠区）
+    extras,
     getCapabilities: () => ctx.capabilities,
     getLast: () => review.getLastTurn(),
     onTest: () => client.testConnection(settings().connection ?? {}),
@@ -754,74 +873,25 @@ export function bootstrap({ ctx, store } = {}) {
       // 探测不到酒馆预设接口时，把这个结果贴出来（不猜、不造）
       probe: () => presets.probe(),
     },
-    // T-415：剧情占比（三条线联动配平，和恒为 100）—— UI 未做，先用控制台
-    tone: {
-      get: () => normalizeTone(store.get().tone),
-      keys: () => [...TONE_KEYS],
-      set: (key, value) => {
-        const next = rebalanceTone(store.get().tone, key, value);
-        store.update((draft) => ({ ...draft, tone: next }), { label: '调整剧情占比' });
-        return next;
-      },
-      text: () => coreToneText(store.get().tone),
-    },
+    // T-415：剧情占比（三条线联动配平，和恒为 100）
+    tone: toneApi,
     // T-414：三级自动化档位 + 待审核队列（同上面板/配置页用的那份）
     automation: automationApi,
     queue: queueApi,
     // T-420：一键更新（面板「更新插件」按钮背后就是它）
     update: updateApi,
+    // T-404：剧本编辑器（面板「剧本」页背后就是它）
+    editor: { ...editorApi, truncateAndRegen },
+    // T-403：模型特化预设（红线）
+    modelPreset: modelPresetApi,
     // T-413 副本迁移：整个副本搬走 / 搬回来
-    copy: {
-      export: () => exportCopy({ state: store.get(), settings: settings(), profile: profile.read() }),
-      preview: (copy) => previewCopy(copy),
-      import: async (copy) => {
-        const preview = previewCopy(copy);
-        if (!preview.ok) return { ok: false, error: preview.error, warnings: preview.warnings };
-
-        const lines = [
-          `剧本：《${preview.summary.title || '未命名'}》 · ${preview.summary.stages} 个阶段`,
-          ...preview.warnings,
-          '导入会覆盖当前剧本与相关设置（导演 API 连接不受影响）。继续？',
-        ];
-        if (ctx.capabilities?.confirmation && !(await ctx.showConfirm?.(lines.join('\n')))) {
-          return { ok: false, error: '已取消', warnings: preview.warnings };
-        }
-
-        const result = applyCopy(copy, { store, writeProfile: (next) => profile.save(next) });
-        if (result.ok) review.syncInjection();
-        return result;
-      },
-    },
-    // T-412：主角设置（可多选、持久化）—— UI 未做，先用控制台
-    cast: {
-      get: () => normalizeProtagonists(settings().protagonists),
-      set: (list) => {
-        store.saveSettings({ protagonists: normalizeProtagonists(list) });
-        review.syncInjection(); // 改完主角立刻重算注入（不是他的戏就别注入）
-        return normalizeProtagonists(settings().protagonists);
-      },
-    },
-    // T-411：破限词模式（off / preset / custom / append）—— UI 未做，先用控制台
-    breakFilter: {
-      get: () => normalizeBreakFilter(settings().breakFilter),
-      set: (next) => {
-        store.saveSettings({ breakFilter: normalizeBreakFilter(next) });
-        return normalizeBreakFilter(settings().breakFilter);
-      },
-    },
-    // T-408：伏笔查看 / 手动销账（UI 未做，先用控制台）
-    foreshadows: {
-      list: () => openForeshadows(store.get().outline),
-      resolve: (id) => {
-        let resolved = [];
-        store.update((draft) => {
-          const result = resolveRecalled(draft.outline, [id]);
-          resolved = result.resolved;
-          return { ...draft, outline: result.outline };
-        });
-        return resolved;
-      },
-    },
+    copy: copyApi,
+    // T-412：主角设置（可多选、持久化）
+    cast: castApi,
+    // T-411：破限词模式（off / preset / custom / append）
+    breakFilter: breakFilterApi,
+    // T-408：伏笔查看 / 手动销账
+    foreshadows: foreshadowApi,
     generateScript, regenerateScript, topUpStages, resetScript, setEnabled,
     collectWorldSources, worldText, profileText,
     settingsPanel: settingsPanelApi, panel, unmountMenu,

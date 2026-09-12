@@ -612,4 +612,26 @@ await check('指令三种状态输出不同文本（T-416c）', () => {
   assert.ok(withObjective.includes('主线目标：成为最强'));
 });
 
+console.log('剧本编辑器接线（T-404）');
+
+await check('锁定的阶段：AI 不许重写走位，也不许改它的字段', async () => {
+  const env = makeEnv();
+  const list = seed(env);
+  env.store.update((draft) => ({ ...draft, stages: draft.stages.map((stage) => ({ ...stage, locked: true })) }));
+
+  let asked = 0;
+  const service = createReviewService({
+    checkpoint: {
+      judge: async () => ({ action: 'rewrite', reason: '部分达成', judgement: { status: 'partial', confidence: 0.9 } }),
+    },
+    beats: { rewrite: async () => { asked += 1; return { ok: true, beats: ['新走位'] }; } },
+    stages: env.stages, registry: env.registry, store: env.store,
+    getSettings: () => ({}),
+  });
+
+  await service.run({ userMessage: '嗯' });
+  assert.equal(asked, 0, '锁定的阶段不该调重写走位');
+  assert.deepEqual(env.store.get().stages[0].beats, list[0].beats, '原走位要原样不动');
+});
+
 console.log(`\n通过 ${passed} 项`);

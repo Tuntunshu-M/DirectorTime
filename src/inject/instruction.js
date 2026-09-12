@@ -28,6 +28,16 @@ export function isNearMax(stage, pacing = {}) {
   return Number(stage?.turnCount ?? 0) + 1 >= max;
 }
 
+/**
+ * 模型特化预设（T-403 / F10）：Gemini 角色塑造红线，**角色回复端**那一半。
+ * 导演请求端那一半在 client 的前置文本里（[破限词] → [模型特化预设] → [导演指令]）。
+ */
+export function redlineLine(redline) {
+  const text = String(redline ?? '').trim();
+  if (!text) return '';
+  return `[扮演红线 —— 必须遵守]\n${text}`;
+}
+
 export function buildDirectorLayer({ stage, outline, pacing, profile }) {
   // §七c：先声明"这是指示不是台词" —— 模型会把指令原文抄进对话，这句是堵它的第一道
   const lines = ['以下是导演给你的指示，不是台词 —— 不要把它写进对话里。'];
@@ -53,6 +63,8 @@ export function buildDirectorLayer({ stage, outline, pacing, profile }) {
   if (stage?.activity) lines.push(`你要主动做的一件事：${stage.activity}`);
   if (stage?.goal) lines.push(`本场你要做成的：${stage.goal}`);
   if (stage?.beats?.length) lines.push(`按这个顺序主动做：${stage.beats.join(' → ')}`);
+  // T-404：用户在编辑器里写的附注（手写的优先，直接当指令）
+  if (stage?.notes) lines.push(`（本场附注：${stage.notes}）`);
   if (stage?.checkpoint?.criteria) lines.push(`演到「${stage.checkpoint.criteria}」，这场就过了。`);
   if (stage?.checkpoint?.antiCriteria) lines.push(`如果出现「${stage.checkpoint.antiCriteria}」，本场就结束。`);
 
@@ -90,14 +102,17 @@ export function buildCharacterLayer({ profile }) {
  * @returns {string} 空字符串表示没有可注入的内容
  */
 export function buildInstruction(input = {}) {
-  // 硬禁区放最前面：它是用户显式写的，优先级高于侧写禁忌（T-410）
+  // 顺序有讲究：硬禁区（用户显式，最高）→ 扮演红线（T-403）→ 导演指令 → 角色动机
   const parts = [
     hardLimitLine(input.hardLimits),
+    redlineLine(input.redline),
     buildDirectorLayer(input),
     buildCharacterLayer(input),
   ].filter(Boolean);
 
-  // 阶段目标、侧写、硬禁区一个都没有 → 没有值得注入的内容
-  if (!input.stage?.goal && !input.profile && !input.hardLimits?.length) return '';
+  // 阶段目标、侧写、硬禁区、红线一个都没有 → 没有值得注入的内容
+  if (!input.stage?.goal && !input.profile && !input.hardLimits?.length && !String(input.redline ?? '').trim()) {
+    return '';
+  }
   return parts.join('\n\n');
 }
