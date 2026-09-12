@@ -164,4 +164,86 @@ await check('GEN_INITIATIVE 带 intensityNote 变量（克制档降调用）', (
   assert.ok(messages[1].content.includes('这个角色内敛'));
 });
 
+console.log('T-427 · 条件块 + 重生成带上驳回原因（首轮零回归）');
+
+/** 独立实现：按行把条件块整段删掉（与被测实现用不同机制，用来钉住"零回归"） */
+function stripBlockByLines(template, key) {
+  const lines = String(template).split('\n');
+  const out = [];
+  let inside = false;
+  for (const line of lines) {
+    if (line.trim() === `{{#${key}}}`) { inside = true; continue; }
+    if (line.trim() === `{{/${key}}}`) { inside = false; continue; }
+    if (!inside) out.push(line);
+  }
+  return out.join('\n');
+}
+
+const GEN_VARS = {
+  premise: 'p', objective: 'o', protagonists: '主角', hardLimits: '无禁忌', tone: '冷',
+  profile: '侧写文本', world: '世界书文本', foreshadows: '无', context: '近期对话',
+};
+
+check('条件块：键为空 → 整块连它那一行一起消失（不留空行）', () => {
+  assert.equal(renderTemplate('a\n{{#note}}\n内容\n{{/note}}\nb', {}), 'a\nb');
+  assert.equal(renderTemplate('a\n{{#note}}\n内容\n{{/note}}\nb', { note: '   ' }), 'a\nb', '纯空白也算空');
+  assert.equal(renderTemplate('a\n{{#note}}\n内容\n{{/note}}\nb', { note: '' }), 'a\nb', '空串也算空');
+});
+
+check('条件块：有值 → 标记行消失、内容行原地保留（不多空行、不少内容）', () => {
+  assert.equal(
+    renderTemplate('a\n{{#note}}\n原因：{{note}}\n{{/note}}\nb', { note: '太热情' }),
+    'a\n原因：太热情\nb',
+  );
+});
+
+check('条件块：文件首尾也能用；相邻两块互不影响；没闭合就原样保留', () => {
+  assert.equal(renderTemplate('{{#x}}\n正文\n{{/x}}\n尾', {}), '尾');
+  assert.equal(renderTemplate('{{#x}}\n正文\n{{/x}}\n尾', { x: 1 }), '正文\n尾');
+  // 相邻两块：一个空一个有值
+  assert.equal(
+    renderTemplate('A\n{{#x}}\nX\n{{/x}}\n{{#y}}\nY\n{{/y}}\nB', { y: 1 }),
+    'A\nY\nB',
+  );
+  // 没闭合标记 → 原样保留（不静默吞内容）
+  assert.equal(renderTemplate('A\n{{#x}}\nX\nB', { x: 1 }), 'A\n{{#x}}\nX\nB');
+});
+
+check('首轮零回归：不带 rejectReason 时，渲染结果与"把块整段删掉"逐字一致', () => {
+  for (const name of ['GEN_OUTLINE', 'EXTEND_OUTLINE']) {
+    const rendered = renderTemplate(PROMPTS[name].user, GEN_VARS);
+    const golden = stripBlockByLines(PROMPTS[name].user, 'rejectReason');
+    assert.equal(rendered, renderTemplate(golden, GEN_VARS), `${name}：与删掉块的原文不一致（多/少了空行）`);
+    assert.equal(
+      rendered.split('\n').length,
+      golden.split('\n').length,
+      `${name}：行数变了，说明留了空行`,
+    );
+    assert.ok(!rendered.includes('上一版被判定为不符合人设'), `${name}：首轮不该出现驳回原因段`);
+    assert.ok(!rendered.includes('{{'), `${name}：不能留下未替换的占位符`);
+  }
+});
+
+check('重生成：rejectReason 有值 → 请求里能看到原因原文与"必须避开"要求', () => {
+  for (const name of ['GEN_OUTLINE', 'EXTEND_OUTLINE']) {
+    const rendered = renderTemplate(PROMPTS[name].user, { ...GEN_VARS, rejectReason: '他太热情外放了，不像内敛角色' });
+    assert.ok(rendered.includes('上一版被判定为不符合人设，原因是：他太热情外放了，不像内敛角色。'), name);
+    assert.ok(rendered.includes('这一版必须避开这个具体问题'), name);
+    assert.ok(rendered.includes('其它要求（主目标 / 剧情占比 / 硬禁区 / 演员界定）一律不变'), name);
+    assert.ok(!rendered.includes('{{'), `${name}：不能留下未替换的占位符`);
+  }
+});
+
+check('两次驳回：拼成两行一起带上（最新那条必含）', () => {
+  const rendered = renderTemplate(PROMPTS.GEN_OUTLINE.user, { ...GEN_VARS, rejectReason: '第一条原因\n第二条原因' });
+  assert.ok(rendered.includes('第一条原因\n第二条原因'), rendered.slice(0, 300));
+});
+
+check('两条模板都带着这段（不然规格只做一半）', () => {
+  assert.ok(PROMPTS.GEN_OUTLINE.user.includes('{{#rejectReason}}'));
+  assert.ok(PROMPTS.EXTEND_OUTLINE.user.includes('{{#rejectReason}}'));
+  assert.ok(PROMPTS.GEN_OUTLINE.user.includes('{{/rejectReason}}'));
+  assert.ok(PROMPTS.EXTEND_OUTLINE.user.includes('{{/rejectReason}}'));
+});
+
 console.log(`\n通过 ${passed} 项`);

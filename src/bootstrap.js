@@ -318,6 +318,10 @@ export function bootstrap({ ctx, store } = {}) {
   /**
    * 生成结果一致性自检（T-402 §六）：不合人设就重生成，最多 2 次，超过用最后一次。
    * 自检关掉 / 没有侧写 / 重生成失败 → 直接用原结果。
+   *
+   * T-427：重生成要**带上上一版被否的原因**（`regenerate(reason)`）——
+   * 以前是盲重生成，很可能又犯同样的毛病，白花 2 次调用。
+   * 第 2 轮带上两次的原因（最新那条必含，两条都有信息量就拼两行）。
    */
   async function ensureConsistent(result, regenerate) {
     if (settings().consistencyCheck === false) return result;
@@ -327,6 +331,7 @@ export function bootstrap({ ctx, store } = {}) {
     if (!consistencyGate.auto) return result;
 
     let current = result;
+    const reasons = [];
     // T-404：锁定的阶段是用户显式写的，不参与一致性自检、也不会被重生成替换
     const checkable = () => (current.stages ?? []).filter((stage) => !stage.locked);
     if (!checkable().length) return current;
@@ -335,7 +340,9 @@ export function bootstrap({ ctx, store } = {}) {
       const verdict = await profile.checkConsistency({ profile: profile.read(), stages: checkable() });
       if (verdict.ok) return current;
       console.log(`[导演时间] 阶段与人设不符，重生成（第 ${attempt} 次）：${verdict.reason}`);
-      const retry = rememberRequest(await regenerate());
+      // T-427：这一轮的原因攒起来，交给 regenerate 写进请求（模型不必再蒙眼重抽）
+      if (verdict.reason) reasons.push(String(verdict.reason).trim());
+      const retry = rememberRequest(await regenerate(reasons.join('\n')));
       if (!retry.ok || !retry.stages?.length) return current;
 
       // T-414：L1 → 不自作主张换成重生成版本，先问用户
@@ -390,7 +397,8 @@ export function bootstrap({ ctx, store } = {}) {
       }
 
       // 一致性自检（默认开，T-402 §六）：不合人设最多重生成 2 次
-      result = await ensureConsistent(result, () => outline.generate(vars));
+      // T-427：重生成带上驳回原因（首轮 rejectReason 为空串 → 请求文本与原来逐字一致）
+      result = await ensureConsistent(result, (rejectReason = '') => outline.generate({ ...vars, rejectReason }));
       // P0：剧本不许指挥 user、不许把台词写死（只报警）
       warnScriptIssues(result.stages, '生成的剧本');
 
@@ -553,8 +561,8 @@ export function bootstrap({ ctx, store } = {}) {
       return null;
     }
 
-    // 一致性自检（默认开，T-402 §六）
-    const result = await ensureConsistent(generated, () => outline.extend(vars));
+    // 一致性自检（默认开，T-402 §六）；T-427：续写的重生成同样带上驳回原因
+    const result = await ensureConsistent(generated, (rejectReason = '') => outline.extend({ ...vars, rejectReason }));
     // P0：续写的阶段同样不许指挥 user、不许写死台词（只报警）
     warnScriptIssues(result.stages, '续写的阶段');
     // T-417：同样盖章

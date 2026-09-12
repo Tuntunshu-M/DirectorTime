@@ -322,4 +322,37 @@ await check('切聊天时清空（挂生命周期）', () => {
   assert.equal(registry.getStatus().registered, false);
 });
 
+console.log('T-427 · extend 必须把 rejectReason 透传进请求（解构参数最容易漏）');
+
+await check('extend 带 rejectReason → 请求里能看到原因原文与"必须避开"', async () => {
+  let sent = '';
+  const client = { request: async ({ messages }) => { sent = messages[1].content; return VALID_OUTLINE_JSON; } };
+  const service = createOutlineService({ client, getConnection: () => ({}) });
+  await service.extend({ rejectReason: '上一版太平静，不像他', objective: 'o' });
+  assert.ok(
+    sent.includes('上一版被判定为不符合人设，原因是：上一版太平静，不像他。'),
+    sent.slice(0, 400),
+  );
+  assert.ok(sent.includes('这一版必须避开这个具体问题'));
+});
+
+await check('extend 不带 rejectReason（首轮）→ 没有这段，且与传空串逐字一致', async () => {
+  const calls = [];
+  const client = { request: async ({ messages }) => { calls.push(messages[1].content); return VALID_OUTLINE_JSON; } };
+  const service = createOutlineService({ client, getConnection: () => ({}) });
+  await service.extend({ objective: 'o' });
+  await service.extend({ objective: 'o', rejectReason: '' });
+  assert.equal(calls[0], calls[1], '不传与传空串必须逐字一致（零回归）');
+  assert.ok(!calls[0].includes('上一版被判定为不符合人设'), '首轮不该有驳回段');
+  assert.ok(!calls[0].includes('{{'), '不能留占位符');
+});
+
+await check('generate 带 rejectReason → 同样透传（它是 spread，别改成解构）', async () => {
+  let sent = '';
+  const client = { request: async ({ messages }) => { sent = messages[1].content; return VALID_OUTLINE_JSON; } };
+  const service = createOutlineService({ client, getConnection: () => ({}) });
+  await service.generate({ premise: 'p', rejectReason: '太平静' });
+  assert.ok(sent.includes('原因是：太平静。'), sent.slice(0, 400));
+});
+
 console.log(`\n通过 ${passed} 项`);

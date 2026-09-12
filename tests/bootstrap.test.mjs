@@ -249,4 +249,120 @@ await acheck('配置改了 → Debug 的「下轮将注入」跟着变（导演�
   assert.notEqual(standard, restrained, '切档要真的改变注入文本');
 });
 
+console.log('T-427 · 重生成带上驳回原因（端到端：自检判否 → 下一次请求真的带上了）');
+
+const T427_OUTLINE_JSON = JSON.stringify({
+  objective: '让她走出门',
+  title: '出门',
+  premise: '连着一周没出门',
+  foreshadows: [],
+  stages: [{
+    title: 's1',
+    goal: '把出门这件事挑明',
+    activity: '收拾行李',
+    checkpoint: { criteria: '他把话说死', antiCriteria: '他改口说不去了' },
+    beats: ['提起周末的安排'],
+  }],
+});
+
+/** 按顺序回应：GEN_OUTLINE → 自检(否) → GEN_OUTLINE(重生成) → 自检(是) */
+function stubT427Fetch(verdicts = ['他太热情外放了，不像内敛角色', null]) {
+  const original = globalThis.fetch;
+  const bodies = [];
+  const reply = (content) => ({ ok: true, json: async () => ({ choices: [{ message: { content } }] }) });
+  globalThis.fetch = async (_url, init) => {
+    bodies.push(String(init?.body ?? ''));
+    const n = bodies.length;
+    if (n === 1 || n === 3) return reply(T427_OUTLINE_JSON);
+    if (n === 2) return reply(JSON.stringify(verdicts[0] ? { ok: false, reason: verdicts[0] } : { ok: true, reason: '通过' }));
+    return reply(JSON.stringify(verdicts[1] ? { ok: false, reason: verdicts[1] } : { ok: true, reason: '通过' }));
+  };
+  return { bodies, restore: () => { globalThis.fetch = original; } };
+}
+
+/** 造一个"有侧写 + 可生成"的环境（没侧写的话自检根本不跑） */
+function makeT427Env() {
+  const env = makeBootEnv();
+  const profile = { schemaVersion: 1, fields: { coreDesire: '想被看见', proactivity: '内敛，靠小事试探' }, locked: {} };
+  env.ctx.getCharacterField = () => profile;
+  env.ctx.writeCharacterField = () => true;
+  const api = bootstrap({ ctx: env.ctx, store: env.store });
+  env.store.saveSettings({ connection: { endpoint: 'https://x/v1', model: 'm', apiKey: 'k' } });
+  return { env, api };
+}
+
+await acheck('首轮请求里没有驳回段；判否后重生成的请求里带上了原因原文', async () => {
+  const stub = stubT427Fetch();
+  try {
+    const { api } = makeT427Env();
+    await api.generateScript({ premise: '想去旅行' });
+
+    assert.ok(stub.bodies.length >= 3, `应该发生 3 次以上调用，实际 ${stub.bodies.length}`);
+    assert.ok(
+      !stub.bodies[0].includes('上一版被判定为不符合人设'),
+      '首轮（还没被否）不该出现驳回段 —— 零回归',
+    );
+    assert.ok(!stub.bodies[0].includes('{{'), '首轮不该留占位符');
+
+    assert.ok(stub.bodies[1].includes('剧本审校'), '第二次调用应该是自检（HTTP body 里没有 label，只能按模板文本认）');
+    assert.ok(
+      stub.bodies[2].includes('上一版被判定为不符合人设，原因是：他太热情外放了，不像内敛角色。'),
+      `重生成请求必须带原因原文：${stub.bodies[2].slice(0, 400)}`,
+    );
+    assert.ok(stub.bodies[2].includes('这一版必须避开这个具体问题'));
+  } finally {
+    stub.restore();
+  }
+});
+
+await acheck('两次都被否 → 第二次重生成带上两条原因（最新那条在内）', async () => {
+  const stub = stubT427Fetch(['第一条：太平静', '第二条：还是太平静']);
+  try {
+    const { api } = makeT427Env();
+    await api.generateScript({ premise: '想去旅行' });
+
+    assert.ok(stub.bodies.length >= 5, `应该跑满两轮：1 + 2 生成 + 2 自检，实际 ${stub.bodies.length}`);
+    const last = stub.bodies[4];
+    assert.ok(last.includes('第一条：太平静'), last.slice(0, 400));
+    assert.ok(last.includes('第二条：还是太平静'), '第 2 轮要带上第 2 次的原因');
+    // HTTP body 是 JSON，换行是转义的（\\n）—— 两条原因要拼成两行
+    assert.ok(/第一条：太平静(\\n|\n)第二条：还是太平静/.test(last), '两条原因拼成两行');
+  } finally {
+    stub.restore();
+  }
+});
+
+await acheck('自检通过（没判否）→ 全程只有一次生成调用，请求里始终没有驳回段', async () => {
+  const stub = stubT427Fetch([null]);
+  try {
+    const { api } = makeT427Env();
+    await api.generateScript({ premise: '想去旅行' });
+
+    assert.equal(stub.bodies.length, 2, '1 次生成 + 1 次自检');
+    assert.ok(!stub.bodies[0].includes('上一版被判定为不符合人设'));
+    assert.ok(!stub.bodies[0].includes('{{'));
+  } finally {
+    stub.restore();
+  }
+});
+
+await acheck('L1 档位：进待审核队列的提示带上原因（用户能看到为什么被否）', async () => {
+  const stub = stubT427Fetch();
+  try {
+    const { env, api } = makeT427Env();
+    env.store.saveSettings({ automation: { consistency: 'L1' } });
+    await api.generateScript({ premise: '想去旅行' });
+
+    // 队列里还会有「大纲 L1 待确认」那条（默认档位），按 feature 认
+    const item = api.queue.list().find((entry) => entry.feature === 'consistency');
+    assert.ok(item, 'L1 应该进队列');
+    assert.ok(
+      item.summary.includes('他太热情外放了，不像内敛角色'),
+      `队列提示要带上原因：${item.summary}`,
+    );
+  } finally {
+    stub.restore();
+  }
+});
+
 console.log(`\n通过 ${passed} 项`);

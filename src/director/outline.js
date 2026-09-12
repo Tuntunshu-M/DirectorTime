@@ -113,6 +113,8 @@ export function createOutlineService({ client, getConnection, now = Date.now } =
     profile = '',
     world = '',
     context = '',
+    // T-427：一致性自检判否后重生成时带上驳回原因（首轮为空串）
+    rejectReason = '',
   } = {}) {
     const connection = getConnection?.() ?? {};
     const messages = buildMessages('EXTEND_OUTLINE', {
@@ -124,6 +126,7 @@ export function createOutlineService({ client, getConnection, now = Date.now } =
       tone,
       profile,
       world,
+      rejectReason,
       history,
       context,
     });

@@ -1,15 +1,73 @@
 // 导演时间 · Prompt 模板
 //
 // T-202。所有模板集中在此，禁止散落到业务模块。
-// 模板支持 {{变量}}，缺失变量渲染为空字符串（不抛错）。
+// 模板支持 {{变量}}，缺失变量渲染为空字符串（不抛错）；
+// 也支持 {{#变量}}…{{/变量}} 条件块（键为空则整块消失，不留空行 —— T-427）。
 //
 // 全文最关键的是 GEN_OUTLINE 的「推进点写法」与 JUDGE_CHECKPOINT 的「意图级判定」——
 // 这两段直接决定是否会出现「完成条件太死、剧情卡住」的老毛病。
 
 /** {{a.b.c}} 形式的变量替换 */
+const VAR_RE = /\{\{\s*([\w.]+)\s*\}\}/g;
+
+/** 条件块的开/闭标记（必须独占一行，前后只允许空白） */
+const BLOCK_OPEN_RE = /^[ \t]*\{\{#\s*([\w.]+)\s*\}\}[ \t]*$/;
+const BLOCK_CLOSE_RE = /^[ \t]*\{\{\/\s*([\w.]+)\s*\}\}[ \t]*$/;
+
+function lookup(vars, path) {
+  return String(path).split('.').reduce((acc, key) => (acc == null ? undefined : acc[key]), vars);
+}
+
+/** 空值：undefined / null / false / 空数组 / 纯空白串 —— 都当"这段不出现" */
+function isEmptyValue(value) {
+  if (value === undefined || value === null || value === false) return true;
+  if (Array.isArray(value)) return value.length === 0;
+  return String(value).trim() === '';
+}
+
+/**
+ * 条件块（T-427）：`{{#key}}` 与 `{{/key}}` 各自独占一行，中间是块内容。
+ *
+ * - 键**为空**（空串 / undefined / 纯空白）→ 整块（含标记行）消失，**不留空行**
+ * - 键**有值** → 标记行消失，内容行原地保留
+ *
+ * 为什么按行处理而不是一把正则：这样"块在文件首尾、两块相邻、块尾还有空行"都不会留半截空行，
+ * 而**不留空行正是 T-427 的硬要求**（首轮请求文本必须与加块之前逐字一致）。
+ * 限制：块必须独占整行，写成行内不会被识别（会原样留下 `{{#…}}` 字样，测试会抓）。
+ */
+function applyConditionalBlocks(template, vars) {
+  const lines = String(template).split('\n');
+  const out = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const open = lines[i].match(BLOCK_OPEN_RE);
+    if (!open) {
+      out.push(lines[i]);
+      continue;
+    }
+    const key = open[1];
+    const body = [];
+    let j = i + 1;
+    for (; j < lines.length; j += 1) {
+      const close = lines[j].match(BLOCK_CLOSE_RE);
+      if (close && close[1] === key) break;
+      body.push(lines[j]);
+    }
+    if (j >= lines.length) {
+      // 没找到闭合标记：不当条件块处理，原样保留（宁可不渲染，也不静默吞内容）
+      out.push(lines[i]);
+      continue;
+    }
+    i = j; // 跳过 {{/key}} 那一行
+    if (!isEmptyValue(lookup(vars, key))) out.push(...body);
+  }
+  return out.join('\n');
+}
+
+/** 渲染模板：`{{a.b.c}}` 变量替换 + `{{#key}}…{{/key}}` 条件块（见上） */
 export function renderTemplate(template, vars = {}) {
-  return String(template).replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_match, path) => {
-    const value = path.split('.').reduce((acc, key) => (acc == null ? undefined : acc[key]), vars);
+  const stripped = applyConditionalBlocks(template, vars);
+  return stripped.replace(VAR_RE, (_match, path) => {
+    const value = lookup(vars, path);
     return value === undefined || value === null ? '' : String(value);
   });
 }
@@ -159,6 +217,10 @@ ${PERSONA_RESPECT}`,
 - 剧情基调：{{tone}}
 - 人物侧写：{{profile}}
 - 世界书设定：{{world}}
+{{#rejectReason}}
+上一版被判定为不符合人设，原因是：{{rejectReason}}。
+这一版必须避开这个具体问题；其它要求（主目标 / 剧情占比 / 硬禁区 / 演员界定）一律不变。
+{{/rejectReason}}
 - 已经埋下、还没回收的伏笔：{{foreshadows}}
 - 近期对话：{{context}}
 
@@ -278,6 +340,10 @@ ${PERSONA_RESPECT}`,
 剧情基调：{{tone}}
 人物侧写：{{profile}}
 世界书设定：{{world}}
+{{#rejectReason}}
+上一版被判定为不符合人设，原因是：{{rejectReason}}。
+这一版必须避开这个具体问题；其它要求（主目标 / 剧情占比 / 硬禁区 / 演员界定）一律不变。
+{{/rejectReason}}
 
 已经演过的阶段：
 {{history}}
