@@ -1,7 +1,8 @@
 // T-415 测试：剧情占比（三线联动配平，和恒为 100）
 
 import assert from 'node:assert/strict';
-import { TONE_KEYS, normalizeTone, rebalanceTone, toneText, DEFAULT_TONE } from '../src/core/tone.js';
+import { TONE_KEYS, normalizeTone, rebalanceTone, toneText, DEFAULT_TONE,
+  DEFAULT_TONE_HINTS, TONE_HINT_MAX, normalizeToneHints, toneHintsOf } from '../src/core/tone.js';
 import { createDefaultTone, createDefaultState } from '../src/core/default-state.js';
 
 let passed = 0;
@@ -110,10 +111,23 @@ await check('多次拖动后仍然稳定（连拖不会累积误差）', () => {
 
 console.log('T-415 剧情占比 · 喂给导演');
 
-await check('toneText 只列开着的线', () => {
-  assert.equal(toneText({ daily: 70, crisis: 30, intimate: 0 }), '日常 70% / 危机 30%');
-  assert.equal(toneText({ daily: 0, crisis: 0, intimate: 100 }), '亲密 100%');
+await check('toneText 只列开着的线，并带上该线释义（T-415 补充）', () => {
+  const text = toneText({ daily: 70, crisis: 30, intimate: 0 });
+  assert.ok(text.startsWith('日常 70%（'), text);
+  assert.ok(text.includes(' / 危机 30%（'), text);
+  assert.equal(text.includes('亲密'), false, '0% 的线不列');
+
+  const onlyIntimate = toneText({ daily: 0, crisis: 0, intimate: 100 });
+  assert.ok(onlyIntimate.startsWith('亲密 100%（'), onlyIntimate);
+
   assert.ok(toneText({ daily: 34, crisis: 33, intimate: 33 }).includes('日常 34%'));
+});
+
+await check('释义可改：用户改过的覆盖内置，缺的回落内置（T-415 补充）', () => {
+  assert.ok(toneText({ daily: 70, crisis: 30, intimate: 0 }, { hints: { daily: '我自己的日常' } })
+    .includes('日常 70%（我自己的日常）'));
+  assert.ok(toneText({ daily: 70, crisis: 30, intimate: 0 }, { hints: { daily: '我自己的日常' } })
+    .includes('危机 30%（需要两人共同面对的压力或冲突，不为虐而虐）'), '没改的走内置');
 });
 
 console.log('锁住某条线（用户反馈 3：锁了只配平其余两条）');

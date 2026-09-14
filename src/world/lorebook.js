@@ -30,32 +30,69 @@ export function normalizeEntry(entry, index = 0, bookName = '') {
 }
 
 export function createLorebookService({ ctx } = {}) {
-  /** 枚举全部来源并加载条目；单个书加载失败只记录、不中断 */
-  async function collect() {
+  /**
+   * 已读过的书：书名 → `{ name, entries, error }`。
+   *
+   * T-434 懒加载：世界书条目**按需读**（展开哪本读哪本、注入只读"有勾选的"那几本）。
+   * 以前 `collect()` 会把酒馆里**所有**书都读一遍 —— 用户有几百本时，打开面板就是几百次请求。
+   */
+  const loaded = new Map();
+
+  function normalizeBook(name, book) {
+    return {
+      name,
+      entries: (book?.entries ?? []).map((entry, index) => normalizeEntry(entry, index, name)),
+    };
+  }
+
+  /** 读一本（带缓存；读失败也缓存，免得每次点都重试）。force=true 强制重读 */
+  async function loadBook(name, { force = false } = {}) {
+    const key = String(name ?? '').trim();
+    if (!key) return { name: '', entries: [], error: '书名为空' };
+    if (!force && loaded.has(key)) return loaded.get(key);
+
+    let result;
+    try {
+      const book = await ctx?.loadWorldInfoBook?.(key);
+      result = normalizeBook(key, book);
+    } catch (error) {
+      result = { name: key, entries: [], error: error?.message ?? '加载失败' };
+    }
+    loaded.set(key, result);
+    return result;
+  }
+
+  /** 丢掉缓存（界面上点「刷新」= 重新读） */
+  function forget() {
+    loaded.clear();
+  }
+
+  /**
+   * 枚举全部来源。**不再预读条目**：读过的书带条目，没读过的只留书名 + `lazy: true`。
+   * 内嵌书（角色卡）本来就在内存里，不算请求，直接给。
+   */
+  function collect() {
     const sources = [];
     for (const source of ctx?.getLorebookSources?.() ?? []) {
       if (source.embedded) {
         const entries = (ctx?.getCharacterBookEntries?.() ?? [])
           .map((entry, index) => normalizeEntry(entry, index, source.label));
-        sources.push({ ...source, books: [{ name: source.label, entries }] });
+        sources.push({ ...source, books: [{ name: source.label, entries, loaded: true, embedded: true }] });
         continue;
       }
 
-      const books = [];
-      for (const name of source.names ?? []) {
-        try {
-          const book = await ctx.loadWorldInfoBook(name);
-          books.push({ name, entries: (book?.entries ?? []).map((entry, index) => normalizeEntry(entry, index, name)) });
-        } catch (error) {
-          books.push({ name, entries: [], error: error?.message ?? '加载失败' });
-        }
-      }
-      sources.push({ ...source, books });
+      sources.push({
+        ...source,
+        books: (source.names ?? []).map((name) => {
+          const cached = loaded.get(name);
+          return cached ? { ...cached, loaded: true } : { name, entries: [], lazy: true };
+        }),
+      });
     }
     return sources;
   }
 
-  /** 按勾选挑出要进 prompt 的条目（保持来源顺序） */
+  /** 按勾选挑出要进 prompt 的条目（保持来源顺序）。**同步版**：只认已经带着条目的书（测试/兼容用） */
   function pick(sources, selection = {}) {
     const picked = [];
     for (const source of sources ?? []) {
@@ -64,6 +101,39 @@ export function createLorebookService({ ctx } = {}) {
           if (selection?.[entry.key]) {
             picked.push({ ...entry, bookName: book.name, sourceType: source.type, sourceLabel: source.label });
           }
+        }
+      }
+    }
+    return picked;
+  }
+
+  /**
+   * 注入用：按勾选挑条目，**只读"有勾选的"那些书**（懒加载的关键 ——
+   * 注入的正确性不依赖"所有书都读过"）。勾选 key 形如 `书名::条目id`。
+   */
+  async function pickSelected(sources, selection = {}) {
+    const wanted = new Map(); // 书名 → 勾选的条目 id 集合
+    for (const key of Object.keys(selection ?? {})) {
+      if (!selection[key]) continue;
+      const at = String(key).lastIndexOf('::');
+      if (at <= 0) continue;
+      const book = String(key).slice(0, at);
+      const id = String(key).slice(at + 2);
+      if (!wanted.has(book)) wanted.set(book, new Set());
+      wanted.get(book).add(id);
+    }
+    if (!wanted.size) return [];
+
+    const picked = [];
+    for (const source of sources ?? []) {
+      for (const book of source.books ?? []) {
+        const ids = wanted.get(book.name);
+        if (!ids) continue;
+        // eslint-disable-next-line no-await-in-loop -- 只读勾过的书，通常 1~2 本
+        const full = book.loaded ? book : await loadBook(book.name);
+        for (const entry of full.entries ?? []) {
+          if (!ids.has(entry.id)) continue;
+          picked.push({ ...entry, bookName: book.name, sourceType: source.type, sourceLabel: source.label });
         }
       }
     }
@@ -98,5 +168,5 @@ export function createLorebookService({ ctx } = {}) {
     }));
   }
 
-  return { collect, pick, buildText, search };
+  return { collect, pick, pickSelected, loadBook, forget, buildText, search };
 }

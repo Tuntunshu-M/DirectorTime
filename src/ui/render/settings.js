@@ -10,7 +10,7 @@
 //   · 楼层节奏 min/max、轮数上限、置信阈值、卡住阈值、世界书条数上限 ——
 //     这些能配但定稿界面里没有位置，先留在控制台（已列进待办清单）
 
-import { esc, seg, toggle, tokensOf, fmtNumber } from '../dom.js';
+import { esc, seg, toggle, fmtNumber } from '../dom.js';
 import { describeRemoteCheck } from '../../core/update-check.js';
 
 /**
@@ -57,15 +57,16 @@ export function render(state, ctxState) {
   const tier = willTier(will);
   const showKey = Boolean(ctxState?.showKey);
   const total = toneKeys.reduce((sum, key) => sum + Number(tone[key] ?? 0), 0);
+  // 释义（2026-09-14 用户确认）：括号里的说明跟着占比一起发给导演，文案可改；
+  // 主界面不显示释义正文（用户觉得冗余）→ 收进一个默认折叠里
+  const toneHints = state.toneHints ?? {};
+  const toneHintDefaults = state.toneHintDefaults ?? {};
+  const toneHintsCustom = state.toneHintsCustom ?? {};
 
   // 世界书状态行（定稿 §5.2：设置里只放一行状态 + 入口，完整界面在弹层里）
-  const selection = state.world?.selection ?? {};
-  const worldEntries = [];
-  for (const source of (ctxState?.worldSources ?? state.world?.sources ?? [])) {
-    for (const book of source.books ?? []) for (const entry of book.entries ?? []) worldEntries.push(entry);
-  }
-  const picked = worldEntries.filter((entry) => selection[entry.key]);
-  const worldTokens = picked.reduce((sum, entry) => sum + tokensOf(entry.text ?? ''), 0);
+  // T-434：条数/token 走核心那份统计 —— 懒加载下未读过的书没有条目可数
+  const worldStats = state.world?.stats ?? { count: 0, tokens: 0, unknown: 0 };
+  const worldSummary = `${worldStats.count} 条 · 约 ${fmtNumber(worldStats.tokens)} tokens${worldStats.approx ? '（含没读过的书，按已知估算）' : ''}`;
 
   const toneRows = toneKeys.map((key, index) => {
     const locked = lockedTones.includes(key);
@@ -74,6 +75,15 @@ export function render(state, ctxState) {
       <input class="tone" type="range" min="0" max="100" value="${Number(tone[key] ?? 0)}" data-act="tone.slide" data-key="${esc(key)}" data-index="${index}" aria-label="${esc(toneLabels[key] ?? key)}占比">
       <input class="dt-tone-num" type="number" min="0" max="100" value="${Number(tone[key] ?? 0)}" data-act="tone.number" data-key="${esc(key)}" aria-label="${esc(toneLabels[key] ?? key)}占比">
       <button class="dt-lockbtn${locked ? ' on' : ''}" type="button" data-act="tone.lock" data-key="${esc(key)}">${locked ? '已锁' : '锁'}</button>
+    </div>`;
+  }).join('');
+
+  // 三条释义的输入行：空着 = 用内置（占位符里能看到内置原文），填了 = 用你填的
+  const toneHintRows = toneKeys.map((key) => {
+    const custom = toneHintsCustom[key];
+    return `<div class="dt-line">
+      <span class="dt-k2">${esc(toneLabels[key] ?? key)}</span>
+      <input class="dt-tone-hint" type="text" value="${esc(custom ?? '')}" placeholder="${esc(toneHintDefaults[key] ?? toneHints[key] ?? '')}" data-act="tone.hint" data-key="${esc(key)}" aria-label="${esc(toneLabels[key] ?? key)}释义">
     </div>`;
   }).join('');
 
@@ -112,7 +122,7 @@ export function render(state, ctxState) {
     <details data-key="settings.world">
       <summary>世界书</summary>
       <div class="dt-box">
-        <div class="dt-line"><span style="flex:1">已选 ${picked.length} 条 · 约 ${fmtNumber(worldTokens)} tokens</span>
+        <div class="dt-line"><span style="flex:1">已选 ${worldSummary}</span>
           <button class="dt-mini" type="button" data-act="settings.world">管理 ▸</button></div>
         <div class="dt-note">点「管理」打开世界书弹层：搜索、按书折叠、全选/全不选、勾选条目</div>
       </div>
@@ -125,6 +135,15 @@ export function render(state, ctxState) {
         ${toneRows || '<div class="dt-note">占比还没初始化</div>'}
         <div class="dt-note">锁住的线不参与配平；调一条，其余未锁的按比例分（和恒为 100）<br>
           <span style="color:var(--accent)">当前合计 ${total}%</span></div>
+
+        <details data-key="settings.toneHints">
+          <summary>占比释义（喂给导演的说明，可改）</summary>
+          <div class="dt-box">
+            ${toneHintRows || '<div class="dt-note">释义还没初始化</div>'}
+            <div class="dt-note">括号里的解释会跟着占比一起发给导演；<b>留空 = 用回内置那句</b></div>
+            <button class="dt-mini" type="button" data-act="tone.hintReset">恢复内置释义</button>
+          </div>
+        </details>
 
         <div class="dt-lbl">导演强度（只改注入语气，判定不受影响）</div>
         ${seg({ name: 'dt-intensity', act: 'intensity.set', value: state.intensity ?? 'standard', options: INTENSITY_OPTIONS })}
@@ -356,6 +375,17 @@ export function render(state, ctxState) {
         const locked = new Set(state.toneLocked ?? []);
         if (locked.has(key)) locked.delete(key); else locked.add(key);
         api.tone?.set?.(key, Number(state.tone?.[key] ?? 0), [...locked]);
+        ctx.refresh();
+      },
+      // 占比释义（文本输入走 change：失焦/回车才保存，不会每敲一个字重绘一次）
+      'tone.hint': (el, { api, ctx }) => {
+        api.tone?.setHint?.(el.dataset.key, el.value);
+        ctx.flashGlobal?.(`已保存「${el.dataset.key}」的释义（下一轮生成立刻生效）`);
+        ctx.refresh();
+      },
+      'tone.hintReset': (el, { api, ctx }) => {
+        api.tone?.resetHints?.();
+        ctx.flashGlobal?.('三条释义已恢复内置');
         ctx.refresh();
       },
       'intensity.set': (el, { api, ctx }) => {

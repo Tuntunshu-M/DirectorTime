@@ -214,7 +214,7 @@ ${PERSONA_RESPECT}`,
   （若为空：请你自己构思一个主目标，所有阶段必须服务于它）
 - 主角（可能不止一个，每个阶段用 actorId 指明是谁的戏）：{{protagonists}}
 - 绝对禁区（用户显式设定，**优先于人物侧写里的任何禁忌**，一个都不许碰）：{{hardLimits}}
-- 剧情基调：{{tone}}
+- 剧情基调（每项的百分比 = 这批阶段里该基调占的大致比例，括号里是它的含义）：{{tone}}
 - 人物侧写：{{profile}}
 - 世界书设定：{{world}}
 {{#rejectReason}}
@@ -337,7 +337,7 @@ ${PERSONA_RESPECT}`,
 当前主目标：{{objective}}
 主角（可能不止一个，每个阶段用 actorId 指明是谁的戏）：{{protagonists}}
 绝对禁区（用户显式设定，优先于人物侧写里的任何禁忌）：{{hardLimits}}
-剧情基调：{{tone}}
+剧情基调（每项的百分比 = 这批阶段里该基调占的大致比例，括号里是它的含义）：{{tone}}
 人物侧写：{{profile}}
 世界书设定：{{world}}
 {{#rejectReason}}

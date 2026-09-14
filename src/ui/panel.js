@@ -31,7 +31,7 @@ const TABS = [
  * 与 `manifest.json` 的版本**保持一致**（同一份发布里跟着一起跳），
  * 这样"面板显示 0.10.0 / 更新提示 0.10.0"永远不会互相打脸 —— 一开始想只按界面改动跳，实际只会让人怀疑没更新成功。
  */
-export const UI_VERSION = '0.13.0';
+export const UI_VERSION = '0.14.0';
 
 const PALETTE_KEY = 'dt-palette';
 const LAYER_NAMES = { world: '世界书', prompt: '提示词', settings: '设置', debug: '调试面板' };
@@ -283,6 +283,16 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
       backLayer: () => {
         uiState.layer = uiState.stack.pop() ?? null;
         render();
+      },
+      /**
+       * T-434：让界面能指定某个折叠块展开/收起。
+       * 用途：点书名去读这本书时，重绘会换掉整棵子树，浏览器默认的展开动作落空 ——
+       * 所以由动作显式把这一块标成展开（键就是它的 data-key）。
+       */
+      openKey: (key, open = true) => {
+        const name = String(key ?? '');
+        if (!name) return;
+        uiState.open = { ...(uiState.open ?? {}), [name]: Boolean(open) };
       },
       togglePalette: () => {
         uiState.palette = normalizePalette(uiState.palette) === 'a' ? 'b' : 'a';

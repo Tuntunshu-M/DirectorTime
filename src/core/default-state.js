@@ -21,6 +21,11 @@ export function createDefaultTone() {
   return { daily: 70, crisis: 30, intimate: 0 };
 }
 
+/** 剧情占比释义的用户覆盖（空 = 全用 core/tone.js 的内置释义，见那里的说明） */
+export function createDefaultToneHints() {
+  return {};
+}
+
 /**
  * 规则引擎的四词库（T-406）。全部可编辑：用户改的就是这一份，直接持久化。
  * - strong / weak：带归属标签，指向哪个 stance
@@ -93,6 +98,9 @@ export function createDefaultState() {
     // 聊天级曾经也存过一份，导致 Debug 与配置页各看一份（bugfix 0912 P1-2，已删）
     outline: null,
     tone: createDefaultTone(),
+    // 剧情占比释义：用户改过的**只存改动的那几条**（没存 = 用 core/tone.js 的内置文案）。
+    // 这样「恢复内置」只要清空这个对象，也不怕以后改内置文案时老存档的旧文本僵在那儿。
+    toneHints: createDefaultToneHints(),
     // 世界书选择（chat 级：每个聊天记自己勾了哪些条目）
     worldSelection: {},
     stages: [],

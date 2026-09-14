@@ -119,6 +119,11 @@
 #dt-panel .dt-tone-num{width:46px;box-sizing:border-box;background:var(--field);color:var(--accent);
   border:1px solid var(--rule-soft);border-radius:var(--radius);padding:3px 4px;
   font-family:var(--font-label);font-weight:600;font-size:12px;text-align:right}
+/* 剧情占比释义输入（2026-09-14）：一行一个，撑满剩余宽度；placeholder 里显示内置释义 */
+#dt-panel .dt-tone-hint{flex:1;min-width:0;box-sizing:border-box;background:var(--field);color:var(--ink);
+  border:1px solid var(--rule-soft);border-radius:var(--radius);padding:4px 7px;font-size:12px}
+#dt-panel .dt-tone-hint::placeholder{color:var(--faded)}
+#dt-panel .dt-tone-hint:focus{outline:none;border-color:var(--accent)}
 #dt-panel .dt-flash{font-size:11.5px;line-height:1.55;color:var(--accent);margin-top:5px;
   border-left:2px solid var(--accent);padding-left:8px}
 #dt-panel .dt-chip{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 8px;

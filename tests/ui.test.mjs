@@ -160,7 +160,12 @@ const worldSources = [{
     { key: 'book-a:1', name: '两人的过往', enabled: true, text: 'y'.repeat(810) },
     { key: 'book-a:2', name: '老宅布局', enabled: false, text: 'z'.repeat(240) },
   ] }],
-}];
+  },
+  // T-434：没读过的书（懒加载）—— 界面上只显示书名，点一下才读
+  {
+  type: 'library', label: '其它世界书（未全局启用）',
+  books: [{ name: '还没读的大部头', entries: [], lazy: true }],
+  }];
 
 console.log('T-427 面板渲染');
 
@@ -874,6 +879,83 @@ await acheck('#4 点锁 → tone.set 带上新的 locked 数组', async () => {
   const calls2 = [];
   await actions2['tone.lock'](el, { ctx: fakeCtx(), api: { tone: { set: (...args) => calls2.push(args) } }, state: state2 });
   assert.deepEqual(calls2[0][2], [], '再点一次要解锁');
+});
+
+console.log('T-434 · 世界书懒加载（展开哪本才读哪本）');
+
+check('没读过的书：只显示书名 + 「点开即读取」，不铺条目', () => {
+  const { html } = renderPanel(fakeState(), { layer: 'world', worldSources });
+  assert.ok(html.includes('data-act="world.readBook"'), '书名的 summary 要能触发读取');
+  assert.ok(html.includes('data-book="还没读的大部头"'), '要带上书名');
+  assert.ok(html.includes('点开即读取'), '要让用户知道点一下才读');
+  assert.ok(html.includes('还没读 · 1 本'), '要有「还没读」分组');
+  // 读过的书照旧平铺条目
+  assert.ok(html.includes('罗德里戈的性格'));
+});
+
+check('工具栏：有没读过的书时才有「读取全部 N 本」', () => {
+  const withLazy = renderPanel(fakeState(), { layer: 'world', worldSources }).html;
+  assert.ok(withLazy.includes('data-act="world.readAll"'));
+  assert.ok(withLazy.includes('读取全部 1 本'));
+
+  const allLoaded = renderPanel(fakeState(), {
+    layer: 'world',
+    worldSources: [worldSources[0]],
+  }).html;
+  assert.equal(allLoaded.includes('data-act="world.readAll"'), false, '都读过了就别显示按钮');
+});
+
+await acheck('点书名 → 只读这一本 + 把这块摊开 + 刷新', async () => {
+  const { actions } = renderPanel(fakeState(), { layer: 'world', worldSources });
+  const loaded = [];
+  const state = fakeState();
+  const sources = await actions['world.readBook'](
+    { ...fakeElement('world.readBook'), dataset: { act: 'world.readBook', book: '还没读的大部头', key: 'book:library:还没读的大部头' } },
+    {
+      ctx: { ...fakeCtx(), openKey: (...args) => loaded.push(['openKey', ...args]) },
+      api: {
+        loadWorldBook: async (name) => { loaded.push(['read', name]); return { name, entries: [{ key: `${name}::0`, name: '条目', text: 'x' }] }; },
+        loadWorldSources: async () => worldSources,
+      },
+      state,
+    },
+  );
+  void sources;
+  assert.ok(loaded.some(([kind, name]) => kind === 'read' && name === '还没读的大部头'), '要真去读那一本');
+  assert.ok(loaded.some(([kind]) => kind === 'openKey'), '读完要把这块标成展开');
+});
+
+await acheck('「读取全部」→ 每本没读过的都读一遍', async () => {
+  const state = fakeState({ world: { sources: worldSources, selection: {}, stats: { count: 0, tokens: 0, unknown: 0 } } });
+  const { actions } = renderPanel(state, { layer: 'world', worldSources });
+  const read = [];
+  await actions['world.readAll'](fakeElement('world.readAll'), {
+    ctx: fakeCtx(),
+    api: {
+      loadWorldBook: async (name) => { read.push(name); return { name, entries: [] }; },
+      loadWorldSources: async () => worldSources,
+    },
+    state,
+  });
+  assert.deepEqual(read, ['还没读的大部头']);
+});
+
+check('底部：条数/token 走核心统计（含"还没读过"的说明）', () => {
+  const { html } = renderPanel(fakeState({
+    world: {
+      sources: [],
+      selection: { 'a::0': true, '没读过的书::3': true },
+      stats: { count: 2, tokens: 640, unknown: 1, approx: true },
+    },
+  }), { layer: 'world', worldSources });
+  assert.ok(html.includes('已选 2 条'), '缺条数');
+  assert.ok(html.includes('约 640 tokens'));
+  assert.ok(html.includes('1 条还没读过'), '要如实说明有一本没读过、按已知估算');
+
+  const exact = renderPanel(fakeState({
+    world: { sources: [], selection: {}, stats: { count: 3, tokens: 100, unknown: 0, approx: false } },
+  }), { layer: 'world', worldSources }).html;
+  assert.equal(exact.includes('还没读过'), false, '都读过了就别提');
 });
 
 console.log('版本号一致性（防再次漂移）');

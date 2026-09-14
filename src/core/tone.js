@@ -10,6 +10,43 @@ export const TONE_KEYS = ['daily', 'crisis', 'intimate'];
 export const TONE_LABELS = { daily: '日常', crisis: '危机', intimate: '亲密' };
 export const DEFAULT_TONE = { daily: 70, crisis: 30, intimate: 0 };
 
+/**
+ * 三条线的释义（T-415 补充，2026-09-14 用户反馈）。
+ *
+ * 起因：注进去的只有 `日常 70% / 危机 30%` —— **数字给了，"日常 / 危机 / 亲密"分别
+ * 是什么意思全靠模型自己领会**，同一份占比在不同模型手里跑出来完全两样。
+ * 现在释义作为括号小字跟着占比一起注入（用户确认的「方案 A」）。
+ *
+ * 文案**可改**：用户改过的存在 `state.toneHints`（只存改动的那几条），
+ * 没改的走这里的内置文案；清空某条 = 该条回落内置。
+ */
+export const DEFAULT_TONE_HINTS = {
+  daily: '平稳相处、生活流推进，不靠突发事件推剧情',
+  crisis: '需要两人共同面对的压力或冲突，不为虐而虐',
+  intimate: '情感或身体的靠近被明确推进一格，不跳步',
+};
+
+/** 单条释义长度上限：防手滑贴一整段进去，白烧 token */
+export const TONE_HINT_MAX = 60;
+
+/** 把用户改过的释义收拢：只认三条已知键、去空白、超长截断；空串 / 非法值一律丢掉 */
+export function normalizeToneHints(raw) {
+  if (!raw || typeof raw !== 'object') return {};
+  const out = {};
+  for (const key of TONE_KEYS) {
+    const value = raw[key];
+    if (typeof value !== 'string') continue;
+    const text = value.trim().slice(0, TONE_HINT_MAX);
+    if (text) out[key] = text;
+  }
+  return out;
+}
+
+/** 生效释义：内置打底，用户改过的覆盖上去（界面与注入共用这一份） */
+export function toneHintsOf(raw) {
+  return { ...DEFAULT_TONE_HINTS, ...normalizeToneHints(raw) };
+}
+
 function clampPercent(value, fallback = 0) {
   const num = Number(value);
   if (!Number.isFinite(num)) return fallback;
@@ -87,11 +124,21 @@ export function rebalanceTone(tone, key, value, { locked = [] } = {}) {
   return out;
 }
 
-/** 喂给 GEN_OUTLINE 的 {{tone}}：只列开着的那些 */
-export function toneText(tone) {
+/**
+ * 喂给 GEN_OUTLINE / EXTEND_OUTLINE 的 {{tone}}：只列开着的那些，每条带括号释义。
+ * 例：`日常 70%（平稳相处、生活流推进，不靠突发事件推剧情）/ 危机 30%（…）`
+ * @param {object} tone 占比
+ * @param {{ hints?: object }} options 用户改过的释义（不传 = 全用内置）
+ */
+export function toneText(tone, { hints = null } = {}) {
   const current = normalizeTone(tone);
+  const table = toneHintsOf(hints);
   return TONE_KEYS
     .filter((key) => current[key] > 0)
-    .map((key) => `${TONE_LABELS[key]} ${current[key]}%`)
+    .map((key) => {
+      const hint = table[key];
+      const head = `${TONE_LABELS[key]} ${current[key]}%`;
+      return hint ? `${head}（${hint}）` : head; // 释义被清空到无（少见）→ 退回纯数字，别留空括号
+    })
     .join(' / ');
 }

@@ -32,7 +32,10 @@ import { INTENSITY_LEVELS, INTENSITY_LABELS, normalizeIntensity } from './core/i
 import {
   extensionFolderFromUrl, createExtensionUpdater, createUpdateChecker, checkForUpdate,
 } from './core/update-check.js';
-import { toneText as coreToneText, rebalanceTone, normalizeTone, TONE_KEYS, TONE_LABELS } from './core/tone.js';
+import {
+  toneText as coreToneText, rebalanceTone, normalizeTone, TONE_KEYS, TONE_LABELS,
+  toneHintsOf as coreToneHintsOf, normalizeToneHints, DEFAULT_TONE_HINTS, TONE_HINT_MAX,
+} from './core/tone.js';
 import { automationText } from './core/automation.js';
 import { intensityHint } from './core/intensity.js';
 import { createDefaultRules } from './core/default-state.js';
@@ -221,9 +224,12 @@ export function bootstrap({ ctx, store } = {}) {
 
   let generating = false;
 
-  /** 剧情占比 → 可读文本，喂给 GEN_OUTLINE 的 {{tone}}（T-415 起走 core/tone） */
+  /**
+   * 剧情占比 → 可读文本，喂给 GEN_OUTLINE 的 {{tone}}（T-415 起走 core/tone）。
+   * 2026-09-14：带上三条线的释义（用户改过的覆盖内置），见 core/tone.js 的说明。
+   */
   function toneText() {
-    return coreToneText(store.get().tone);
+    return coreToneText(store.get().tone, { hints: store.get().toneHints });
   }
 
   /** 近期对话 → {{context}}；人物侧写 / 世界书（T-401 / T-402）未做，留空 */
@@ -250,12 +256,61 @@ export function bootstrap({ ctx, store } = {}) {
     }), { track: false });
   }
 
-  /** 枚举世界书全部来源；30 秒内复用缓存，force=true 强制刷新 */
+  /**
+   * 枚举世界书全部来源。
+   *
+   * T-434：**不再预读每本书的条目** —— `collect()` 只给书名（读过的才带条目）。
+   * 30 秒内复用缓存；force=true 丢掉已读缓存重来（界面上点「刷新」）。
+   */
   async function collectWorldSources(force = false) {
+    if (force) lorebook.forget();
     if (!force && worldCache.sources.length && Date.now() - worldCache.at < 30000) return worldCache.sources;
-    const sources = await lorebook.collect();
+    const sources = lorebook.collect();
     worldCache = { at: Date.now(), sources };
     return sources;
+  }
+
+  /**
+   * T-434：读一本书（展开哪本读哪本）。读完让来源缓存失效，下次 collect 就带上它的条目。
+   */
+  async function loadWorldBook(name) {
+    const book = await lorebook.loadBook(name);
+    rememberWorldSizes(book?.entries);
+    worldCache = { at: 0, sources: [] };
+    return book;
+  }
+
+  /**
+   * 记下"已经知道的条目字数"（键 → 字符数）。
+   *
+   * 懒加载之后，未读过的书没有条目可数，所以「已选 N 条 · 约 X tokens」得靠这份账本：
+   * 勾选只能发生在读过的书上（⇒ 勾的时候就有字数），注入时再补一遍更准的。
+   */
+  function rememberWorldSizes(entries) {
+    const known = entries ?? [];
+    if (!known.length) return;
+    const sizes = { ...(store.get().runtime?.worldSizes ?? {}) };
+    let changed = false;
+    for (const entry of known) {
+      if (!entry?.key) continue;
+      const chars = String(entry.content ?? '').length;
+      if (sizes[entry.key] !== chars) { sizes[entry.key] = chars; changed = true; }
+    }
+    if (!changed) return;
+    store.update((draft) => ({ ...draft, runtime: { ...draft.runtime, worldSizes: sizes } }), { track: false });
+  }
+
+  /** 已选条数 + token 估算（懒加载下：已知的按账本算，未知的标 approx） */
+  function worldStats(selection = store.get().worldSelection ?? {}) {
+    const sizes = store.get().runtime?.worldSizes ?? {};
+    const keys = Object.keys(selection ?? {}).filter((key) => selection[key]);
+    let chars = 0;
+    let unknown = 0;
+    for (const key of keys) {
+      if (Number.isFinite(Number(sizes[key]))) chars += Number(sizes[key]);
+      else unknown += 1;
+    }
+    return { count: keys.length, tokens: Math.round(chars / 2.5), unknown, approx: unknown > 0 };
   }
 
   /** 勾选条目 → 喂给 {{world}} 的文本；一条没勾就返回空串，不占 prompt */
@@ -264,7 +319,10 @@ export function bootstrap({ ctx, store } = {}) {
     const selection = store.get().worldSelection ?? {};
     if (!Object.keys(selection).length) return '';
     const sources = await collectWorldSources();
-    return lorebook.buildText(lorebook.pick(sources, selection), { limit: settings().worldLimit ?? 20 });
+    // T-434：只读"有勾选的"那些书（未勾的书一本都不读）
+    const picked = await lorebook.pickSelected(sources, selection);
+    rememberWorldSizes(picked);
+    return lorebook.buildText(picked, { limit: settings().worldLimit ?? 20 });
   }
 
   /**
@@ -847,7 +905,26 @@ export function bootstrap({ ctx, store } = {}) {
       store.update((draft) => ({ ...draft, tone: next }), { label: '调整剧情占比' });
       return next;
     },
-    text: () => coreToneText(store.get().tone),
+    text: () => coreToneText(store.get().tone, { hints: store.get().toneHints }),
+    // ---------- 释义（2026-09-14：占比的数字含义要让用户能改）----------
+    /** 生效释义（内置 + 用户改过的），界面直接显示这一份 */
+    hints: () => coreToneHintsOf(store.get().toneHints),
+    /** 内置原文（占位提示 + 「恢复内置」的对照） */
+    hintDefaults: () => ({ ...DEFAULT_TONE_HINTS }),
+    /** 改一条释义；**空串 = 这条回落内置**（删掉覆盖，不是存空字符串） */
+    setHint: (key, text) => {
+      const next = { ...normalizeToneHints(store.get().toneHints) };
+      const value = typeof text === 'string' ? text.trim().slice(0, TONE_HINT_MAX) : '';
+      if (value && TONE_KEYS.includes(key)) next[key] = value;
+      else delete next[key];
+      store.update((draft) => ({ ...draft, toneHints: next }), { label: '调整剧情占比释义' });
+      return coreToneHintsOf(next);
+    },
+    /** 三条全部恢复内置 */
+    resetHints: () => {
+      store.update((draft) => ({ ...draft, toneHints: {} }), { label: '恢复剧情占比释义' });
+      return coreToneHintsOf({});
+    },
   };
   const castApi = {
     get: () => normalizeProtagonists(settings().protagonists),
@@ -1009,6 +1086,10 @@ export function bootstrap({ ctx, store } = {}) {
         toneKeys: [...TONE_KEYS],
         toneLabels: { ...TONE_LABELS },
         toneLocked: state.tone?.locked ?? [],
+        // 释义（生效 / 内置 / 被改过的那几条）——界面上的小折叠用它渲染（2026-09-14）
+        toneHints: toneApi.hints(),
+        toneHintDefaults: toneApi.hintDefaults(),
+        toneHintsCustom: normalizeToneHints(state.toneHints),
         // 场记页「剧情走向」输入框（2026-09-14 #2）
         premise: settings().premise ?? '',
         intensity: intensityApi.get(),
@@ -1024,7 +1105,12 @@ export function bootstrap({ ctx, store } = {}) {
         cast: { list: castApi.get(), current: ctx.getCharacterData?.()?.name ?? '' },
         profile,
         profileFields: PROFILE_FIELDS.map((key) => ({ key, label: PROFILE_FIELD_LABELS[key] ?? key })),
-        world: { sources: [], selection: { ...(state.worldSelection ?? {}) } },
+        world: {
+          sources: [],
+          selection: { ...(state.worldSelection ?? {}) },
+          // T-434 懒加载：未读过的书没有条目可数，所以条数/token 走这份统计（含"还没读"的条数）
+          stats: worldStats(state.worldSelection ?? {}),
+        },
         update: {
           version: updateApi.version(),
           path: updateApi.path(),
@@ -1076,8 +1162,14 @@ export function bootstrap({ ctx, store } = {}) {
      */
     checkUpdate: () => checkRemoteUpdate(),
     loadWorldSources: (force) => collectWorldSources(force),
+    /** T-434：读一本世界书（展开哪本读哪本） */
+    loadWorldBook: (name) => loadWorldBook(name),
     saveWorldSelection: (selection) => {
       store.update((draft) => ({ ...draft, worldSelection: { ...selection } }), { label: '勾选世界书' });
+      // 勾选只能发生在"读过的书"上 → 顺手把这些条目的字数记进账本（token 估算用）
+      rememberWorldSizes(
+        (worldCache.sources ?? []).flatMap((source) => (source.books ?? []).flatMap((book) => book.entries ?? [])),
+      );
       return store.get().worldSelection;
     },
     onTest: () => client.testConnection(settings().connection ?? {}),
@@ -1115,6 +1207,7 @@ export function bootstrap({ ctx, store } = {}) {
     onExtend: () => uiApi.onExtend(),
     onToggleEnabled: (value) => uiApi.onToggleEnabled(value),
     loadWorldSources: (force) => uiApi.loadWorldSources(force),
+    loadWorldBook: (name) => uiApi.loadWorldBook(name),
     saveWorldSelection: (selection) => uiApi.saveWorldSelection(selection),
     // 批复 §二-1/§二-2：档位与词库（界面走这两个）
     setAutomation: (feature, level) => uiApi.setAutomation(feature, level),
