@@ -43,6 +43,8 @@ function makeStore() {
     stages,
     activeStageId: stages[0].id,
     tone: { daily: 60, crisis: 40, intimate: 0 },
+    // 占比释义的用户改动（2026-09-14）：副本必须带着走，不然搬过去会悄悄变回内置
+    toneHints: { daily: '我自己的日常释义' },
   }), { track: false });
   store.saveSettings({
     will: 55, objective: '一起出门', worldSelection: { 'a:1': true }, actors: undefined,
@@ -143,9 +145,21 @@ await check('导入落地：阶段 / 剧本 / 占比 / 设置都换过来了', (
   assert.equal(state.stages.length, 2);
   assert.equal(state.activeStageId, state.stages[0].id);
   assert.equal(state.tone.daily, 60);
+  assert.deepEqual(state.toneHints, { daily: '我自己的日常释义' }, '释义要跟着副本搬过来');
   assert.equal(target.getSettings().will, 55);
   assert.deepEqual(target.getSettings().hardLimits, ['自杀']);
   assert.equal(state.runtime.rounds, 0, '换副本 = 重新起一局');
+});
+
+await check('老副本（没有 toneHints 字段）导入 → 保留本机现有释义，别清掉', () => {
+  const target = makeStore();
+  target.update((draft) => ({ ...draft, toneHints: { crisis: '本机改过的危机释义' } }), { track: false });
+
+  const old = buildCopy(makeStore());
+  delete old.toneHints; // 模拟 0.14.0 之前导出的副本
+  applyCopy(old, { store: target, writeProfile: () => {} });
+
+  assert.deepEqual(target.get().toneHints, { crisis: '本机改过的危机释义' });
 });
 
 await check('导入不动本机连接配置（也不清掉你的密钥）', () => {
