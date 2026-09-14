@@ -263,22 +263,6 @@ export function createSillyTavernContext(contextProvider = defaultProvider) {
       return getHost().characterId ?? null;
     },
 
-    /**
-     * 2026-09-14：酒馆里的**角色卡列表**（多人卡自选用）。
-     * 只取 id + 名字（不读卡内容）—— 用户在人物页勾选"要攻略谁"。
-     * id 用数组下标（与 getCharacterField / 侧写按角色分存的 id 口径一致）。
-     */
-    listCharacters() {
-      const host = getHost();
-      const list = Array.isArray(host.characters) ? host.characters : [];
-      return list
-        .map((card, index) => ({
-          id: String(index),
-          name: String(card?.name ?? card?.data?.name ?? '').trim(),
-        }))
-        .filter((item) => item.name);
-    },
-
     /** 读角色卡扩展字段（T-402 侧写存在 characters[i].data.extensions[director_time]） */
     getCharacterField(key, charId = null) {
       const host = getHost();

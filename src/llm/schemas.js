@@ -91,6 +91,49 @@ export function isValidProfile(data) {
   return filled.length >= PROFILE_MIN_FIELDS;
 }
 
+export const CAST_NAME_MAX = 20;
+export const CAST_EVIDENCE_MAX = 120;
+
+/**
+ * **T-438 §3**：侧写那次调用**顺带**返回的候选角色（可选字段 `cast`）。
+ *
+ * 容错是硬要求（G5）：这一段坏了**绝不能连坐侧写本身** —— 所以本函数**永不抛**，
+ * 拿不到合法数组就返回 `[]`，侧写照常写入。
+ *
+ * 形状：`[{ name, aliases: string[], confidence: number|null, evidence: string }]`
+ * （`aliases` 是旧版 just-do-it-char 的精华：花名/代号归到同一个人身上）
+ */
+export function normalizeCastList(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  const out = [];
+  const seen = new Set();
+  for (const item of list) {
+    // 模型偶尔会偷懒返回 ["裴玉", "Lobo"] —— 字符串也认
+    const source = typeof item === 'string' ? { name: item } : item;
+    if (!source || typeof source !== 'object') continue;
+
+    const name = String(source.name ?? '').trim().slice(0, CAST_NAME_MAX);
+    const key = name.toLowerCase();
+    if (!name || seen.has(key)) continue;
+    seen.add(key);
+
+    const aliases = [...new Set((Array.isArray(source.aliases) ? source.aliases : [])
+      .map((alias) => String(alias ?? '').trim().slice(0, CAST_NAME_MAX))
+      .filter((alias) => alias && alias.toLowerCase() !== key))];
+
+    const rawConfidence = Number(source.confidence);
+    const confidence = Number.isFinite(rawConfidence) ? Math.min(1, Math.max(0, rawConfidence)) : null;
+
+    out.push({
+      name,
+      aliases,
+      confidence,
+      evidence: String(source.evidence ?? '').trim().slice(0, CAST_EVIDENCE_MAX),
+    });
+  }
+  return out;
+}
+
 /** 一致性自检：{ ok: boolean, reason: string }（T-402 §六） */
 export function isValidConsistency(data) {
   if (!data || typeof data !== 'object') return false;

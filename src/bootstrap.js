@@ -22,7 +22,7 @@ import { hardLimitText } from './director/hard-limits.js';
 import { findUserDirectives, findFinishedLines, describeIssues } from './director/actor-guard.js';
 import {
   normalizeProtagonists, protagonistText,
-  toggleProtagonist, addProtagonist, removeProtagonist,
+  addProtagonist, removeProtagonist,
   toggleWorldProtagonist,
 } from './world/cast.js';
 import { gate, setLevel, normalizeAutomation, FEATURES, LEVELS, FEATURE_LABELS, LEVEL_LABELS } from './core/automation.js';
@@ -349,6 +349,51 @@ export function bootstrap({ ctx, store } = {}) {
   }
 
   /**
+   * T-438 §4：喂给 `GEN_PROFILE` 的 `{{knownCast}}` —— 用户已手填 / 已勾选的名字（一行一个）。
+   *
+   * 手填不是"替补"，是**给模型的明确线索**：你说有这个人，模型就得把他找出来、写进侧写。
+   * 手填的排最前（那是用户点名的），其次是被勾进主角的，最后补上当前生成者。
+   */
+  function knownCastText() {
+    const items = normalizeProtagonists(settings().protagonists);
+    const manual = items.filter((item) => item.manual === true).map((item) => item.name).filter(Boolean);
+    const picked = items.map((item) => item.name).filter(Boolean);
+    const current = String(ctx.getCharacterData?.()?.name ?? '').trim();
+    return [...new Set([...manual, ...picked, current].filter(Boolean))].join('\n');
+  }
+
+  /** T-438 §3：侧写那次调用**顺带**回来的候选（会话级缓存，不进副本导出） */
+  function rememberProfileCast(cast) {
+    const list = Array.isArray(cast) ? cast : [];
+    store.update(
+      (draft) => ({ ...draft, runtime: { ...draft.runtime, profileCast: { at: Date.now(), list } } }),
+      { track: false },
+    );
+    return list;
+  }
+
+  /** 界面用的侧写候选快照（纯读） */
+  function profileCastSnapshot() {
+    const cache = store.get().runtime?.profileCast ?? null;
+    return { at: cache?.at ?? 0, list: cache?.list ?? [] };
+  }
+
+  /** 这个名字是不是"已知名单"（主角 / 当前生成者）—— **已知名单永不被忽略** */
+  function isKnownCastName(name) {
+    const text = String(name ?? '').trim().toLowerCase();
+    if (!text) return false;
+    return knownCastNames().some((item) => String(item).toLowerCase() === text);
+  }
+
+  /** T-438 §2：被用户忽略的名字不展示（已知名单除外） */
+  function isBlockedCastName(name) {
+    const list = settings().worldCastBlocklist ?? [];
+    if (!list.length || isKnownCastName(name)) return false;
+    const text = String(name ?? '').trim().toLowerCase();
+    return list.some((item) => String(item).toLowerCase() === text);
+  }
+
+  /**
    * 2026-09-14 实机反馈：「别的角色卡里的角色也出现了」。
    * 根因是勾选跨书共享 —— 一次 `pickSelected` 会把**其它卡 / 全局书**里勾过的条目一起捞进来。
    * 现在按来源分两档：
@@ -474,11 +519,17 @@ export function bootstrap({ ctx, store } = {}) {
         weakTotal: group?.weakTotal ?? 0,
         truncated: Boolean(group?.truncated),
         weakTruncated: Boolean(group?.weakTruncated),
-        detected: group?.detected ?? [],
-        weak: group?.weak ?? [],
+        // T-438 §2：用户忽略过的名字不再展示（扫描缓存本身不动，所以「恢复」不用重扫）
+        detected: (group?.detected ?? []).filter((item) => !isBlockedCastName(item.name)),
+        weak: (group?.weak ?? []).filter((item) => !isBlockedCastName(item.name)),
       };
     };
-    return { all: read('all'), current: read('current'), other: read('other') };
+    return {
+      all: read('all'),
+      current: read('current'),
+      other: read('other'),
+      blocklist: [...(settings().worldCastBlocklist ?? [])],
+    };
   }
 
   /**
@@ -896,8 +947,15 @@ export function bootstrap({ ctx, store } = {}) {
       }
       // T-414：侧写档位 L1 → 生成完先进队列，确认后才写入
       if (gate(settings().automation, 'profile').queue) {
-        const generated = await profile.generate({ world: await worldText(), context: recentContext(), persona: userPersonaText() });
+        // T-438 §3/§4：顺带要回 cast（同一次调用），手填的名字用 {{knownCast}} 带进去
+        const generated = await profile.generate({
+          world: await worldText(),
+          context: recentContext(),
+          persona: userPersonaText(),
+          knownCast: knownCastText(),
+        });
         if (!generated.ok) return generated;
+        rememberProfileCast(generated.cast); // 候选是只读线索，先落地（不进待确认队列）
         const fields = { ...generated.fields };
         for (const key of PROFILE_FIELDS) {
           if (current.locked?.[key] && String(current.fields?.[key] ?? '').trim()) fields[key] = current.fields[key];
@@ -907,11 +965,19 @@ export function bootstrap({ ctx, store } = {}) {
           payload: { profile: { ...current, fields, source: 'ai' } },
           summary: '重新生成的侧写（确认后覆盖，锁定字段不受影响）',
         });
-        return { ok: true, pending: true, fields };
+        return { ok: true, pending: true, fields, cast: generated.cast ?? [] };
       }
 
-      const result = await profile.regenerate({ world: await worldText(), context: recentContext(), persona: userPersonaText() });
-      if (result.ok) review.syncInjection();
+      const result = await profile.regenerate({
+        world: await worldText(),
+        context: recentContext(),
+        persona: userPersonaText(),
+        knownCast: knownCastText(),
+      });
+      if (result.ok) {
+        rememberProfileCast(result.cast);
+        review.syncInjection();
+      }
       return result;
     },
   };
@@ -1113,10 +1179,6 @@ export function bootstrap({ ctx, store } = {}) {
       refreshInjection(); // 改完主角立刻重算注入（不是他的戏就别注入）
       return normalizeProtagonists(settings().protagonists);
     },
-    /** T-436：酒馆里的角色卡（自动识别出来的候选，只读） */
-    candidates: () => ctx.listCharacters?.() ?? [],
-    /** 勾选 / 取消勾选一张角色卡 */
-    toggle: (entry) => saveCast(toggleProtagonist(settings().protagonists, entry)),
     /** 手填一个名字（自选 / NPC） */
     add: (name) => saveCast(addProtagonist(settings().protagonists, name)),
     /** 从名单里移除（id 或名字对上就删） */
@@ -1127,6 +1189,24 @@ export function bootstrap({ ctx, store } = {}) {
     scanWorld: (options) => scanWorldCast(options),
     /** T-437：候选快照（读缓存，不触发扫描） */
     worldSnapshot: () => worldCastSnapshot(),
+    // ---------- T-438 §2：候选「忽略」黑名单 ----------
+    /** 忽略一个候选（只影响展示；**主角 / 当前生成者永不被忽略**） */
+    ignoreWorldCast: (name) => {
+      const text = String(name ?? '').trim();
+      if (!text || isKnownCastName(text)) return castApi.blocklist();
+      const list = [...new Set([...(settings().worldCastBlocklist ?? []), text])];
+      store.saveSettings({ worldCastBlocklist: list });
+      return castApi.blocklist();
+    },
+    /** 反悔：从黑名单里恢复 */
+    unignoreWorldCast: (name) => {
+      const text = String(name ?? '').trim().toLowerCase();
+      const list = (settings().worldCastBlocklist ?? []).filter((item) => String(item).toLowerCase() !== text);
+      store.saveSettings({ worldCastBlocklist: list });
+      return castApi.blocklist();
+    },
+    /** 当前黑名单（界面「已忽略的名字」折叠用它） */
+    blocklist: () => [...(settings().worldCastBlocklist ?? [])],
   };
   const breakFilterApi = {
     get: () => normalizeBreakFilter(settings().breakFilter),
@@ -1299,10 +1379,10 @@ export function bootstrap({ ctx, store } = {}) {
         cast: {
           list: castApi.get(),
           current: ctx.getCharacterData?.()?.name ?? '',
-          // T-436：酒馆里的角色卡（界面上勾选"要攻略谁"；手填 NPC 走输入框）
-          candidates: castApi.candidates(),
           // T-437：当前已勾选世界书条目里识别出来的角色（只展示，等用户勾选）
           world: worldCastSnapshot(),
+          // T-438 §3：侧写那次调用顺带回来的候选（零额外调用）
+          ai: profileCastSnapshot(),
         },
         profile,
         profileFields: PROFILE_FIELDS.map((key) => ({ key, label: PROFILE_FIELD_LABELS[key] ?? key })),

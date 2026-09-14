@@ -171,6 +171,9 @@ export function createDefaultSettings() {
     automation: createDefaultAutomation(),
     // 世界书：勾选的条目（entryKey → true）与进 prompt 的条数上限（项目书 §F1 / 附录建议 20）
     worldSelection: {},
+    // T-438 §2：候选「忽略」黑名单 —— 规则再全也会有怪词，给用户一条自己划掉的通道。
+    // 只影响**展示**（主角 / 当前生成者永不被忽略）；名字数组，持久化。
+    worldCastBlocklist: [],
     worldLimit: 20,
     // 导演 API：独立模式自己填，主连接模式留空由酒馆提供
     connection: { mode: 'independent', endpoint: '', apiKey: '', model: '' },

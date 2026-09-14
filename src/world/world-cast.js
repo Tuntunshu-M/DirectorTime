@@ -131,6 +131,29 @@ export const KINSHIP_TERMS = new Set([
   '家主', '族长', '主公', '上司', '老板', '老板娘', '老师', '同学', '室友',
 ]);
 
+/**
+ * **身份字段**：命中这些栏目名时，**冒号后面那截"值"本身就是角色名**（T-438 增量一）。
+ *
+ * 为什么单独处理：设定卡的写法就是 `代号：Lobo` —— 栏目名 `代号` 该被拦掉（对），
+ * 但**值 `Lobo` 是角色**（用户原话："lobo 还是个花名"，意思是它是角色，只是花名）。
+ * 2026-09-14 的修复把整行丢掉了 → `Lobo` 漏检。这张表就是把它捞回来的通道。
+ *
+ * ⚠️ **只对这张表里的标签生效** —— 其它字段的值一律不捞（`性格：冷酷` 不能产出"冷酷"）。
+ */
+export const IDENTITY_FIELD_LABELS = new Set([
+  '名称', '名字', '姓名', '真名', '本名', '原名', '全名',
+  '代号', '花名', '化名', '别名', '昵称', '外号', '绰号',
+  '英文名', '英文', 'ID', 'id',
+]);
+
+/** 身份字段那一行：`名称：裴玉` / `别名：夜莺 / 老K` */
+const IDENTITY_LINE_RE = new RegExp(
+  `^[\\t\\u3000 ]*(${[...IDENTITY_FIELD_LABELS].sort((a, b) => b.length - a.length).join('|')})[\\t\\u3000 ]*[：:][\\t\\u3000 ]*(.+)$`,
+  'gmi',
+);
+/** 身份字段的值里，这些是"多人分隔符"（`别名：夜莺 / 老K` / `与伯伯、哥哥`） */
+const IDENTITY_SPLIT_RE = /[、，,；;/｜|]|与|和|及/;
+
 /** 名字里带这些字一定不是人名（的/了/着/是/在/和/与/为 都是纯虚词） */
 const FUNCTION_CHARS = /[\u7684\u4e86\u7740\u662f\u5728\u548c\u4e0e\u4e3a]/;
 /** 组织 / 地点不是"可攻略的角色"（`裴氏集团` `洛佩兹的庄园` 这类） */
@@ -273,6 +296,39 @@ function acceptKnown(raw) {
   return Boolean(name) && HAS_NAME_CHAR.test(name);
 }
 
+/**
+ * 身份字段的**值**怎么清洗成名字：去引号 / 去括号注释 / 去尾标点。
+ * `Lobo（花名）` → `Lobo`；`"夜莺"` → `夜莺`。
+ */
+function cleanIdentityValue(raw) {
+  let text = normalizeCastName(raw);
+  text = text.replace(/[（(【\[][^）)】\]]*[）)】\]]/g, ''); // 括号里的注释不算名字
+  text = text
+    .replace(/^[\s"'“”‘’「」『』【】\[\]]+/, '')
+    .replace(/[\s"'“”‘’「」『』【】\[\]。．，,；;：:！!？?]+$/, '');
+  return normalizeCastName(text);
+}
+
+/**
+ * 身份字段的值收不收（T-438 增量一）。
+ * **豁免名字长度上限**（`Lobo Wolf` 9 字也要收），但其它噪声判据照用。
+ */
+export function isIdentityCastValue(raw) {
+  const name = cleanIdentityValue(raw);
+  if (!name) return false;
+  const len = [...name].length;
+  if (len < 1 || len > 12) return false;
+  if (!HAS_NAME_CHAR.test(name)) return false;
+  if (WORLD_CAST_STOPWORDS.has(name)) return false;
+  if (ABSTRACT_NOUNS.has(name)) return false;
+  if (WORLD_FIELD_LABELS.has(name)) return false;
+  if (CHAPTER_TITLE.test(name)) return false;
+  if (FUNCTION_CHARS.test(name)) return false;
+  if (PRONOUN_START.test(name)) return false;
+  if (NON_PERSON_SUFFIX.test(name)) return false;
+  return true;
+}
+
 /** 正则里的字面量转义（已知名单要按原样搜正文） */
 function escapeRe(text) {
   return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -391,6 +447,18 @@ function ruleHits(text, context) {
     out.push([label, offset, STRENGTH_STRONG]);
   }
 
+  // ①a 【T-438 增量一】身份字段的**值**就是角色名：`代号：Lobo` → `Lobo`
+  //     只对 IDENTITY_FIELD_LABELS 里的标签生效；值里遇到分隔符按多个名字切。
+  //     第 4 位 `true` = **已经校验过**（isIdentityCastValue 已按 1~12 字判过），
+  //     别再让 grade() 拿"2~6 字"的通用上限砍它一刀（`Lobo Wolf` 就是这么被砍掉的）。
+  for (const match of text.matchAll(IDENTITY_LINE_RE)) {
+    const valueText = String(match[2] ?? '');
+    for (const part of valueText.split(IDENTITY_SPLIT_RE)) {
+      if (!isIdentityCastValue(part)) continue;
+      out.push([cleanIdentityValue(part), match.index + match[0].indexOf(valueText), STRENGTH_STRONG, true]);
+    }
+  }
+
   // ①b 角色小标题：`【裴玉】` / `[裴玉]` —— 世界书里最直白的"这是谁"
   for (const match of text.matchAll(TITLE_BRACKET_RE)) {
     const inner = normalizeCastName(match[1] ?? match[2] ?? '');
@@ -477,8 +545,9 @@ export function extractWorldCast(entries = [], { known = [], limit = WORLD_CAST_
   const nameSet = new Set();
   const strength = new Map(); // name → strong / weak
   for (const item of list) {
-    for (const [name, , hitStrength] of ruleHits(String(item.content), context)) {
-      const graded = grade(name, hitStrength);
+    // 第 4 位 = 该规则已经自己校验过名字（身份字段的值豁免通用长度上限），不用再走 grade 的形状检查
+    for (const [name, , hitStrength, prevalidated] of ruleHits(String(item.content), context)) {
+      const graded = prevalidated ? hitStrength : grade(name, hitStrength);
       if (!graded) continue; // 噪声在这里被丢掉
       // 一条规则说 strong、另一条说 weak → 取 strong（宁可让用户看到）
       if (!strength.has(name) || strength.get(name) === STRENGTH_WEAK) strength.set(name, graded);

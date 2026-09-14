@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { lastTurnMessages, normalizeMaxRounds, shouldResetScript, bootstrap } from '../src/bootstrap.js';
 import { createStateStore } from '../src/core/state.js';
 import { normalizeStages } from '../src/director/outline.js';
+import { createSillyTavernContext } from '../src/core/context.js';
 
 let passed = 0;
 function check(name, fn) {
@@ -602,25 +603,28 @@ await acheck('#2：读不到 persona → 请求里没有那段（零回归）', 
   assert.equal(api.userPersonaText(), '', '读不到就是空串');
 });
 
-await acheck('T-436：主角自选（勾选角色卡 / 手填 NPC / 移除）都落盘并进快照', async () => {
+await acheck('T-438⑤：「酒馆里的角色卡」那一节已移除（手填 NPC 仍照常工作）', async () => {
   const env = makeBootEnv();
-  env.ctx.listCharacters = () => [{ id: '0', name: '洛佩兹' }, { id: '1', name: '罗德里戈' }];
+  // 就算宿主还能给出角色卡列表，也不该再有人去要它（T-438 §6）
+  let listCalls = 0;
+  env.ctx.listCharacters = () => { listCalls += 1; return [{ id: '0', name: '洛佩兹' }]; };
   const api = bootstrap({ ctx: env.ctx, store: env.store });
 
-  assert.deepEqual(api.cast.candidates(), [{ id: '0', name: '洛佩兹' }, { id: '1', name: '罗德里戈' }], '自动识别的候选');
-  assert.equal(api.ui.read().cast.candidates.length, 2, '界面拿得到候选');
-
-  api.cast.toggle({ id: '1', name: '罗德里戈' });
-  assert.deepEqual(env.store.getSettings().protagonists, [{ id: '1', name: '罗德里戈' }], '勾选要落盘');
+  assert.equal('candidates' in api.cast, false, 'castApi 不该再有 candidates');
+  assert.equal('toggle' in api.cast, false, '勾选角色卡的动作也一并删除');
+  assert.equal('candidates' in api.ui.read().cast, false, '界面快照里也不该有 candidates');
+  assert.equal(listCalls, 0, 'ctx.listCharacters 不该再被调用');
 
   api.cast.add('酒馆老板');
-  assert.deepEqual(env.store.getSettings().protagonists.at(-1), { id: '', name: '酒馆老板', manual: true }, '手填的 NPC 标 manual');
+  assert.deepEqual(env.store.getSettings().protagonists.at(-1), { id: '', name: '酒馆老板', manual: true }, '手填的 NPC 仍要标 manual');
 
   api.cast.remove({ name: '酒馆老板' });
-  assert.deepEqual(api.ui.read().cast.list.map((item) => item.name), ['罗德里戈'], '移除后快照同步');
+  assert.deepEqual(api.ui.read().cast.list, [], '移除后快照同步');
+});
 
-  api.cast.toggle({ id: '1', name: '罗德里戈' });
-  assert.deepEqual(env.store.getSettings().protagonists, [], '再点一次 = 取消勾选');
+await check('T-438⑤：适配层里的 listCharacters() 已删除', () => {
+  const ctx = createSillyTavernContext(() => ({ characters: [{ name: 'C' }], characterId: 0 }));
+  assert.equal('listCharacters' in ctx, false, 'src/core/context.js 里那个方法该没了');
 });
 
 console.log(`\n通过 ${passed} 项`);

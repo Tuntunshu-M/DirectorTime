@@ -144,9 +144,34 @@ await check('★ 设定卡写法：栏目名一个都不许进候选，只留下
     assert.equal(names(result).includes(word), false, `栏目名「${word}」不许进候选`);
   }
 
-  // 真角色要留下：裴玉（已知名单）+ 关系行里那四个没名字的配角
-  assert.deepEqual(names(result), ['裴玉', '伯伯', '哥哥', '父亲', '母亲'],
-    '设定卡该只剩角色：主角 + 关系描述里那几位');
+  // 真角色要留下：裴玉（已知名单）+ 代号的值 Lobo（T-438①）+ 关系行里那四个没名字的配角
+  assert.deepEqual(names(result), ['裴玉', 'Lobo', '伯伯', '哥哥', '父亲', '母亲'],
+    '设定卡该只剩角色：主角 + 代号 Lobo + 关系描述里那几位');
+});
+
+// ★ T-438 增量一：`代号：Lobo` 这类"身份字段的值"要当角色名捞回来
+await check('★ T-438① 身份字段的值要当角色名（`代号：Lobo` → Lobo）', () => {
+  const card = [
+    '名称：裴玉',
+    '代号：Lobo',
+    '英文名：Lobo Wolf',
+    '别名：夜莺 / 老K',
+    '昵称：小裴董',
+  ].join('\n');
+  const got = names(extractWorldCast([entry(card)]));
+  for (const expect of ['裴玉', 'Lobo', 'Lobo Wolf', '夜莺', '老K', '小裴董']) {
+    assert.ok(got.includes(expect), `身份字段的值「${expect}」要捞回来（实际：${got.join('、')}）`);
+  }
+  assert.equal(names(extractWorldCast([entry('名称：裴玉')])).includes('名称'), false, '栏目名本身仍不许进候选');
+});
+
+await check('★ T-438① 非身份字段的值一个都不许捞', () => {
+  const result = extractWorldCast([entry('性格：冷酷\n年龄：38\n服饰：黑色风衣\n代号：Lobo')]);
+  const got = names(result);
+  for (const bad of ['冷酷', '38', '黑色风衣', '性格', '年龄', '服饰']) {
+    assert.equal(got.includes(bad), false, `「${bad}」不是角色（实际：${got.join('、')}）`);
+  }
+  assert.ok(got.includes('Lobo'), '同一份里身份字段的值仍要捞回来');
 });
 
 await check('角色小标题 `【裴玉】` / `[裴玉]` / `### 裴玉` 是最直白的信号', () => {
@@ -240,6 +265,8 @@ console.log('T-437 装配层：只扫已勾选 · 零调用 · 不自动设主�
 /** 最小环境：两本书 + 一个"当前生成者" */
 function makeEnv({ selection = {}, books } = {}) {
   const reads = [];
+  /** 侧写存在角色卡扩展字段里（T-402）—— 给个内存实现，好断言"到底写进去了没有" */
+  const cells = {};
   const data = books ?? {
     书A: [
       { uid: 1, comment: '艾拉', text: '艾拉：她是宅子里最安静的那个。\n艾拉说：“别过来。”\n莉泽看着她。' },
@@ -262,6 +289,8 @@ function makeEnv({ selection = {}, books } = {}) {
     clearExtensionPrompt: () => true,
     getCharacterId: () => 0,
     getCharacterData: () => ({ name: '罗德里戈' }),
+    getCharacterField: (key) => cells[key] ?? null,
+    writeCharacterField: (key, value) => { cells[key] = JSON.parse(JSON.stringify(value)); },
     // 2026-09-14：模拟**当前角色卡的主世界书**（多人卡的角色就写在这种书里）
     getLorebookSources: () => [{ type: 'character-primary', label: '角色主世界书', names: Object.keys(data) }],
     loadWorldInfoBook: async (name) => {
@@ -390,6 +419,25 @@ await check('「重新识别」= force：指纹没变也照重算（不能把旧
   assert.deepEqual(forced.detected.map((item) => item.name), first.detected.map((item) => item.name));
 });
 
+await check('T-438②：忽略过的名字不再展示，恢复后回来；主角名忽略无效', async () => {
+  const env = makeEnv({ selection: { [entryKey('书A', '1')]: true } });
+  await env.api.cast.scanWorld();
+  const namesOf = () => env.api.ui.read().cast.world.current.detected.map((item) => item.name);
+  assert.ok(namesOf().includes('莉泽'), '先确认它在候选里');
+
+  env.api.cast.ignoreWorldCast('莉泽');
+  assert.deepEqual(env.api.cast.blocklist(), ['莉泽'], '进了黑名单');
+  assert.equal(namesOf().includes('莉泽'), false, '忽略后不再展示');
+
+  // 主角 / 当前生成者永不被忽略（这里当前生成者是 罗德里戈）
+  env.api.cast.ignoreWorldCast('罗德里戈');
+  assert.deepEqual(env.api.cast.blocklist(), ['莉泽'], '已知名单不能被忽略');
+
+  env.api.cast.unignoreWorldCast('莉泽');
+  assert.deepEqual(env.api.cast.blocklist(), [], '恢复后黑名单清空');
+  assert.ok(namesOf().includes('莉泽'), '恢复后候选里又有了（不用重扫，缓存没动）');
+});
+
 await check('一条世界书都没勾选时：不报错、扫 0 条', async () => {
   const env = makeEnv({ selection: {} });
   const result = await env.api.cast.scanWorld();
@@ -397,6 +445,106 @@ await check('一条世界书都没勾选时：不报错、扫 0 条', async () =
   assert.equal(result.scannedCount, 0);
   assert.deepEqual(result.detected, []);
   assert.deepEqual(env.reads, [], '没勾选就别去读书');
+});
+
+console.log('T-438③/④ 侧写搭车（零额外调用）+ 手填 NPC 进 knownCast');
+
+/** 造一份"侧写 + cast"的模型返回（cast 直接塞进同一份 JSON） */
+function profileReply(cast) {
+  return {
+    ok: true,
+    json: async () => ({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            coreDesire: '被需要', fear: '被抛弃', speech: '平缓', attitudeToUser: '温柔',
+            conflictStyle: '不动声色', proactivity: '会主动靠近', intimacy: '黏人', taboo: '绝不伤人',
+            cast,
+          }),
+        },
+      }],
+    }),
+  };
+}
+
+/** 侧写要真的写进去就得 L2（L1 是"待确认"档，先进队列） */
+const AUTOMATION_L2 = {
+  outline: 'L1', stageRegen: 'L1', profile: 'L2',
+  stanceJudge: 'L2', checkpointJudge: 'L2', consistency: 'L2',
+};
+
+function makeProfileEnv() {
+  const env = makeEnv({ selection: { [entryKey('书A', '1')]: true } });
+  env.store.saveSettings({ connection: { endpoint: 'https://x/v1', model: 'm', apiKey: 'k' }, automation: AUTOMATION_L2 });
+  return env;
+}
+
+await acheck('T-438③：侧写那次调用顺带拿回 cast —— **调用次数只 +1**', async () => {
+  const originalFetch = globalThis.fetch;
+  const bodies = [];
+  globalThis.fetch = async (_url, init) => {
+    bodies.push(String(init?.body ?? ''));
+    return profileReply([
+      { name: '裴玉', aliases: ['Lobo'], confidence: 0.9, evidence: '代号：Lobo' },
+      { name: '艾拉', confidence: 0.3, evidence: '只提了一句' },
+    ]);
+  };
+  try {
+    const env = makeProfileEnv();
+    const before = env.store.get().cost?.callCount ?? 0;
+    const result = await env.api.profileApi.regenerate();
+
+    assert.equal(result.ok, true, '侧写要生成成功');
+    assert.equal(bodies.length, 1, 'cast 是顺带的 —— 不许出现第二次请求');
+    assert.equal((env.store.get().cost?.callCount ?? 0) - before, 1, '累计调用次数只 +1');
+
+    const ai = env.api.ui.read().cast.ai;
+    assert.equal(ai.list.length, 2, '两侧候选都进了界面快照');
+    assert.deepEqual(ai.list[0], { name: '裴玉', aliases: ['Lobo'], confidence: 0.9, evidence: '代号：Lobo' },
+      '主名 + 别名 + 置信度 + 证据 都要留住（别名是花名问题的解法）');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+await acheck('T-438③：cast 缺失 / 解析失败**不连坐侧写**（G5 降级）', async () => {
+  const originalFetch = globalThis.fetch;
+  for (const bad of [undefined, '不是数组', null, [{ v: 1 }, '艾拉']]) {
+    globalThis.fetch = async () => profileReply(bad);
+    try {
+      const env = makeProfileEnv();
+      const result = await env.api.profileApi.regenerate();
+      assert.equal(result.ok, true, `cast=${JSON.stringify(bad)} 时侧写仍要成功`);
+      const written = env.api.profileApi.read().fields;
+      assert.ok(String(written.coreDesire ?? '').trim() || String(written.fear ?? '').trim(),
+        '侧写字段照常写入');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+});
+
+await acheck('T-438④：手填的 NPC 进 {{knownCast}}，且没生成侧写时就已进主角名单', async () => {
+  const originalFetch = globalThis.fetch;
+  const bodies = [];
+  globalThis.fetch = async (_url, init) => {
+    bodies.push(String(init?.body ?? ''));
+    return profileReply([{ name: '酒馆老板', aliases: [], confidence: 0.5, evidence: '' }]);
+  };
+  try {
+    const env = makeProfileEnv();
+    env.api.cast.add('酒馆老板');
+    // 零回归：还没生成侧写，手填的名字就已经直接进主角名单了
+    assert.deepEqual(env.store.getSettings().protagonists, [{ id: '', name: '酒馆老板', manual: true }]);
+
+    await env.api.profileApi.regenerate();
+    assert.ok(bodies[0].includes('用户另外指定了这些角色'), '提示词那段要在请求里');
+    assert.ok(bodies[0].includes('酒馆老板'), '手填的名字要喂进 {{knownCast}}');
+    assert.ok(env.api.ui.read().cast.ai.list.some((item) => item.name === '酒馆老板'),
+      '手填的名字要能出现在返回的 cast 里（标「手填」）');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 console.log(`\n通过 ${passed} 项`);

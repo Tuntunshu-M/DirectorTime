@@ -107,11 +107,10 @@ function fakeState(patch = {}) {
         { index: 2, label: '结局偏好', enabled: true, selected: false },
       ],
     },
-    // T-436：list 现在是 [{id,name}]；candidates = 酒馆里的角色卡（自动识别出来的候选）
+    // T-438⑤：candidates（酒馆角色卡列表）已随「酒馆里的角色」那一节一起删除
   cast: {
     list: [{ id: '1', name: '罗德里戈' }, { id: '', name: '酒馆老板', manual: true }],
     current: '罗德里戈',
-    candidates: [{ id: '0', name: '洛佩兹' }, { id: '1', name: '罗德里戈' }],
     // T-437：当前已勾选世界书条目里识别出来的角色（本地零调用，等用户勾选）
     // 2026-09-14：按来源分档 —— current = 当前角色卡的书，other = 全局书等
     world: {
@@ -142,6 +141,16 @@ function fakeState(patch = {}) {
       ],
       },
       other: { stale: false, scannedOnce: false, scannedCount: 0, selectedCount: 18, detected: [] },
+      // T-438 §2：忽略名单（有它才会渲染「已忽略的名字」那个折叠）
+      blocklist: ['路人甲'],
+    },
+    // T-438 §3：侧写那次调用顺带返回的候选（零额外调用）
+    ai: {
+      at: 1,
+      list: [
+        { name: '罗德里戈', aliases: ['Lobo'], confidence: 0.9, evidence: '代号：Lobo，小裴董' },
+        { name: '洛佩兹', aliases: [], confidence: 0.4, evidence: '只提了一句' },
+      ],
     },
   },
     profile: {
@@ -260,7 +269,7 @@ check('空状态全渲染一遍不抛异常', () => {
     foreshadows: [],
     speculationStatus: { enabled: true, hits: 0, misses: 0, total: 0, rate: 0 },
     presets: { list: [], status: {}, entries: [] },
-    cast: { list: [], current: '', candidates: [] },
+    cast: { list: [], current: '' },
     profile: { fields: {}, locked: {} },
     tone: { daily: 0, crisis: 0, intimate: 0 },
     world: { sources: [], selection: {} },
@@ -1008,35 +1017,28 @@ check('底部：条数/token 走核心统计（含"还没读过"的说明）', (
 
 console.log('T-436 · 人物页：多人卡自选');
 
-check('主角区：自动识别的角色卡可勾选 + 手填 NPC + 手填的能移除', () => {
+check('T-438⑤：「酒馆里的角色（自动识别）」那一节彻底移除，手填入口保留', () => {
   const { html } = renderPanel(fakeState(), { view: 'cast' });
-  assert.ok(html.includes('data-act="cast.toggle"'), '角色卡要能勾选');
-  assert.ok(html.includes('data-name="罗德里戈"') && html.includes('data-id="1"'), '勾选要带上 id + 名字');
-  assert.ok(/data-act="cast\.toggle"[^>]*checked/.test(html), '已在名单里的要默认勾上');
-  assert.ok(html.includes('data-act="cast.add"'), '要有手填入口（输入框 + 添加按钮共用这一个动作）');
-  assert.ok(html.includes('placeholder="NPC 名字'), '输入框要提示填 NPC 名字');
+  assert.equal(html.includes('酒馆里的角色'), false, '那一节必须消失（HTML 里搜不到这句文案）');
+  assert.equal(html.includes('data-act="cast.toggle"'), false, '角色卡勾选控件也该没了');
+  assert.equal(html.includes('data-key="cast.cards"'), false, '那一节是删掉，不是折叠起来');
+
+  assert.ok(html.includes('data-act="cast.add"'), '手填入口要保留（用户明确要）');
+  assert.ok(html.includes('placeholder="NPC 名字'), '输入框提示保留');
   assert.ok(html.includes('data-act="cast.remove"'), '手填的要能移除');
   assert.ok(html.includes('酒馆老板'), '手填进来的 NPC 要列出来');
+  // 2026-09-15 实机反馈：手填区原来渲染了**两遍**一模一样的输入框 —— 现在只许一份（输入框 + 按钮各一次）
+  assert.equal((html.match(/data-act="cast\.add"/g) ?? []).length, 2, '手填区不许重复渲染');
 });
 
 check('当前生成者没勾 → 明确提醒"注入会被清空"', () => {
   const unchecked = renderPanel(fakeState({
-    cast: { list: [{ id: '', name: '酒馆老板', manual: true }], current: '罗德里戈', candidates: [{ id: '1', name: '罗德里戈' }] },
+    cast: { list: [{ id: '', name: '酒馆老板', manual: true }], current: '罗德里戈' },
   }), { view: 'cast' }).html;
   assert.ok(unchecked.includes('当前生成者不在名单里'), '要提醒');
 
   const checked = renderPanel(fakeState(), { view: 'cast' }).html;
   assert.equal(checked.includes('当前生成者不在名单里'), false, '勾上了就别吓唬人');
-});
-
-await acheck('勾选 / 取消勾选 → 走 api.cast.toggle（带上 id 与名字）', async () => {
-  const { actions } = renderPanel(fakeState(), { view: 'cast' });
-  const calls = [];
-  const api = { cast: { toggle: (entry) => { calls.push(entry); return []; } } };
-  await actions['cast.toggle']({ ...fakeElement('cast.toggle'), dataset: { act: 'cast.toggle', id: '1', name: '罗德里戈' }, checked: false }, {
-    ctx: fakeCtx(), api, state: fakeState(),
-  });
-  assert.deepEqual(calls[0], { id: '1', name: '罗德里戈' });
 });
 
 await acheck('手填 NPC：点「添加」读输入框；输入框回车用自己的值；空值不提交', async () => {
@@ -1058,22 +1060,11 @@ await acheck('手填 NPC：点「添加」读输入框；输入框回车用自�
   assert.equal(added.length, 2, '空值不该提交');
 });
 
-check('T-436 角色卡那一节默认折叠（几百张卡也不铺屏），summary 带张数与已选数', () => {
-  const { html } = renderPanel(fakeState(), { view: 'cast' });
-  const tag = (html.match(/<details[^>]*data-key="cast\.cards"[^>]*>/) ?? [])[0];
-  assert.ok(tag, '「酒馆里的角色」要是个带 data-key 的折叠块');
-  assert.equal(/\sopen(\s|>)/.test(tag), false, '默认必须收起');
-  assert.ok(html.includes('酒馆里的角色（自动识别） · 2 张 · 已选 1'), '折起来也要看得出有几张、勾了几张');
-  // 折着也要能勾（markup 仍在，输入框/移除也还在）
-  assert.ok(html.includes('data-act="cast.toggle"'), '折起来不等于删掉');
-  assert.ok(html.includes('data-act="cast.add"'));
-});
-
 console.log('T-437 · 人物页：世界书里的角色（候选，等用户勾选）');
 
-check('世界书候选区：计数行 + 已添加/候选分组 + 勾选框 + 出处', () => {
+check('候选区：计数行 + 已添加/候选分组 + 勾选框 + 来源标签 + 出处', () => {
   const { html } = renderPanel(fakeState(), { view: 'cast' });
-  assert.ok(html.includes('世界书里提到的角色'), '要有这一节');
+  assert.ok(html.includes('候选角色（本地识别 + 侧写搭车，都不额外花钱）'), '要有这一节');
   assert.ok(html.includes('扫了 12 条 / 共勾选 18 条'), '要显示"扫了 X 条 / 共勾选 Y 条"');
   assert.ok(html.includes('3 条读不到内容'), '拿不到内容的条目要如实说');
   assert.ok(html.includes('data-act="cast.rescan"'), '要有「重新识别」');
@@ -1083,6 +1074,21 @@ check('世界书候选区：计数行 + 已添加/候选分组 + 勾选框 + 出
   assert.ok(html.includes('出现 9 次 · 出自 1 条') && html.includes('出现 4 次 · 出自 2 条'), '次数与出处要写出来');
   assert.ok(html.includes('data-act="cast.worldEntry"'), '条目名要能点（跳到世界书那一本）');
   assert.ok(html.includes('已添加（1）') && html.includes('候选（2）'), '已添加与候选分开列');
+  // T-438 §3-④：来源标签要标出来（本地·当前卡 / 本地·其它书）
+  assert.ok(html.includes('<span class="dt-chip">本地·当前卡</span>'), '本地来源要标注');
+  assert.ok(html.includes('不额外花钱'), '要告诉用户"生成侧写能让识别更准，且不额外花钱"');
+});
+
+check('T-438③：侧写搭车回来的候选进候选区（标 AI + 别名 + 证据 + 低置信度折叠）', () => {
+  const { html } = renderPanel(fakeState(), { view: 'cast' });
+  assert.ok(html.includes('<span class="dt-chip">AI</span>'), '要标 AI 来源');
+  assert.ok(html.includes('别名：Lobo'), '别名要显示出来（花名问题靠它）');
+  assert.ok(html.includes('证据：代号：Lobo，小裴董'), '证据（原文摘录）要显示出来');
+  assert.ok(html.includes('低置信度（AI 拿不准的 1）'), 'confidence < 0.65 的行要进折叠、不占主候选');
+  assert.equal((html.match(/data-act="cast\.worldToggle" data-name="洛佩兹"/g) ?? []).length, 1,
+    '低置信度的候选行只出现一次（不占主候选位）');
+  // 名字 + 别名去重：AI 的「罗德里戈（别名 Lobo）」与本地那行合成一行
+  assert.equal((html.match(/data-name="罗德里戈"/g) ?? []).length, 1, '别名归并后只留一行');
 });
 
 check('世界书识别出来的角色不再出现在「自选（手填）」那一列（同名只出现一次）', () => {
@@ -1090,7 +1096,6 @@ check('世界书识别出来的角色不再出现在「自选（手填）」那�
     cast: {
       list: [{ id: '', name: '莉泽' }],
       current: '',
-      candidates: [],
       world: {
         current: {
           stale: false, scannedOnce: true, scannedCount: 1, selectedCount: 1, unreadable: 0, total: 1, truncated: false,
@@ -1107,12 +1112,12 @@ check('世界书识别出来的角色不再出现在「自选（手填）」那�
 
 check('没勾选任何世界书条目 / 还没扫过时如实说明，不报错', () => {
   const nothing = renderPanel(fakeState({
-    cast: { list: [], current: '', candidates: [], world: { current: { stale: false, selectedCount: 0, scannedCount: 0, detected: [] }, other: { stale: false, selectedCount: 0, detected: [] } } },
+    cast: { list: [], current: '', world: { current: { stale: false, selectedCount: 0, scannedCount: 0, detected: [] }, other: { stale: false, selectedCount: 0, detected: [] } } },
   }), { view: 'cast' }).html;
   assert.ok(nothing.includes('还没有勾选世界书条目'), '要告诉用户去勾世界书');
 
   const stale = renderPanel(fakeState({
-    cast: { list: [], current: '', candidates: [], world: { current: { stale: true, scannedOnce: false, selectedCount: 4, scannedCount: 0, detected: [] }, other: { stale: false, selectedCount: 4, detected: [] } } },
+    cast: { list: [], current: '', world: { current: { stale: true, scannedOnce: false, selectedCount: 4, scannedCount: 0, detected: [] }, other: { stale: false, selectedCount: 4, detected: [] } } },
   }), { view: 'cast' }).html;
   assert.ok(stale.includes('正在识别'), '过期时别显示假的旧数字');
 });
@@ -1134,6 +1139,58 @@ await acheck('勾选候选 → api.cast.toggleWorld（只传名字）；「重�
 
   await actions['cast.rescan'](fakeElement('cast.rescan'), { ctx: fakeCtx(), api, state: fakeState() });
   assert.equal(scanned, 1, '「重新识别」要真去重扫一遍');
+});
+
+console.log('T-438② · 候选「忽略」');
+
+check('T-438④：手填的名字带「手填」标签，且低置信度也留在主候选（用户点名的优先）', () => {
+  const { html } = renderPanel(fakeState({
+    cast: {
+      list: [{ id: '', name: '酒馆老板', manual: true }],
+      current: '',
+      world: {
+        current: { stale: false, scannedOnce: true, scannedCount: 1, selectedCount: 1, unreadable: 0, detected: [] },
+        other: { stale: false, scannedCount: 0, detected: [] },
+      },
+      ai: { at: 1, list: [{ name: '酒馆老板', aliases: [], confidence: 0.2, evidence: '资料里没写，用户点的名' }] },
+    },
+  }), { view: 'cast' });
+
+  assert.ok(/data-act="cast\.worldToggle" data-name="酒馆老板"/.test(html),
+    '手填的名字要留在候选里（模型说拿不准不算数）');
+  assert.equal(html.includes('低置信度'), false, '手填的豁免低置信度折叠');
+  assert.equal((html.match(/<span class="dt-chip">手填<\/span>/g) ?? []).length, 2,
+    '候选行 + 自选行各标一次「手填」');
+});
+
+check('候选行有「忽略」，已加入主角的行没有（主角永不被忽略）', () => {
+  const { html } = renderPanel(fakeState(), { view: 'cast' });
+  assert.ok(html.includes('data-act="cast.worldIgnore"'), '候选项要有「忽略」按钮');
+  assert.ok(/data-act="cast\.worldIgnore" data-name="莉泽"/.test(html), '未勾选的候选才给忽略按钮');
+  assert.equal(/data-act="cast\.worldIgnore" data-name="罗德里戈"/.test(html), false,
+    '已在名单里的（主角）不给忽略按钮');
+  assert.ok(html.includes('已忽略的名字（1）'), '要有「已忽略的名字」折叠');
+  assert.ok(html.includes('data-act="cast.worldUnignore"'), '已忽略的要能恢复');
+});
+
+await acheck('点忽略 → api.cast.ignoreWorldCast；点恢复 → api.cast.unignoreWorldCast', async () => {
+  const { actions } = renderPanel(fakeState(), { view: 'cast' });
+  const calls = [];
+  const api = {
+    cast: {
+      ignoreWorldCast: (name) => { calls.push(['ignore', name]); return [name]; },
+      unignoreWorldCast: (name) => { calls.push(['unignore', name]); return []; },
+    },
+  };
+  await actions['cast.worldIgnore'](
+    { ...fakeElement('cast.worldIgnore'), dataset: { act: 'cast.worldIgnore', name: '莉泽' } },
+    { ctx: fakeCtx(), api, state: fakeState() },
+  );
+  await actions['cast.worldUnignore'](
+    { ...fakeElement('cast.worldUnignore'), dataset: { act: 'cast.worldUnignore', name: '路人甲' } },
+    { ctx: fakeCtx(), api, state: fakeState() },
+  );
+  assert.deepEqual(calls, [['ignore', '莉泽'], ['unignore', '路人甲']]);
 });
 
 console.log('版本号一致性（防再次漂移）');

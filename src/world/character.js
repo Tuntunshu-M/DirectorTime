@@ -12,7 +12,7 @@
 // 字段名注意：侧写的主动程度叫 `proactivity`；`initiative` 是 T-417 每个阶段 char 的主动行为，别混。
 
 import { buildMessages } from '../llm/prompts.js';
-import { parseDirectorResponse } from '../llm/schemas.js';
+import { parseDirectorResponse, normalizeCastList } from '../llm/schemas.js';
 
 export const PROFILE_STORAGE_KEY = 'director_time';
 
@@ -107,7 +107,7 @@ export function createProfileService({ ctx, client, getConnection, now = Date.no
    *   persona：**user 的人设**（2026-09-14 反馈 #2）—— 不带的话模型不知道用户是"讨厌薄荷"的人，
    *   侧写与剧本都可能写出用户明确反感的东西。
    */
-  async function generate({ world = '', context = '', persona = '' } = {}) {
+  async function generate({ world = '', context = '', persona = '', knownCast = '' } = {}) {
     const card = ctx?.getCharacterData?.() ?? null;
     const charText = [card?.description, card?.personality].filter(Boolean).join('\n') || '（无角色卡）';
     const messages = buildMessages('GEN_PROFILE', {
@@ -115,6 +115,8 @@ export function createProfileService({ ctx, client, getConnection, now = Date.no
       world: world || '（未选世界书）',
       context: context || '（暂无对话）',
       userPersona: String(persona ?? '').trim(),
+      // T-438 §4：用户手填/已勾选的名字 —— 让模型把它们也抓进 cast
+      knownCast: String(knownCast ?? '').trim() || '（用户没有额外指定）',
     });
 
     let raw;
@@ -135,13 +137,22 @@ export function createProfileService({ ctx, client, getConnection, now = Date.no
     const fields = Object.fromEntries(
       PROFILE_FIELDS.map((key) => [key, String(data[key] ?? '').trim()])
     );
-    return { ok: true, fields, request: messages };
+    /**
+     * T-438 §3：顺带回来的候选角色 —— **同一次调用，零额外花费**。
+     * 解析失败（模型没给 cast / 给坏了）只影响这一段：`normalizeCastList` 永不抛，
+     * 拿不到就是空数组，**侧写照常写入**（G5：不连坐）。
+     */
+    const cast = normalizeCastList(data.cast);
+    if (!cast.length && data.cast !== undefined) {
+      console.warn('[导演时间] 侧写里的 cast 解析不出来（按空处理，侧写不受影响）。原值：', data.cast);
+    }
+    return { ok: true, fields, cast, request: messages };
   }
 
   /** 生成并写入；**locked 的字段保留旧值**，只重生成未锁定的 */
-  async function regenerate({ world = '', context = '', persona = '' } = {}) {
+  async function regenerate({ world = '', context = '', persona = '', knownCast = '' } = {}) {
     const current = read();
-    const result = await generate({ world, context, persona });
+    const result = await generate({ world, context, persona, knownCast });
     if (!result.ok) return result;
 
     const fields = { ...result.fields };
@@ -151,7 +162,12 @@ export function createProfileService({ ctx, client, getConnection, now = Date.no
       }
     }
 
-    return { ok: true, profile: save({ ...current, fields, source: 'ai' }), request: result.request };
+    return {
+      ok: true,
+      profile: save({ ...current, fields, source: 'ai' }),
+      cast: result.cast ?? [],
+      request: result.request,
+    };
   }
 
   /** 手改某字段 → 该字段置 locked */
