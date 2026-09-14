@@ -37,6 +37,8 @@ export function exportCopy({ state, settings, profile, now = Date.now } = {}) {
     stages: state?.stages ?? [],
     activeStageId: state?.activeStageId ?? null,
     tone: state?.tone ?? null,
+    // 剧情占比释义的用户改动（2026-09-14）：不带的话，副本搬过去释义会悄悄变回内置
+    toneHints: state?.toneHints ?? null,
     settings: pickSettings(settings),
     profile: profile ?? null,
   };
@@ -95,6 +97,8 @@ export function applyCopy(copy, { store, writeProfile } = {}) {
     stages,
     activeStageId: copy.activeStageId ?? stages[0]?.id ?? null,
     tone: copy.tone ?? draft.tone,
+    // 老副本没有 toneHints 字段 → 保留本机现有的（别把用户改过的释义清掉）
+    toneHints: copy.toneHints ?? draft.toneHints,
     // 换了一份副本 = 重新起一局：轮数与注入状态归零，连接配置与本机花费不动
     runtime: { ...draft.runtime, rounds: 0, promptRegistered: false, speculation: null, lastReviewAt: 0 },
   }), { label: '导入副本' });
