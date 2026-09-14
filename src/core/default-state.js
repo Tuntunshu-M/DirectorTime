@@ -84,6 +84,10 @@ export function createDefaultRuntime() {
     speculation: null,
     // 预测命中率（Debug 显示）
     speculationStats: { hits: 0, misses: 0 },
+    // T-437 世界书角色识别：候选缓存（会话级，不进副本导出）。
+    // 形状：{ at, selectionKey, scannedCount, selectedCount, unreadable, total, truncated, detected[] }
+    // 勾选一变 `selectionKey` 就对不上 → 下次打开人物页自动重扫（见 bootstrap.scanWorldCast）
+    worldCastCandidates: null,
   };
 }
 

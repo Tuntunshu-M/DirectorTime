@@ -18,13 +18,72 @@ export function render(state) {
   const values = state.profile?.fields ?? {};
   const locked = state.profile?.locked ?? {};
   const generated = state.profile?.generatedAtText ?? '';
-  const manual = list.filter((item) => item.manual || !item.id);
+
+  // ---------- T-437：当前已勾选世界书条目里识别出来的角色 ----------
+  const worldCast = state.cast?.world ?? {};
+  const detected = worldCast.detected ?? [];
+  const worldNames = new Set(detected.map((item) => String(item.name).toLowerCase()));
+  const inProtagonists = (name) => isProtagonist(list, { name });
+  // 已添加 / 候选分开列（规格 §3.2：已在名单里的不重复混在候选里）
+  const addedWorld = detected.filter((item) => inProtagonists(item.name));
+  const pendingWorld = detected.filter((item) => !inProtagonists(item.name));
+
+  // 手填项 = 没卡 id 且**不是**世界书识别出来的（否则会跟上面那节重复出现两次）
+  const manual = list.filter((item) => (item.manual || !item.id) && !worldNames.has(String(item.name).toLowerCase()));
   const currentChecked = Boolean(current) && isProtagonist(list, { name: current });
 
+  /** 扫描计数行：规格要求界面上直接显示"扫了 X 条 / 共勾选 Y 条"（别只打控制台） */
+  const worldCountText = () => {
+    if (!worldCast.selectedCount) {
+      return '还没有勾选世界书条目 —— 到「世界书」里勾几条，再点「重新识别」';
+    }
+    if (worldCast.stale) return '正在识别当前已勾选的条目…';
+    const parts = [`扫了 ${worldCast.scannedCount} 条 / 共勾选 ${worldCast.selectedCount} 条`];
+    if (worldCast.unreadable) parts.push(`（${worldCast.unreadable} 条读不到内容）`);
+    return parts.join('');
+  };
+
+  /** 一个候选：勾选框 + 出现次数/出处（展开能看是哪几条，点条目名跳到世界书那一本） */
+  const worldRow = (item) => `
+    <div class="dt-pipe-row">
+      <input class="chk" type="checkbox" data-act="cast.worldToggle" data-name="${esc(item.name)}" ${inProtagonists(item.name) ? 'checked' : ''}>
+      <span style="flex:1">${esc(item.name)}${sameName(item.name, current) ? ' <span class="dt-chip">当前生成者</span>' : ''}</span>
+      <details class="dt-fold" data-key="cast.world:${esc(item.name)}">
+        <summary>出现 ${Number(item.count ?? 0)} 次 · 出自 ${(item.sources ?? []).length} 条</summary>
+        <div class="dt-pipe">
+          ${(item.sources ?? []).map((source) => `<div class="dt-pipe-row">
+            <button class="dt-mini" type="button" data-act="cast.worldEntry" data-book="${esc(source.bookName ?? '')}" data-entry-key="${esc(source.entryKey ?? '')}" data-type="${esc(source.sourceType ?? '')}">${esc(source.entryName || source.bookName || '（未命名条目）')}</button>
+            <span class="dt-note" style="margin:0">${esc(source.bookName ?? '')}</span>
+          </div>`).join('')}
+        </div>
+      </details>
+    </div>`;
+
   /**
-   * 主角 / 攻略对象（T-412 多人卡 + T-436 自选）。
+   * T-437：世界书角色识别（**只扫已勾选条目 · 本地零调用 · 绝不自动设主角**）。
    *
-   * 两种来源并存：**自动识别**酒馆里的角色卡（勾选）+ **手填名字**（NPC，自选）。
+   * 与下面「酒馆里的角色」不是一回事：那一节读的是酒馆的角色卡列表（T-436），
+   * 这一节读的是**世界书条目的正文**里提到了谁（多人卡的角色描写都在世界书里）。
+   */
+  const worldBlock = `
+    <div class="dt-lbl">世界书里提到的角色（扫当前已勾选的条目）</div>
+    <div class="dt-note" style="margin-top:0">
+      只扫你在「世界书」里<b>勾选</b>的条目正文，<b>本地识别、不花 API</b>；
+      识别结果只是候选，<b>勾了才算主角</b>（不会自动帮你勾任何一个）。
+      <button class="dt-mini" type="button" data-act="cast.rescan">重新识别</button>
+    </div>
+    <div class="dt-note">${esc(worldCountText())}</div>
+    ${addedWorld.length ? `<div class="dt-lbl">已添加（${addedWorld.length}）</div>${addedWorld.map(worldRow).join('')}` : ''}
+    ${pendingWorld.length ? `<div class="dt-lbl">候选（${pendingWorld.length}）</div>${pendingWorld.map(worldRow).join('')}` : ''}
+    ${!addedWorld.length && !pendingWorld.length
+      ? '<div class="dt-note">这里还没有可选的 —— 没勾选世界书条目，或条目里没写人名。识别漏了的用下面的手填框补。</div>'
+      : ''}
+    ${worldCast.truncated ? `<div class="dt-note">还有 ${Math.max(0, Number(worldCast.total ?? 0) - detected.length)} 个出现次数较少的没列出来</div>` : ''}`;
+
+  /**
+   * 主角 / 攻略对象（T-412 多人卡 + T-436 自选 + T-437 世界书识别）。
+   *
+   * 三个来源并存：**世界书识别**（T-437）+ **酒馆角色卡**（T-436）+ **手填名字**（NPC）。
    * 勾了谁，导演就会把阶段写成"谁的戏"；没勾的角色拿不到注入（所以当前生成者没勾时要明确提醒）。
    */
   const leadBlock = `
@@ -36,7 +95,9 @@ export function render(state) {
         <b>没勾的角色不会拿到注入</b>；想攻略<b>没有角色卡的 NPC</b>，用下面的手填框加名字。
       </div>
 
-      <div class="dt-lbl">酒馆里的角色（自动识别）</div>
+      ${worldBlock}
+
+      <div class="dt-lbl">酒馆里的角色（自动识别，T-436）</div>
       ${candidates.length ? `<div class="dt-pipe">
         ${candidates.map((item) => `<div class="dt-pipe-row">
           <input class="chk" type="checkbox" data-act="cast.toggle" data-id="${esc(item.id)}" data-name="${esc(item.name)}" ${isProtagonist(list, item) ? 'checked' : ''}>
@@ -88,6 +149,47 @@ export function render(state) {
           ? `已把「${entry.name}」加进主角（导演会把戏写成 ta 的）`
           : `已把「${entry.name}」移出主角（ta 不会再拿到注入）`);
         ctx.refresh();
+      },
+      /** T-437：勾选 / 取消勾选一个**世界书里识别出来的**角色（只存名字） */
+      'cast.worldToggle': (el, { api, ctx }) => {
+        const name = String(el?.dataset?.name ?? '').trim();
+        if (!name) return;
+        const next = api.cast?.toggleWorld?.(name) ?? [];
+        ctx.flash('cast', isProtagonist(next, { name })
+          ? `已把「${name}」加进主角（导演会把戏写成 ta 的）`
+          : `已把「${name}」移出主角（ta 不会再拿到注入）`);
+        ctx.refresh();
+      },
+      /**
+       * T-437：「重新识别」= 重扫当前已勾选的世界书条目。
+       * **零调用**（只是本地读文本 + 正则），所以可以放心点。
+       * `force: true` —— 指纹没变也照扫（缓存是给"自动补扫"省事用的，手动点就得真重算）。
+       */
+      'cast.rescan': async (el, { api, ctx }) => {
+        ctx.busy('cast', '正在扫当前已勾选的世界书条目…');
+        const result = await api.scanWorldCast?.({ force: true });
+        ctx.flash('cast', result
+          ? `识别完成：扫了 ${result.scannedCount} 条 / 共勾选 ${result.selectedCount} 条${(result.detected ?? []).length ? `，识别到 ${result.detected.length} 个角色` : '，还没识别到角色（可以用下面的手填框）'}`
+          : '没扫到（世界书里可能一条都没勾选）');
+        ctx.refresh();
+      },
+      /** T-437：点出处里的条目名 → 跳到世界书弹层那一本（顺手按书名过滤，免得在几百本里翻） */
+      'cast.worldEntry': async (el, { api, ctx }) => {
+        const book = String(el?.dataset?.book ?? '').trim();
+        const type = String(el?.dataset?.type ?? '');
+        if (!book) return;
+        ctx.openKey?.(`book:${type}:${book}`);
+        ctx.setState?.({ keyword: book });
+        ctx.openLayer?.('world');
+        try {
+          // 没读过的书（T-434 懒加载）顺手读一下，不然跳过去只看到书名
+          await api.loadWorldBook?.(book);
+          const sources = await api.loadWorldSources?.(false) ?? [];
+          ctx.setState?.({ worldSources: sources });
+        } catch (error) {
+          console.warn('[导演时间] 跳转到世界书条目失败（世界书弹层里会显示读取结果）', error);
+        }
+        ctx.refresh?.();
       },
       'cast.add': (el, { api, ctx }) => {
         // 输入框与「添加」按钮共用这一个动作：点按钮时去读输入框，输入框回车/失焦时用它自己的值

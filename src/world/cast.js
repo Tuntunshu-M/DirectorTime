@@ -45,6 +45,21 @@ export function toggleProtagonist(list, entry) {
   return normalizeProtagonists([...items, { id: entry?.id ?? '', name: entry?.name ?? '' }]);
 }
 
+/**
+ * T-437：勾选 / 取消勾选一个**世界书里识别出来的**角色。
+ *
+ * 与 `toggleProtagonist`（角色卡）的区别只有一处：世界书里的角色**没有卡 id**，
+ * 所以按规格只存 `name`（`id` 为空串），不标 `manual`（那会跑到「自选（手填）」那一节里，变成两处重复）。
+ */
+export function toggleWorldProtagonist(list, name) {
+  const items = normalizeProtagonists(list);
+  const text = String(name ?? '').trim();
+  if (!text) return items;
+  const hit = (item) => item.name && item.name.toLowerCase() === text.toLowerCase();
+  if (items.some(hit)) return items.filter((item) => !hit(item));
+  return normalizeProtagonists([...items, { id: '', name: text }]);
+}
+
 /** 手填一个名字（自选 / NPC）：已存在就原样返回，不重复加 */
 export function addProtagonist(list, name) {
   const items = normalizeProtagonists(list);

@@ -112,6 +112,33 @@ function fakeState(patch = {}) {
     list: [{ id: '1', name: '罗德里戈' }, { id: '', name: '酒馆老板', manual: true }],
     current: '罗德里戈',
     candidates: [{ id: '0', name: '洛佩兹' }, { id: '1', name: '罗德里戈' }],
+    // T-437：当前已勾选世界书条目里识别出来的角色（本地零调用，等用户勾选）
+    world: {
+      stale: false,
+      scannedAt: 1,
+      scannedCount: 12,
+      selectedCount: 18,
+      unreadable: 3,
+      total: 4,
+      truncated: false,
+      detected: [
+        {
+          name: '罗德里戈', count: 9, known: true,
+          sources: [{ bookName: '洛佩兹家', entryName: '罗德里戈的性格', entryKey: '洛佩兹家::1', sourceType: 'character', sourceLabel: '角色卡内嵌' }],
+        },
+        {
+          name: '管家 · 莫兰', count: 4, known: false,
+          sources: [
+            { bookName: '洛佩兹家', entryName: '宅子里的规矩', entryKey: '洛佩兹家::3', sourceType: 'character', sourceLabel: '角色卡内嵌' },
+            { bookName: '老宅', entryName: '管家莫兰', entryKey: '老宅::2', sourceType: 'library', sourceLabel: '全部世界书' },
+          ],
+        },
+        {
+          name: '莉泽', count: 2, known: false,
+          sources: [{ bookName: '老宅', entryName: '夜里的访客', entryKey: '老宅::5', sourceType: 'library', sourceLabel: '全部世界书' }],
+        },
+      ],
+    },
   },
     profile: {
       fields: { coreDesire: '被需要', fear: '被抛弃' },
@@ -1025,6 +1052,70 @@ await acheck('手填 NPC：点「添加」读输入框；输入框回车用自�
   rootValue = '   ';
   await actions['cast.add']({ ...fakeElement('cast.add'), tagName: 'BUTTON' }, { ctx, api, state: fakeState() });
   assert.equal(added.length, 2, '空值不该提交');
+});
+
+console.log('T-437 · 人物页：世界书里的角色（候选，等用户勾选）');
+
+check('世界书候选区：计数行 + 已添加/候选分组 + 勾选框 + 出处', () => {
+  const { html } = renderPanel(fakeState(), { view: 'cast' });
+  assert.ok(html.includes('世界书里提到的角色'), '要有这一节');
+  assert.ok(html.includes('扫了 12 条 / 共勾选 18 条'), '要显示"扫了 X 条 / 共勾选 Y 条"');
+  assert.ok(html.includes('3 条读不到内容'), '拿不到内容的条目要如实说');
+  assert.ok(html.includes('data-act="cast.rescan"'), '要有「重新识别」');
+  assert.ok(html.includes('data-act="cast.worldToggle"'), '候选要能勾选');
+  assert.ok(/data-act="cast\.worldToggle" data-name="罗德里戈"[^>]*checked/.test(html), '已在名单里的默认勾上');
+  assert.ok(!/data-act="cast\.worldToggle" data-name="莉泽"[^>]*checked/.test(html), '没加入的绝不自动勾');
+  assert.ok(html.includes('出现 9 次 · 出自 1 条') && html.includes('出现 4 次 · 出自 2 条'), '次数与出处要写出来');
+  assert.ok(html.includes('data-act="cast.worldEntry"'), '条目名要能点（跳到世界书那一本）');
+  assert.ok(html.includes('已添加（1）') && html.includes('候选（2）'), '已添加与候选分开列');
+});
+
+check('世界书识别出来的角色不再出现在「自选（手填）」那一列（同名只出现一次）', () => {
+  const html = renderPanel(fakeState({
+    cast: {
+      list: [{ id: '', name: '莉泽' }],
+      current: '',
+      candidates: [],
+      world: {
+        stale: false, scannedCount: 1, selectedCount: 1, unreadable: 0, total: 1, truncated: false,
+        detected: [{ name: '莉泽', count: 3, known: false, sources: [{ bookName: '老宅', entryName: '夜里的访客', entryKey: '老宅::5', sourceType: 'library' }] }],
+      },
+    },
+  }), { view: 'cast' }).html;
+  assert.equal((html.match(/data-name="莉泽"/g) ?? []).length, 1, '同一名字只能出现一次');
+  assert.ok(html.includes('已添加（1）'), '它应该只在世界书那节的「已添加」里');
+  assert.equal(html.includes('data-act="cast.remove"'), false, '识别出来的不该再占一个手填位');
+});
+
+check('没勾选任何世界书条目 / 还没扫过时如实说明，不报错', () => {
+  const nothing = renderPanel(fakeState({
+    cast: { list: [], current: '', candidates: [], world: { stale: false, selectedCount: 0, scannedCount: 0, detected: [] } },
+  }), { view: 'cast' }).html;
+  assert.ok(nothing.includes('还没有勾选世界书条目'), '要告诉用户去勾世界书');
+
+  const stale = renderPanel(fakeState({
+    cast: { list: [], current: '', candidates: [], world: { stale: true, selectedCount: 4, scannedCount: 0, detected: [] } },
+  }), { view: 'cast' }).html;
+  assert.ok(stale.includes('正在识别'), '过期时别显示假的旧数字');
+});
+
+await acheck('勾选候选 → api.cast.toggleWorld（只传名字）；「重新识别」→ api.scanWorldCast', async () => {
+  const { actions } = renderPanel(fakeState(), { view: 'cast' });
+  const toggled = [];
+  let scanned = 0;
+  const api = {
+    cast: { toggleWorld: (name) => { toggled.push(name); return [{ id: '', name }]; } },
+    scanWorldCast: async () => { scanned += 1; return { scannedCount: 3, selectedCount: 4, detected: [{ name: '莉泽' }] }; },
+  };
+
+  await actions['cast.worldToggle'](
+    { ...fakeElement('cast.worldToggle'), dataset: { act: 'cast.worldToggle', name: '莉泽' } },
+    { ctx: fakeCtx(), api, state: fakeState() },
+  );
+  assert.deepEqual(toggled, ['莉泽'], '勾选候选要真的写进主角名单');
+
+  await actions['cast.rescan'](fakeElement('cast.rescan'), { ctx: fakeCtx(), api, state: fakeState() });
+  assert.equal(scanned, 1, '「重新识别」要真去重扫一遍');
 });
 
 console.log('版本号一致性（防再次漂移）');

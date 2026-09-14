@@ -31,7 +31,7 @@ const TABS = [
  * 与 `manifest.json` 的版本**保持一致**（同一份发布里跟着一起跳），
  * 这样"面板显示 0.10.0 / 更新提示 0.10.0"永远不会互相打脸 —— 一开始想只按界面改动跳，实际只会让人怀疑没更新成功。
  */
-export const UI_VERSION = '0.16.1';
+export const UI_VERSION = '0.17.0';
 
 const PALETTE_KEY = 'dt-palette';
 const LAYER_NAMES = { world: '世界书', prompt: '提示词', settings: '设置', debug: '调试面板' };
@@ -217,6 +217,9 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
     open: {},
     scroll: {},
     flash: {},
+    // T-437：人物页的"世界书角色识别"是否正在跑 / 已经试过哪个版本（防重复扫、防死循环）
+    castScanning: false,
+    castScanTried: '',
   };
 
   function readPalette() {
@@ -427,6 +430,34 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
     }
   }
 
+  /**
+   * T-437：打开人物页时自动扫一次当前**已勾选**的世界书条目（本地零调用，异步不卡界面）。
+   *
+   * 结果缓存在 state 里（`runtime.worldCastCandidates`）；勾选一变 bootstrap 那边就算「过期」，
+   * 所以这里只在 `stale` 时补扫一次 —— 扫完再重绘，用户看到的就是刷新的清单。
+   */
+  async function maybeScanCast() {
+    const api = getApi();
+    if (!api?.scanWorldCast) return;
+    if ((uiState.view ?? 'status') !== 'cast') return;
+    const snapshot = state?.cast?.world ?? null;
+    if (!snapshot?.stale) return;
+
+    // 防重入 + 防死循环：同一个版本只自动试一次（失败就等用户点「重新识别」）
+    const attempt = `${snapshot.selectionKey ?? ''}#${Number(snapshot.scannedAt ?? 0)}`;
+    if (uiState.castScanning || uiState.castScanTried === attempt) return;
+    uiState.castScanning = true;
+    uiState.castScanTried = attempt;
+    try {
+      await api.scanWorldCast();
+    } catch (error) {
+      console.warn('[导演时间] 人物页自动识别世界书角色失败（可点「重新识别」重试）', error);
+    } finally {
+      uiState.castScanning = false;
+    }
+    render();
+  }
+
   function render() {
     if (!card) return;
     const api = getApi();
@@ -477,6 +508,9 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
       }
     }
     // 全局提示位由 shell 模板提供（抬头下方，任何分类页都可见）——这里不再动态塞
+
+    // T-437：停在人物页时补扫一次世界书角色（异步，扫完自己会重绘）
+    if ((uiState.view ?? 'status') === 'cast') maybeScanCast();
   }
 
   /**

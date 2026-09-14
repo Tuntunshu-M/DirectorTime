@@ -23,6 +23,7 @@ import { findUserDirectives, findFinishedLines, describeIssues } from './directo
 import {
   normalizeProtagonists, protagonistText,
   toggleProtagonist, addProtagonist, removeProtagonist,
+  toggleWorldProtagonist,
 } from './world/cast.js';
 import { gate, setLevel, normalizeAutomation, FEATURES, LEVELS, FEATURE_LABELS, LEVEL_LABELS } from './core/automation.js';
 import { createReviewQueue } from './core/review-queue.js';
@@ -47,6 +48,7 @@ import { createCheckpointService } from './director/checkpoint.js';
 import { createReviewService } from './director/review.js';
 import { createPromptRegistry } from './inject/prompt-registry.js';
 import { createLorebookService } from './world/lorebook.js';
+import { extractWorldCast, WORLD_CAST_LIMIT } from './world/world-cast.js';
 import { createProfileService, profileText, PROFILE_FIELDS, PROFILE_FIELD_LABELS } from './world/character.js';
 import { buildDebugState } from './ui/debug.js';
 import { createMainPanel, UI_VERSION } from './ui/panel.js';
@@ -326,6 +328,89 @@ export function bootstrap({ ctx, store } = {}) {
     const picked = await lorebook.pickSelected(sources, selection);
     rememberWorldSizes(picked);
     return lorebook.buildText(picked, { limit: settings().worldLimit ?? 20 });
+  }
+
+  // ---------- T-437 世界书角色识别（只扫已勾选条目 · 本地零调用）----------
+  //
+  // 与 T-436 的区别：T-436 读的是**酒馆角色卡列表**，这里读的是**当前已勾选的世界书条目文本**。
+  // 两件事互不替代，界面上也是两节（规格 §0）。
+
+  /** 勾选快照用的指纹：勾选一变就对不上 → 缓存失效（自动重扫） */
+  function selectionSignature(selection = {}) {
+    return Object.keys(selection ?? {}).filter((key) => selection[key]).sort().join('|');
+  }
+
+  /** 主角 + 当前生成者：抽候选时"直接命中且排最前"的已知名单 */
+  function knownCastNames() {
+    const names = normalizeProtagonists(settings().protagonists).map((item) => item.name).filter(Boolean);
+    const current = String(ctx.getCharacterData?.()?.name ?? '').trim();
+    if (current) names.push(current);
+    return [...new Set(names)];
+  }
+
+  /**
+   * 扫当前**已勾选**的世界书条目，本地抽出里面提到的角色，缓存进 `runtime.worldCastCandidates`。
+   *
+   * 三条硬要求（规格 §2/§3/§7）：
+   *   · 只扫已勾选条目（未勾的、其它书、角色卡正文一律不扫）
+   *   · **零 API 调用** —— 只读世界书文本 + 本地正则，绝不碰 client
+   *   · **不自动设主角** —— 结果只进候选清单，`settings.protagonists` 一个字都不动
+   * @param {{force?: boolean}} options force=true = 界面点「重新识别」
+   */
+  async function scanWorldCast({ force = false } = {}) {
+    const selection = store.get().worldSelection ?? {};
+    const selectedCount = Object.keys(selection).filter((key) => selection[key]).length;
+    const signature = selectionSignature(selection);
+    const cached = store.get().runtime?.worldCastCandidates ?? null;
+    // 没勾选就没有可扫的（也避免"空勾选 → 反复重扫"）
+    if (!force && cached && cached.selectionKey === signature) return cached;
+
+    const sources = await collectWorldSources();
+    let picked = [];
+    try {
+      // pickSelected 只读"有勾选的"那些书（T-434 懒加载），未勾的一本都不读
+      picked = await lorebook.pickSelected(sources, selection);
+    } catch (error) {
+      console.warn('[导演时间] 世界书条目读取失败，本轮候选按空处理', error);
+    }
+    rememberWorldSizes(picked);
+
+    const extracted = extractWorldCast(picked, { known: knownCastNames(), limit: WORLD_CAST_LIMIT });
+    const result = {
+      at: Date.now(),
+      selectionKey: signature,
+      scannedCount: picked.length,
+      selectedCount,
+      // 拿不到内容的条目（书读取失败等）如实报出来，别假装都扫到了
+      unreadable: Math.max(0, selectedCount - picked.length),
+      total: extracted.total,
+      truncated: extracted.truncated,
+      detected: extracted.detected,
+    };
+    store.update(
+      (draft) => ({ ...draft, runtime: { ...draft.runtime, worldCastCandidates: result } }),
+      { track: false },
+    );
+    return result;
+  }
+
+  /** 界面用的候选快照（含"缓存是否过期"）—— 纯读，不触发扫描 */
+  function worldCastSnapshot() {
+    const selection = store.get().worldSelection ?? {};
+    const selectedCount = Object.keys(selection).filter((key) => selection[key]).length;
+    const signature = selectionSignature(selection);
+    const cache = store.get().runtime?.worldCastCandidates ?? null;
+    return {
+      // stale=true → 还没扫过 / 勾选变过了，人物页会自动补扫一次
+      stale: !cache || cache.selectionKey !== signature,
+      scannedAt: cache?.at ?? 0,
+      scannedCount: cache?.scannedCount ?? 0,
+      selectedCount,
+      unreadable: cache?.unreadable ?? 0,
+      total: cache?.total ?? 0,
+      truncated: Boolean(cache?.truncated),
+      detected: cache?.detected ?? [],
+    };
   }
 
   /**
@@ -968,7 +1053,13 @@ export function bootstrap({ ctx, store } = {}) {
     add: (name) => saveCast(addProtagonist(settings().protagonists, name)),
     /** 从名单里移除（id 或名字对上就删） */
     remove: (ref) => saveCast(removeProtagonist(settings().protagonists, ref)),
-    };
+    /** T-437：勾选 / 取消勾选一个**世界书里识别出来的**角色（只存名字，没有卡 id） */
+    toggleWorld: (name) => saveCast(toggleWorldProtagonist(settings().protagonists, name)),
+    /** T-437：扫当前已勾选的世界书条目（本地零调用） */
+    scanWorld: (options) => scanWorldCast(options),
+    /** T-437：候选快照（读缓存，不触发扫描） */
+    worldSnapshot: () => worldCastSnapshot(),
+  };
   const breakFilterApi = {
     get: () => normalizeBreakFilter(settings().breakFilter),
     set: (next) => {
@@ -1142,6 +1233,8 @@ export function bootstrap({ ctx, store } = {}) {
           current: ctx.getCharacterData?.()?.name ?? '',
           // T-436：酒馆里的角色卡（界面上勾选"要攻略谁"；手填 NPC 走输入框）
           candidates: castApi.candidates(),
+          // T-437：当前已勾选世界书条目里识别出来的角色（只展示，等用户勾选）
+          world: worldCastSnapshot(),
         },
         profile,
         profileFields: PROFILE_FIELDS.map((key) => ({ key, label: PROFILE_FIELD_LABELS[key] ?? key })),
@@ -1212,6 +1305,8 @@ export function bootstrap({ ctx, store } = {}) {
       );
       return store.get().worldSelection;
     },
+    /** T-437：重新识别（人物页「重新识别」按钮 = 重扫当前已勾选条目，零调用） */
+    scanWorldCast: (options) => scanWorldCast(options),
     onTest: () => client.testConnection(settings().connection ?? {}),
     onGenerate: () => regenerateScript(),
     onExtend: () => topUpStages({ force: true }),
@@ -1249,6 +1344,8 @@ export function bootstrap({ ctx, store } = {}) {
     loadWorldSources: (force) => uiApi.loadWorldSources(force),
     loadWorldBook: (name) => uiApi.loadWorldBook(name),
     saveWorldSelection: (selection) => uiApi.saveWorldSelection(selection),
+    // T-437：人物页「重新识别」= 重扫当前已勾选的世界书条目（零调用）
+    scanWorldCast: (options) => uiApi.scanWorldCast(options),
     // 批复 §二-1/§二-2：档位与词库（界面走这两个）
     setAutomation: (feature, level) => uiApi.setAutomation(feature, level),
     saveRules: (key, text) => uiApi.saveRules(key, text),
