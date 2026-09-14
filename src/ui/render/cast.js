@@ -37,6 +37,8 @@ export function render(state) {
   ));
   const manual = list.filter((item) => (item.manual || !item.id) && !worldDetectedNames.has(String(item.name).toLowerCase()));
   const currentChecked = Boolean(current) && isProtagonist(list, { name: current });
+  /** 角色卡那一节折叠时也要看得出"勾了几张" */
+  const checkedCount = candidates.filter((item) => isProtagonist(list, item)).length;
 
   /** 扫描计数行：规格要求界面上直接显示"扫了 X 条 / 共勾选 Y 条"（别只打控制台） */
   const groupCountText = (group = {}) => {
@@ -124,15 +126,30 @@ export function render(state) {
 
       ${worldBlock}
 
-      <div class="dt-lbl">酒馆里的角色（自动识别，T-436）</div>
-      ${candidates.length ? `<div class="dt-pipe">
-        ${candidates.map((item) => `<div class="dt-pipe-row">
-          <input class="chk" type="checkbox" data-act="cast.toggle" data-id="${esc(item.id)}" data-name="${esc(item.name)}" ${isProtagonist(list, item) ? 'checked' : ''}>
-          <span>${esc(item.name)}${sameName(item.name, current) ? ' <span class="dt-chip">当前生成者</span>' : ''}</span>
-        </div>`).join('')}
-      </div>` : '<div class="dt-note">读不到酒馆角色列表（单卡环境 / 还没加载）</div>'}
+      <details class="dt-fold" data-key="cast.cards">
+        <summary>酒馆里的角色（自动识别） · ${candidates.length} 张${checkedCount ? ` · 已选 ${checkedCount}` : ''}</summary>
+        <div class="dt-note" style="margin-top:0">
+          从酒馆的角色卡列表读出来的（T-436，单卡环境用）；<b>勾了才算主角</b>。
+        </div>
+        ${candidates.length ? `<div class="dt-pipe">
+          ${candidates.map((item) => `<div class="dt-pipe-row">
+            <input class="chk" type="checkbox" data-act="cast.toggle" data-id="${esc(item.id)}" data-name="${esc(item.name)}" ${isProtagonist(list, item) ? 'checked' : ''}>
+            <span>${esc(item.name)}${sameName(item.name, current) ? ' <span class="dt-chip">当前生成者</span>' : ''}</span>
+          </div>`).join('')}
+        </div>` : '<div class="dt-note">读不到酒馆角色列表（单卡环境 / 还没加载）</div>'}
+      </details>
 
       <div class="dt-lbl">自选（手填名字，例：想攻略的 NPC）</div>
+      <div style="display:flex;gap:6px">
+        <input type="text" data-act="cast.add" placeholder="NPC 名字，回车或点「添加」">
+        <button class="dt-mini" type="button" data-act="cast.add">添加</button>
+      </div>
+      ${manual.length ? `<div class="dt-pipe" style="margin-top:6px">
+        ${manual.map((item) => `<div class="dt-pipe-row">
+          <span style="flex:1">${esc(item.name || item.id)}${sameName(item.name, current) ? ' <span class="dt-chip">当前生成者</span>' : ''}</span>
+          <button class="dt-mini" type="button" data-act="cast.remove" data-id="${esc(item.id)}" data-name="${esc(item.name)}">移除</button>
+        </div>`).join('')}
+      </div>` : ''}
       <div style="display:flex;gap:6px">
         <input type="text" data-act="cast.add" placeholder="NPC 名字，回车或点「添加」">
         <button class="dt-mini" type="button" data-act="cast.add">添加</button>

@@ -1058,6 +1058,17 @@ await acheck('手填 NPC：点「添加」读输入框；输入框回车用自�
   assert.equal(added.length, 2, '空值不该提交');
 });
 
+check('T-436 角色卡那一节默认折叠（几百张卡也不铺屏），summary 带张数与已选数', () => {
+  const { html } = renderPanel(fakeState(), { view: 'cast' });
+  const tag = (html.match(/<details[^>]*data-key="cast\.cards"[^>]*>/) ?? [])[0];
+  assert.ok(tag, '「酒馆里的角色」要是个带 data-key 的折叠块');
+  assert.equal(/\sopen(\s|>)/.test(tag), false, '默认必须收起');
+  assert.ok(html.includes('酒馆里的角色（自动识别） · 2 张 · 已选 1'), '折起来也要看得出有几张、勾了几张');
+  // 折着也要能勾（markup 仍在，输入框/移除也还在）
+  assert.ok(html.includes('data-act="cast.toggle"'), '折起来不等于删掉');
+  assert.ok(html.includes('data-act="cast.add"'));
+});
+
 console.log('T-437 · 人物页：世界书里的角色（候选，等用户勾选）');
 
 check('世界书候选区：计数行 + 已添加/候选分组 + 勾选框 + 出处', () => {
