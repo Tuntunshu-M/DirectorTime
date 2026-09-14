@@ -107,7 +107,12 @@ function fakeState(patch = {}) {
         { index: 2, label: '结局偏好', enabled: true, selected: false },
       ],
     },
-    cast: { list: ['罗德里戈', '艾拉'], current: '罗德里戈' },
+    // T-436：list 现在是 [{id,name}]；candidates = 酒馆里的角色卡（自动识别出来的候选）
+  cast: {
+    list: [{ id: '1', name: '罗德里戈' }, { id: '', name: '酒馆老板', manual: true }],
+    current: '罗德里戈',
+    candidates: [{ id: '0', name: '洛佩兹' }, { id: '1', name: '罗德里戈' }],
+  },
     profile: {
       fields: { coreDesire: '被需要', fear: '被抛弃' },
       locked: { coreDesire: true },
@@ -224,7 +229,7 @@ check('空状态全渲染一遍不抛异常', () => {
     foreshadows: [],
     speculationStatus: { enabled: true, hits: 0, misses: 0, total: 0, rate: 0 },
     presets: { list: [], status: {}, entries: [] },
-    cast: { list: [], current: '' },
+    cast: { list: [], current: '', candidates: [] },
     profile: { fields: {}, locked: {} },
     tone: { daily: 0, crisis: 0, intimate: 0 },
     world: { sources: [], selection: {} },
@@ -956,6 +961,58 @@ check('底部：条数/token 走核心统计（含"还没读过"的说明）', (
     world: { sources: [], selection: {}, stats: { count: 3, tokens: 100, unknown: 0, approx: false } },
   }), { layer: 'world', worldSources }).html;
   assert.equal(exact.includes('还没读过'), false, '都读过了就别提');
+});
+
+console.log('T-436 · 人物页：多人卡自选');
+
+check('主角区：自动识别的角色卡可勾选 + 手填 NPC + 手填的能移除', () => {
+  const { html } = renderPanel(fakeState(), { view: 'cast' });
+  assert.ok(html.includes('data-act="cast.toggle"'), '角色卡要能勾选');
+  assert.ok(html.includes('data-name="罗德里戈"') && html.includes('data-id="1"'), '勾选要带上 id + 名字');
+  assert.ok(/data-act="cast\.toggle"[^>]*checked/.test(html), '已在名单里的要默认勾上');
+  assert.ok(html.includes('data-act="cast.add"'), '要有手填入口（输入框 + 添加按钮共用这一个动作）');
+  assert.ok(html.includes('placeholder="NPC 名字'), '输入框要提示填 NPC 名字');
+  assert.ok(html.includes('data-act="cast.remove"'), '手填的要能移除');
+  assert.ok(html.includes('酒馆老板'), '手填进来的 NPC 要列出来');
+});
+
+check('当前生成者没勾 → 明确提醒"注入会被清空"', () => {
+  const unchecked = renderPanel(fakeState({
+    cast: { list: [{ id: '', name: '酒馆老板', manual: true }], current: '罗德里戈', candidates: [{ id: '1', name: '罗德里戈' }] },
+  }), { view: 'cast' }).html;
+  assert.ok(unchecked.includes('当前生成者不在名单里'), '要提醒');
+
+  const checked = renderPanel(fakeState(), { view: 'cast' }).html;
+  assert.equal(checked.includes('当前生成者不在名单里'), false, '勾上了就别吓唬人');
+});
+
+await acheck('勾选 / 取消勾选 → 走 api.cast.toggle（带上 id 与名字）', async () => {
+  const { actions } = renderPanel(fakeState(), { view: 'cast' });
+  const calls = [];
+  const api = { cast: { toggle: (entry) => { calls.push(entry); return []; } } };
+  await actions['cast.toggle']({ ...fakeElement('cast.toggle'), dataset: { act: 'cast.toggle', id: '1', name: '罗德里戈' }, checked: false }, {
+    ctx: fakeCtx(), api, state: fakeState(),
+  });
+  assert.deepEqual(calls[0], { id: '1', name: '罗德里戈' });
+});
+
+await acheck('手填 NPC：点「添加」读输入框；输入框回车用自己的值；空值不提交', async () => {
+  const { actions } = renderPanel(fakeState(), { view: 'cast' });
+  const added = [];
+  const api = { cast: { get: () => [], add: (name) => { added.push(name); return [{ id: '', name, manual: true }]; } } };
+
+  const input = { ...fakeElement('cast.add'), tagName: 'INPUT', value: '酒馆老板' };
+  await actions['cast.add'](input, { ctx: fakeCtx(), api, state: fakeState() });
+  assert.deepEqual(added, ['酒馆老板'], '输入框回车用自己的值');
+
+  let rootValue = '老板娘';
+  const ctx = { ...fakeCtx(), root: () => ({ querySelector: () => ({ value: rootValue }) }) };
+  await actions['cast.add']({ ...fakeElement('cast.add'), tagName: 'BUTTON' }, { ctx, api, state: fakeState() });
+  assert.deepEqual(added, ['酒馆老板', '老板娘'], '点按钮时去读输入框');
+
+  rootValue = '   ';
+  await actions['cast.add']({ ...fakeElement('cast.add'), tagName: 'BUTTON' }, { ctx, api, state: fakeState() });
+  assert.equal(added.length, 2, '空值不该提交');
 });
 
 console.log('版本号一致性（防再次漂移）');

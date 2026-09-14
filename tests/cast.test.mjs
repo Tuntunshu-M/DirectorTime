@@ -1,7 +1,10 @@
 // T-412 测试：多人卡适配（主角多选 / actorId / 注入门 / 侧写分存）
 
 import assert from 'node:assert/strict';
-import { normalizeProtagonists, shouldInject, protagonistText } from '../src/world/cast.js';
+import {
+  normalizeProtagonists, shouldInject, protagonistText,
+  isProtagonist, toggleProtagonist, addProtagonist, removeProtagonist,
+} from '../src/world/cast.js';
 import { createReviewService } from '../src/director/review.js';
 import { createProfileService } from '../src/world/character.js';
 import { createStateStore } from '../src/core/state.js';
@@ -36,6 +39,45 @@ await check('归一化：字符串简写 / 对象都认，空的丢掉', () => {
 
 await check('默认不设主角（单卡老行为）', () => {
   assert.deepEqual(createDefaultSettings().protagonists, []);
+});
+
+console.log('T-436 多人卡自选（自动识别的卡 + 手填 NPC）');
+
+await check('isProtagonist / toggle：勾选与取消（id 或名字任一匹配）', () => {
+  assert.equal(isProtagonist(CAST, { name: '爱丽丝' }), true);
+  assert.equal(isProtagonist(CAST, { id: '2' }), true, 'id 对上也算');
+  assert.equal(isProtagonist(CAST, { name: '路人甲' }), false);
+
+  assert.deepEqual(toggleProtagonist(CAST, ALICE), [BOB], '再点一次 = 取消勾选');
+  assert.deepEqual(toggleProtagonist([BOB], ALICE), [BOB, ALICE], '勾上要加进去');
+});
+
+await check('add：手填 NPC（标 manual；空 / 重复 / 与已有角色同名都不加）', () => {
+  const added = addProtagonist(CAST, ' 酒馆老板 ');
+  assert.deepEqual(added.at(-1), { id: '', name: '酒馆老板', manual: true });
+  assert.equal(addProtagonist(added, '酒馆老板').length, 3, '重复不加');
+  assert.equal(addProtagonist(added, '   ').length, 3, '空不加');
+  assert.equal(addProtagonist(added, '爱丽丝').length, 3, '和已有角色同名也不加');
+});
+
+await check('remove：id 或名字对上就删（手填的也能删）', () => {
+  const npc = { id: '', name: '酒馆老板', manual: true };
+  const list = [ALICE, BOB, npc];
+  assert.deepEqual(removeProtagonist(list, { name: '鲍勃' }), [ALICE, npc]);
+  assert.deepEqual(removeProtagonist(list, { id: '1' }), [BOB, npc]);
+  assert.deepEqual(removeProtagonist(list, npc), [ALICE, BOB]);
+});
+
+await check('归一化去重：同名的只留一条（勾选与手填撞车时不重复）', () => {
+  assert.equal(normalizeProtagonists([{ id: '1', name: '爱丽丝' }, { id: '', name: ' 爱丽丝 ' }]).length, 1);
+});
+
+await check('NPC 也能当主角：注入门认手填名字与 actorId', () => {
+  const npc = { id: '', name: '酒馆老板', manual: true };
+  const list = [npc];
+  assert.equal(shouldInject({ stage: { actorId: '酒馆老板' }, speaker: { name: '酒馆老板' }, protagonists: list }), true);
+  assert.equal(shouldInject({ stage: { actorId: '爱丽丝' }, speaker: { name: '酒馆老板' }, protagonists: list }), false, '不是他的戏就别注入');
+  assert.equal(shouldInject({ stage: {}, speaker: { name: '爱丽丝' }, protagonists: list }), false, '当前生成者不在名单里 → 不注入');
 });
 
 await check('protagonistText 给导演看的主角清单，带 actorId 写法', () => {

@@ -20,7 +20,10 @@ import { createCombinedJudge } from './director/judge-combined.js';
 import { carryOver, foreshadowText, openForeshadows, resolveRecalled } from './director/foreshadow.js';
 import { hardLimitText } from './director/hard-limits.js';
 import { findUserDirectives, findFinishedLines, describeIssues } from './director/actor-guard.js';
-import { normalizeProtagonists, protagonistText } from './world/cast.js';
+import {
+  normalizeProtagonists, protagonistText,
+  toggleProtagonist, addProtagonist, removeProtagonist,
+} from './world/cast.js';
 import { gate, setLevel, normalizeAutomation, FEATURES, LEVELS, FEATURE_LABELS, LEVEL_LABELS } from './core/automation.js';
 import { createReviewQueue } from './core/review-queue.js';
 import {
@@ -944,6 +947,12 @@ export function bootstrap({ ctx, store } = {}) {
       return coreToneHintsOf({});
     },
   };
+  /** T-436：统一存盘 + 立刻重算注入（勾选 / 手填 / 移除都走它） */
+  const saveCast = (list) => {
+    store.saveSettings({ protagonists: normalizeProtagonists(list) });
+    refreshInjection();
+    return normalizeProtagonists(settings().protagonists);
+  };
   const castApi = {
     get: () => normalizeProtagonists(settings().protagonists),
     set: (list) => {
@@ -951,7 +960,15 @@ export function bootstrap({ ctx, store } = {}) {
       refreshInjection(); // 改完主角立刻重算注入（不是他的戏就别注入）
       return normalizeProtagonists(settings().protagonists);
     },
-  };
+    /** T-436：酒馆里的角色卡（自动识别出来的候选，只读） */
+    candidates: () => ctx.listCharacters?.() ?? [],
+    /** 勾选 / 取消勾选一张角色卡 */
+    toggle: (entry) => saveCast(toggleProtagonist(settings().protagonists, entry)),
+    /** 手填一个名字（自选 / NPC） */
+    add: (name) => saveCast(addProtagonist(settings().protagonists, name)),
+    /** 从名单里移除（id 或名字对上就删） */
+    remove: (ref) => saveCast(removeProtagonist(settings().protagonists, ref)),
+    };
   const breakFilterApi = {
     get: () => normalizeBreakFilter(settings().breakFilter),
     set: (next) => {
@@ -1120,7 +1137,12 @@ export function bootstrap({ ctx, store } = {}) {
           status: presets.status(),
           entries: presets.entries(),
         },
-        cast: { list: castApi.get(), current: ctx.getCharacterData?.()?.name ?? '' },
+        cast: {
+          list: castApi.get(),
+          current: ctx.getCharacterData?.()?.name ?? '',
+          // T-436：酒馆里的角色卡（界面上勾选"要攻略谁"；手填 NPC 走输入框）
+          candidates: castApi.candidates(),
+        },
         profile,
         profileFields: PROFILE_FIELDS.map((key) => ({ key, label: PROFILE_FIELD_LABELS[key] ?? key })),
         world: {

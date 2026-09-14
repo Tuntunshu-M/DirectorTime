@@ -1,6 +1,8 @@
-// 导演时间 · 主角设置（T-412 多人卡适配）
+// 导演时间 · 主角设置（T-412 多人卡适配 + T-436 多人卡自选）
 //
-// 多人卡场景里，一局可能有几个"主角"（用户想跟着谁走）。**由用户显式设置，不做自动识别**。
+// 多人卡场景里，一局可能有几个"主角"（用户想跟着谁走）。现在两种来源并存：
+//   · **自动识别**：酒馆里有哪几张角色卡（`ctx.listCharacters()`），在人物页勾选
+//   · **自选**：手动填名字（`manual: true`）—— 给"想攻略的 NPC"用（NPC 可能没有卡）
 //
 // 三件事：
 //   1. 主角可以设多个（settings.protagonists），持久化
@@ -9,18 +11,52 @@
 //
 // 没配主角时（单卡用户）行为与以前完全一致：照常注入。
 
-/** 归一化成 [{ id, name }]；兼容 ['名字'] 这种简写 */
+/**
+ * 归一化成 `[{ id, name, manual? }]`；兼容 `['名字']` 这种简写（当手填处理）。
+ * T-436：**去重**（同名只留一条，勾选与手填撞车时不会出现两条）。
+ */
 export function normalizeProtagonists(list) {
   if (!Array.isArray(list)) return [];
-  return list
-    .map((item) => {
-      if (typeof item === 'string') return { id: '', name: item.trim() };
-      return {
+  const out = [];
+  for (const item of list) {
+    const entry = typeof item === 'string'
+      ? { id: '', name: item.trim() } // 简写不标 manual：老数据形状保持不变（`!id` 也能认出是手填）
+      : {
         id: String(item?.id ?? '').trim(),
         name: String(item?.name ?? '').trim(),
       };
-    })
-    .filter((item) => item.id || item.name);
+    if (!entry.id && !entry.name) continue;
+    if (typeof item === 'object' && item?.manual === true) entry.manual = true;
+    if (out.some((exist) => sameSpeaker(exist, entry))) continue; // 同名/同 id 只留一条
+    out.push(entry);
+  }
+  return out;
+}
+
+/** 这个角色在不在主角名单里（界面勾选状态用） */
+export function isProtagonist(list, ref) {
+  return normalizeProtagonists(list).some((item) => sameSpeaker(item, ref));
+}
+
+/** 勾选 / 取消勾选一个（自动识别出来的）角色 —— 返回新的主角列表 */
+export function toggleProtagonist(list, entry) {
+  const items = normalizeProtagonists(list);
+  if (isProtagonist(items, entry)) return items.filter((item) => !sameSpeaker(item, entry));
+  return normalizeProtagonists([...items, { id: entry?.id ?? '', name: entry?.name ?? '' }]);
+}
+
+/** 手填一个名字（自选 / NPC）：已存在就原样返回，不重复加 */
+export function addProtagonist(list, name) {
+  const items = normalizeProtagonists(list);
+  const text = String(name ?? '').trim();
+  if (!text) return items;
+  if (items.some((item) => item.name && item.name.toLowerCase() === text.toLowerCase())) return items;
+  return normalizeProtagonists([...items, { id: '', name: text, manual: true }]);
+}
+
+/** 移除一个（id 或名字对上就删） */
+export function removeProtagonist(list, ref) {
+  return normalizeProtagonists(list).filter((item) => !sameSpeaker(item, ref));
 }
 
 /**

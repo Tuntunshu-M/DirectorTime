@@ -602,4 +602,25 @@ await acheck('#2：读不到 persona → 请求里没有那段（零回归）', 
   assert.equal(api.userPersonaText(), '', '读不到就是空串');
 });
 
+await acheck('T-436：主角自选（勾选角色卡 / 手填 NPC / 移除）都落盘并进快照', async () => {
+  const env = makeBootEnv();
+  env.ctx.listCharacters = () => [{ id: '0', name: '洛佩兹' }, { id: '1', name: '罗德里戈' }];
+  const api = bootstrap({ ctx: env.ctx, store: env.store });
+
+  assert.deepEqual(api.cast.candidates(), [{ id: '0', name: '洛佩兹' }, { id: '1', name: '罗德里戈' }], '自动识别的候选');
+  assert.equal(api.ui.read().cast.candidates.length, 2, '界面拿得到候选');
+
+  api.cast.toggle({ id: '1', name: '罗德里戈' });
+  assert.deepEqual(env.store.getSettings().protagonists, [{ id: '1', name: '罗德里戈' }], '勾选要落盘');
+
+  api.cast.add('酒馆老板');
+  assert.deepEqual(env.store.getSettings().protagonists.at(-1), { id: '', name: '酒馆老板', manual: true }, '手填的 NPC 标 manual');
+
+  api.cast.remove({ name: '酒馆老板' });
+  assert.deepEqual(api.ui.read().cast.list.map((item) => item.name), ['罗德里戈'], '移除后快照同步');
+
+  api.cast.toggle({ id: '1', name: '罗德里戈' });
+  assert.deepEqual(env.store.getSettings().protagonists, [], '再点一次 = 取消勾选');
+});
+
 console.log(`\n通过 ${passed} 项`);
