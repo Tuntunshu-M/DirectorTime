@@ -7,6 +7,21 @@
 // 为什么是"本地规则"而不是模型：用户按次计费，扫描必须零调用。
 // 规则漏了有手填兜底（人物页那个输入框）；乱调 API 是实打实花钱。
 // 所以这个文件只有正则 + 词表，**不 import client，不 fetch**。
+//
+// ============================================================================
+// 2026-09-14 第二次实机修复（维护者："这些是它识别出来的全部'人名'……识别个人名就那么困难吗"）
+//
+// 现象：候选里全是 `名称 / 代号 / 性别 / 年龄 / 外貌 / 性格 / 关系描述 / 表达方式 / 角色阶段 …`
+//       —— **全是设定卡的"栏目名"**，一个真名都没几个。
+// 根因（已复现，见 `bugfix-0914-世界书人名误判.md`）：
+//   世界书条目绝大多数是**设定卡写法**（每行 `字段名：值`），
+//   而本文件原来的规则①把"行首 `XX：`"**无条件当人名**、还给了强证据 → 整片栏目名进候选。
+// 修法（三条结构性的，不再靠"往停用词表里加词"打地鼠）：
+//   ① **行首标签要先过"字段名"筛**：词表 + 统计（栏目名会跨条目/反复出现，人名不会）+ 设定卡块；
+//   ② **删掉 `XX 的`**：`喜欢用黑色` / `陈旧血迹` 这种半句噪声全是它造的，真信号远小于噪声；
+//   ③ **单破折号不再当分隔符**（`布满深浅不-的疤痕` 就是这么来的）—— 只认 `：` 与 `——`；
+//   另外补上真信号：`【裴玉】` / `[裴玉]` / `### 裴玉` 这种"角色小标题"（以前完全不认）。
+// ============================================================================
 
 /** 候选上限（超出的折叠成「还有 N 个」） */
 export const WORLD_CAST_LIMIT = 30;
@@ -33,6 +48,8 @@ export const WORLD_CAST_STOPWORDS = new Set([
   '十分', '非常', '已经', '正在', '一直', '再次', '继续', '立刻', '马上', '缓缓',
   '轻轻', '淡淡', '冷冷', '默默', '备注', '注释', '说明', '简介', '概括', '总结',
   '提示', '登场', '出场',
+  // 人数词 / 群体词（有了 `盯着` 这类动词之后，`两人盯着` 会被误当主语）
+  '两人', '三人', '几人', '众人', '旁人', '一人', '所有人', '大家', '双方',
   // 动作词本身不是名字（`艾拉低声说` 要剥成 `艾拉`）
   '低声', '低语', '沉默', '看着', '说道', '开口', '回答', '反问', '追问', '抬头',
   '低头', '转身', '点头', '摇头', '皱眉', '叹气', '冷笑', '笑了', '笑着',
@@ -42,7 +59,6 @@ export const WORLD_CAST_STOPWORDS = new Set([
  * 描写词 / 抽象名词：**任何情况下都不算角色**（强证据命中也不收）。
  *
  * 2026-09-14 实机：用户看到「温柔」「底色」出现在候选里。
- * 「温」本身是姓氏，「温柔」靠姓氏表拦不住 —— 只能显式点名。
  * 这里只放**几乎不会当人名**的词（「希望」「光明」这类能当名字的**不收**，
  * 万一真有同名角色还有手填框兜底）。
  */
@@ -55,12 +71,72 @@ export const ABSTRACT_NOUNS = new Set([
   '世界', '故事', '时间', '空间', '记忆', '过去', '未来', '现在', '命运', '规则',
 ]);
 
+/**
+ * **设定卡的"栏目名"**（2026-09-14 第二次修复的主角）。
+ *
+ * 世界书条目绝大多数是"每行 `栏目名：值`"的设定卡 —— 这些栏目名**永远不可能是角色名**，
+ * 但原来的规则①会把它们全部当成人名（维护者看到的那几十个假人名就是它们）。
+ *
+ * 维护者原话（2026-09-14）："这些是它识别出来的全部'人名'，实际上除了裴玉、伯伯、哥哥、
+ * 父亲、母亲、Lobo 之外都不是人名"。左边那一串就是这张表要拦的东西。
+ *
+ * ⚠️ 只放**确定不会当人名**的栏目名。像 `管家` `长老` `主母` 这种"能当角色的称谓"**不放**；
+ *    `希望` `光明` `阳光` 这类能当名字的也不放。
+ */
+export const WORLD_FIELD_LABELS = new Set([
+  // —— 身份 / 档案
+  '名称', '姓名', '代号', '别名', '昵称', '真名', '头衔', '身份', '核心身份', '角色档案',
+  '角色设定', '角色定位', '角色阶段', '角色关系', '人物档案', '人物设定', '基本信息',
+  '基础信息', '个人资料', '档案', '设定', '总览', '概览',
+  // —— 生理 / 外貌
+  '性别', '年龄', '生日', '身高', '体重', '体型', '身材', '种族', '物种', '职业',
+  '外貌', '面部', '五官', '脸型', '脸部', '发型', '发色', '瞳色', '眼睛', '眼神',
+  '肤色', '遮面', '特征', '主要特征', '标志', '特殊', '气质', '印象', '形态', '模式',
+  '气味', '体味', '香味', '味道', '气息', '香型', '嗓音', '口音', '语速', '音色',
+  '睫毛', '眉毛', '胡须', '疤痕', '伤痕', '纹身', '体格', '肩宽', '体态', '步态',
+  // —— 穿着
+  '服饰', '服装', '穿着', '衣装', '上衣', '上身', '下身', '下装', '鞋履', '鞋子',
+  '配饰', '饰品', '主色调', '配色', '色调', '风格',
+  // —— 性格 / 心理
+  '性格', '性格调色盘', '性格特点', '个性', '心理', '内心', '三观', '价值观', '世界观',
+  '优点', '缺点', '长处', '短处', '喜好', '偏好', '厌恶', '爱好', '兴趣', '癖好',
+  '习惯', '小习惯', '作息', '日程', '日常', '生活', '知识盲区', '盲区', '弱点',
+  '软肋', '秘密', '禁忌', '底线', '原则', '信条',
+  // —— 能力 / 关系 / 经历
+  '能力', '技能', '特长', '擅长', '武器', '道具', '语言', '语调', '声音', '口头禅',
+  '说话方式', '表达方式', '对话示例', '示例对话', '台词', '语气', '称谓',
+  '关系', '关系描述', '人际关系', '人物关系', '亲属', '家人', '家庭成员', '朋友',
+  '敌人', '阵营', '立场', '归属', '出身', '来历', '背景', '经历', '过往', '履历',
+  '目标', '动机', '动机与目标', '欲望', '执念', '变化倾向', '倾向', '阶段',
+  // —— 世界观 / 剧情 / 杂项
+  '世界', '世界观', '设定集', '规则', '势力', '组织', '团体', '家族', '地点', '场景',
+  '时间线', '剧情', '事件', '简介', '概述', '概括', '总结', '重点', '提要', '描述',
+  '描写', '细节', '补充', '补充说明', '扩展', '二次解释', '备注', '注释', '说明',
+  '提示', '注意', '属性', '数据', '参数', '标签',
+]);
+
+/**
+ * **亲属 / 角色称谓**（`关系描述：与伯伯、哥哥、父亲、母亲`）—— 直接命中就是角色。
+ *
+ * 为什么单独列：设定卡里"关系"那一行往往是**配角唯一出现的地方**，
+ * 而角色卡里这些人常常**没有名字**（就叫"伯伯""管家"），用户恰恰可能想攻略他们。
+ * 这些词不可能是栏目名，所以是白名单式的高置信信号（维护者的清单里就认了
+ * 裴玉 / 伯伯 / 哥哥 / 父亲 / 母亲 这五个，这一条把后四个捞回来）。
+ */
+export const KINSHIP_TERMS = new Set([
+  '父亲', '母亲', '爸爸', '妈妈', '哥哥', '弟弟', '姐姐', '妹妹', '兄长', '长姐',
+  '伯伯', '叔叔', '舅舅', '姑姑', '姨妈', '爷爷', '奶奶', '外公', '外婆', '祖父', '祖母',
+  '继父', '继母', '养父', '养母', '继兄', '继妹', '表哥', '表姐', '堂哥', '堂妹',
+  '管家', '女仆', '男仆', '仆人', '侍女', '佣人', '司机', '秘书', '助理', '保镖',
+  '家主', '族长', '主公', '上司', '老板', '老板娘', '老师', '同学', '室友',
+]);
+
 /** 名字里带这些字一定不是人名（的/了/着/是/在/和/与/为 都是纯虚词） */
 const FUNCTION_CHARS = /[\u7684\u4e86\u7740\u662f\u5728\u548c\u4e0e\u4e3a]/;
 /** 组织 / 地点不是"可攻略的角色"（`裴氏集团` `洛佩兹的庄园` 这类） */
 const NON_PERSON_SUFFIX = /(集团|公司|家族|世家|学院|学校|组织|协会|商会|教会|门派|帮派|军队|部队|王国|帝国|联邦|庄园|城堡|公馆|别墅|宅邸|城镇|村庄|城市|基地|中心)$/;
 /** 以代词 / 指示词 / 副词开头的不是名字（他…… / 这…… / 谁也…… / 不知……） */
-const PRONOUN_START = /^[\u4ed6\u5979\u5b83\u6211\u4f60\u60a8\u54b1\u8fd9\u90a3\u54ea\u8c01\u4e0d\u6ca1\u522b\u65e0\u5f88\u592a\u66f4\u6700\u90fd\u4e5f\u8fd8\u5c31\u624d\u53c8\u518d\u5df2\u7adf\u751a\u81f3\u5219\u800c\u5374]/;
+const PRONOUN_START = /^[\u4ed6\u5979\u5b83\u6211\u4f60\u60a8\u54b1\u8fd9\u90a3\u54ea\u8c01\u4e0d\u6ca1\u522b\u65e0\u5f88\u592a\u66f4\u6700\u90fd\u4e5f\u8fd8\u5c31\u624d\u53c8\u518d\u5df2\u7ad9\u751a\u81f3\u5219\u800c\u5374]/;
 /** 章节标题不是角色名：第一章 / 第三幕 / 第二场 */
 const CHAPTER_TITLE = /^第[0-9一二三四五六七八九十百千]+[章节回幕场次篇讲]$/;
 /** 名字里至少得有中日文 / 假名 / 英文字母（纯数字、纯符号丢掉） */
@@ -70,12 +146,7 @@ const NAME_CHARS = '\u4e00-\u9fff\u3040-\u30ffA-Za-z';
 
 /**
  * 常见中文姓氏（单姓取篇幅，够用即可）。
- *
- * 为什么需要它：2026-09-14 实机反馈 —— 界面上冒出了「温柔」「底色」这种词。
- * 根因是 `XX的` 这条弱规则：`温柔的底色` 会被当成候选 `温柔`。
- * **中文人名几乎必含姓氏字**，用姓氏表一拦，形容词/普通名词基本挡在外面。
- * 西式译名、日文名不一定有（例如「艾拉」），所以这里是**降级为弱证据**，
- * 不是直接丢掉 —— 宁漏勿噪，但也别把真角色扔了。
+ * 只在**弱证据**通道上用作降级判据（见 `grade`）。
  */
 export const CHINESE_SURNAMES = new Set([...(
   '赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜戚谢邹喻柏水窦章'
@@ -96,7 +167,7 @@ const COMPOUND_SURNAMES = ['欧阳', '太史', '端木', '上官', '司马', '�
   '慕容', '长孙', '宇文', '司徒', '司空', '轩辕', '钟离', '闾丘', '亓官', '鲜于'];
 
 /**
- * 纯汉字名的"像不像人名"打分。
+ * 纯汉字名的"像不像人名"打分（只服务弱证据通道）。
  * @returns {'likely'|'unlikely'} unlikely = 降级到弱证据（不是丢掉）
  */
 function looksLikeChineseName(raw) {
@@ -110,11 +181,7 @@ function looksLikeChineseName(raw) {
   return CHINESE_SURNAMES.has(name[0]) ? 'likely' : 'unlikely';
 }
 
-// ---------- 抽取规则（规格 §3.1，按优先级）----------
-//
-// 2026-09-14 改：**分级**。以前所有规则一视同仁 → 「温柔」「底色」混进候选。
-// · 强证据（$STRONG）：行首标签式 / 引号前主语 / 已知名单 —— 直接进候选区
-// · 弱证据（$WEAK）：`XX的` `XX说` —— 只进「可能是人名（弱证据）」，默认折叠
+// ---------- 抽取规则（规格 §3.1；2026-09-14 按实机反馈重做）----------
 export const STRENGTH_STRONG = 'strong';
 export const STRENGTH_WEAK = 'weak';
 
@@ -125,12 +192,20 @@ export const STRENGTH_WEAK = 'weak';
 const VERB_ALT = [
   '低声说', '笑了笑', '点着头', '低声', '低语', '看着', '沉默', '说道', '笑了', '笑着',
   '嘱咐', '提醒', '冷笑', '叹气', '皱眉', '点头', '摇头', '回答', '开口',
+  // 2026-09-14 补：`艾拉盯着他很久` 这种"名字 + 动作"也该算（原来只有 `看着`，`盯着` 漏了）
+  '盯着', '望着', '看向', '凝视', '打量', '瞥了一眼',
   '说', '道', '问', '答', '笑', '喊',
 ].join('|');
 
-/** ① 行首标签式：`名字：` / `名字——` / `名字 -`（世界书最常见的角色条目写法） */
+/**
+ * ① 行首标签式：`名字：` / `名字——`。
+ *
+ * 2026-09-14 修：**不再认行内单破折号**（`-` / `—` / `－`）。原来把 `-` 当分隔符，
+ * 于是 `布满深浅不-的疤痕` 这种句子被切成 `布满深浅不-` 当人名 —— 维护者的清单里就有它。
+ * 现在只认 `：` 与 `——`（双破折号是明确的"标签 → 释义"写法）。
+ */
 const LABEL_RE = new RegExp(
-  `^[\\t\\u3000 ]*([^\\n\\r：:，。！？；、（）()\\[\\]【】“”"'「」『』]{2,10}?)[\\t\\u3000 ]*(?:[：:]|[-—－]{1,2})`,
+  `^[\\t\\u3000 ]*([^\\n\\r：:，。！？；、（）()\\[\\]【】“”"'「」『』]{2,10}?)[\\t\\u3000 ]*(?:[：:]|——)`,
   'gm',
 );
 /** ② 引号前的主语：`“…”` 前面那截以动词收尾的名字 */
@@ -141,8 +216,11 @@ const VERB_SUFFIX_RE = new RegExp(`(${VERB_ALT})(着|道|了)?$`);
 const TRAILING_PUNCT_RE = /[\s\u3000，,：:、；;]+$/;
 /** ③ 称谓模式：`XX 说` `XX 问` `XX 笑了` `XX 看着` */
 const TITLE_VERB_RE = new RegExp(`([${NAME_CHARS}]{2,6}?)(?:${VERB_ALT})`, 'g');
-/** ③ 称谓模式：`XX 的`（后接汉字才算） */
-const TITLE_OF_RE = new RegExp(`([${NAME_CHARS}]{2,6})的(?=[${NAME_CHARS}])`, 'g');
+/** ①b 角色小标题：`【裴玉】` / `[裴玉]`（世界书里标"这是谁"的写法，比栏目名可靠） */
+// `[]` 那个分支要求后面不是 `(` / `[`，免得把 markdown 链接 `[文字](url)` 认成角色
+const TITLE_BRACKET_RE = /【([^】\n]{2,12})】|\[([^\]\n]{2,12})\](?![(\[])/g;
+/** ①c 角色小标题：markdown 标题 `### 裴玉` */
+const TITLE_HEADING_RE = /^#{2,4}[ \t\u3000]*([^\n]{2,12})$/gm;
 
 /** 去掉首尾空白与分隔符，中间空白压成一个空格（`管家 · 莫兰` 这种写法要留住） */
 export function normalizeCastName(raw) {
@@ -170,7 +248,7 @@ export function stripTrailingVerb(raw) {
 }
 
 /**
- * 这个名字收不收（长度 / 字符 / 停用词 / 虚词 / 章节标题）。
+ * 这个名字收不收（长度 / 字符 / 停用词 / 虚词 / 章节标题 / 栏目名）。
  * 已知名单不走这里（见 acceptKnown）——主角名哪怕 1 个字也得认出来。
  */
 export function isCastNameCandidate(raw) {
@@ -180,7 +258,8 @@ export function isCastNameCandidate(raw) {
   if (len < WORLD_CAST_MIN_LEN || len > WORLD_CAST_MAX_LEN) return false;
   if (!HAS_NAME_CHAR.test(name)) return false;
   if (WORLD_CAST_STOPWORDS.has(name)) return false;
-  if (ABSTRACT_NOUNS.has(name)) return false; // 「温柔」这种：姓氏表拦不住，显式点名
+  if (ABSTRACT_NOUNS.has(name)) return false;
+  if (WORLD_FIELD_LABELS.has(name)) return false;
   if (CHAPTER_TITLE.test(name)) return false;
   if (FUNCTION_CHARS.test(name)) return false;
   if (PRONOUN_START.test(name)) return false;
@@ -199,17 +278,131 @@ function escapeRe(text) {
   return String(text).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** 一行开头的"标签"（`性格：xxx` → `性格`）；不是标签行返回空串 */
+function lineStartLabel(line) {
+  return labelLineInfo(line)?.label ?? '';
+}
+
 /**
- * 从**一段文本**里挖出候选（名字 + 下标）。
- * 返回 `[[name, index], ...]`；同一位置被多条规则命中时由调用方用 Set 去重。
+ * 拆一行：`标签` + 后面那截"值"有多长。
+ *
+ * 值的长度是**区分"设定卡"和"角色列表"的关键**：
+ *   设定卡的 `性别：男` `年龄：25` 值很短；`艾拉：宅子里最安静的那个` 值是描述句（长）。
  */
-function ruleHits(text) {
+function labelLineInfo(line) {
+  LABEL_RE.lastIndex = 0; // LABEL_RE 带 g，复用前必须复位（不然第二次从中间开始找）
+  const text = String(line);
+  const match = LABEL_RE.exec(text);
+  LABEL_RE.lastIndex = 0;
+  if (!match) return null;
+  const label = stripTrailingVerb(match[1]);
+  if (!label) return null;
+  return { label, valueLength: text.slice(match.index + match[0].length).trim().length };
+}
+
+/**
+ * 把整篇文本里的"行首标签"统计出来 —— **这是识别栏目名的关键信号**：
+ * 栏目名（`性格` / `外貌` / `年龄`）在一份卡里会**反复出现**（每个角色一套），人名不会。
+ *
+ * @returns {{ count: Map<string, number>, inEntries: Map<string, Set<number>>, schema: Set<string> }}
+ */
+function collectLabelStats(entries) {
+  const count = new Map();
+  const inEntries = new Map();
+  /** 落在"设定卡块"里的标签：连续 ≥3 行都是 `标签：值`，且块内**有标签重复**（= 结构化 schema） */
+  const schema = new Set();
+
+  entries.forEach((item, index) => {
+    const text = String(item?.content ?? '');
+    if (!text) return;
+    for (const match of text.matchAll(LABEL_RE)) {
+      const label = stripTrailingVerb(match[1]);
+      if (!label) continue;
+      count.set(label, (count.get(label) ?? 0) + 1);
+      if (!inEntries.has(label)) inEntries.set(label, new Set());
+      inEntries.get(label).add(index);
+    }
+
+    // 设定卡块：解决"整张卡就一条条目、栏目名还都是自定义的"场景（词表兜不住这种）
+    const lines = text.split(/\r?\n/);
+    let run = [];
+    const flush = () => {
+      if (!run.length) return;
+      const labels = run.map((item) => item.label);
+
+      // 判据 1：块内**有标签重复** → 是"栏目 × 多个角色"的 schema，整块标签全算栏目名
+      //        （`艾拉：…` / `莉泽：…` 这种角色列表没有重复标签，不会被误杀）
+      const repeated = labels.some((label, i) => labels.indexOf(label) !== i);
+
+      // 判据 2：块够长（≥5 行）且**值的中位长度 ≤ 8 字** → 这是"栏目：短值"的设定卡。
+      //        角色列表的值是描述句（长），设定卡的值是栏目值（男 / 25 / 无 / 皮鞋…）。
+      //        这条专治"栏目名是作者自定义的"（`变化倾向` `二次解释` `柔软衍生三` 这种）。
+      const values = run.map((item) => item.valueLength).filter((n) => n > 0).sort((a, b) => a - b);
+      const median = values.length ? values[Math.floor(values.length / 2)] : 0;
+      const schematic = run.length >= 5 && median <= 8;
+
+      if ((run.length >= 3 && repeated) || schematic) for (const label of labels) schema.add(label);
+      run = [];
+    };
+    for (const line of lines) {
+      if (!line.trim()) continue; // 空行不切断块
+      const info = labelLineInfo(line);
+      if (info) run.push(info);
+      else flush();
+    }
+    flush();
+  });
+
+  return { count, inEntries, schema };
+}
+
+/**
+ * 这个行首标签是不是"设定卡的栏目名"（栏目名一律不当人名）。
+ *
+ * 三条判据（任一命中即栏目名）：
+ *   ① 在 `WORLD_FIELD_LABELS` 词表里（`性格` `外貌` `年龄` …）
+ *   ② 在整批条目里出现 ≥3 次，或出现在 ≥2 条不同条目里（栏目会跨角色/跨条目复用）
+ *   ③ 落在"设定卡块"里（见 collectLabelStats）
+ * 例外：**已知名单（当前主角 / 当前生成者）永远不算栏目名** —— 用户自己配的人必须认得出。
+ */
+function isFieldLabel(label, context) {
+  if (!label) return true;
+  if (context.known.has(label)) return false;
+  if (WORLD_FIELD_LABELS.has(label)) return true;
+  const { count, inEntries, schema } = context.labelStats;
+  if ((count.get(label) ?? 0) >= 3) return true;
+  if ((inEntries.get(label)?.size ?? 0) >= 2) return true;
+  if (schema.has(label)) return true;
+  return false;
+}
+
+/**
+ * 从**一段文本**里挖出候选（名字 + 下标 + 证据强弱）。
+ * 同一位置被多条规则命中时由调用方用 Set 去重。
+ */
+function ruleHits(text, context) {
   const out = [];
 
-  // ① 行首标签式 —— 强证据
+  // ① 行首标签式 —— 强证据，但**必须先过"栏目名"筛**（2026-09-14 修复的主战场）
   for (const match of text.matchAll(LABEL_RE)) {
+    const label = stripTrailingVerb(match[1]);
+    if (isFieldLabel(label, context)) continue; // `性格：` `外貌：` 属栏目名，不是人
     const offset = match.index + match[0].search(/[^\s\u3000]/);
-    out.push([stripTrailingVerb(match[1]), offset, STRENGTH_STRONG]);
+    out.push([label, offset, STRENGTH_STRONG]);
+  }
+
+  // ①b 角色小标题：`【裴玉】` / `[裴玉]` —— 世界书里最直白的"这是谁"
+  for (const match of text.matchAll(TITLE_BRACKET_RE)) {
+    const inner = normalizeCastName(match[1] ?? match[2] ?? '');
+    if (!inner || isFieldLabel(inner, context)) continue;
+    out.push([inner, match.index + 1, STRENGTH_STRONG]);
+  }
+
+  // ①c 角色小标题：`### 裴玉`
+  for (const match of text.matchAll(TITLE_HEADING_RE)) {
+    const inner = normalizeCastName(match[1]);
+    if (!inner || isFieldLabel(inner, context)) continue;
+    out.push([inner, match.index, STRENGTH_STRONG]);
   }
 
   // ② 引号前主语（`艾拉低声说：“…”`）—— 强证据
@@ -225,14 +418,19 @@ function ruleHits(text) {
     out.push([name, headStart + head.length - run.length, STRENGTH_STRONG]);
   }
 
-  // ③ 称谓模式：XX 说 / XX 问 / XX 笑了 / XX 看着 —— **强证据**
-  //    只要后面真跟着说话/动作动词，主语是角色的把握很高（"温柔笑了"几乎不会出现在正文里）
+  // ③ 称谓模式：XX 说 / XX 问 / XX 笑了 / XX 看着 —— 强证据
+  //    2026-09-14 修：**删掉了 `XX 的`**。`喜欢用黑色` `陈旧血迹` `弟间存有一份` 这类
+  //    半句噪声全是它造的（它只要求"2~6 字 + 的"，还会把长句贪心截成 6 字），
+  //    而它带来的真信号（`管家的手` = 管家）远小于噪声 —— 删掉，漏了有手填兜底。
   for (const match of text.matchAll(TITLE_VERB_RE)) {
     out.push([normalizeCastName(match[1]), match.index, STRENGTH_STRONG]);
   }
-  // ③ 称谓模式：XX 的 —— **唯一的重灾区**（`温柔的底色` 就出自这条），永远只算弱证据
-  for (const match of text.matchAll(TITLE_OF_RE)) {
-    out.push([normalizeCastName(match[1]), match.index, STRENGTH_WEAK]);
+
+  // ④ 亲属 / 角色称谓白名单 —— 强证据。设定卡里"关系"那一行是配角唯一出现的地方，
+  //    `与伯伯、哥哥、父亲、母亲` 里的这四个人就是角色（白名单词不可能是栏目名）
+  for (const term of KINSHIP_TERMS) {
+    const at = text.indexOf(term);
+    if (at >= 0) out.push([term, at, STRENGTH_STRONG]);
   }
 
   return out;
@@ -243,18 +441,18 @@ function ruleHits(text) {
  *
  * | 命中的规则 | 像中文人名 | 结果 |
  * |---|---|---|
- * | 强（行首标签 / 引号主语） | 是 | strong |
+ * | 强（行首标签 / 小标题 / 引号主语 / 称谓动词） | 是 | strong |
  * | 强 | 不像（如西式译名） | weak（降级，不丢） |
- * | 弱（`XX的` / `XX说`） | 是 | weak |
- * | 弱 | 不像 | **丢弃** ← 「温柔」「底色」走这条 |
+ * | 弱 | 是 | weak |
+ * | 弱 | 不像 | 丢弃 |
+ *
+ * 注：2026-09-14 删掉 `XX 的` 之后**已经没有规则再产出弱证据**了（weak 通道保留着，
+ * 以后要加"低把握线索"时用；界面那一组会自动不显示）。**动词 / 行首标签命中的一律不查姓氏**
+ * （西式译名如「莉泽」根本不在百家姓里，查了会误杀真角色）。
  */
 function grade(name, strength) {
   if (!isCastNameCandidate(name)) return null;
   if (strength === STRENGTH_STRONG) return STRENGTH_STRONG;
-  // 走到这里 = 只命中了 `XX的`。中文里"XX的"太常见（温柔的底色 / 成功的阈值），
-  // 所以姓氏表过不了就丢掉 —— 用户看到的「温柔」「底色」全出自这条。
-  // 反过来：动词 / 行首标签 / 引号主语命中的**一律不查姓氏**（西式译名如「莉泽」
-  // 根本不在百家姓里，查了会把真角色误杀，试过一次，不能再来）。
   return looksLikeChineseName(name) === 'likely' ? STRENGTH_WEAK : null;
 }
 
@@ -272,13 +470,16 @@ export function extractWorldCast(entries = [], { known = [], limit = WORLD_CAST_
   const knownSet = new Set((known ?? []).map(normalizeCastName).filter(acceptKnown));
   const max = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.floor(Number(limit)) : WORLD_CAST_LIMIT;
 
+  // ⓪ 先统计"栏目名"：栏目会跨角色/跨条目反复出现，人名不会（这是本次修复的关键信号）
+  const context = { known: knownSet, labelStats: collectLabelStats(list) };
+
   // ① 第一遍：按规则找出"谁是角色"，并按证据强弱分档
   const nameSet = new Set();
   const strength = new Map(); // name → strong / weak
   for (const item of list) {
-    for (const [name, , hitStrength] of ruleHits(String(item.content))) {
+    for (const [name, , hitStrength] of ruleHits(String(item.content), context)) {
       const graded = grade(name, hitStrength);
-      if (!graded) continue; // 「温柔」「底色」这类在这里被丢掉
+      if (!graded) continue; // 噪声在这里被丢掉
       // 一条规则说 strong、另一条说 weak → 取 strong（宁可让用户看到）
       if (!strength.has(name) || strength.get(name) === STRENGTH_WEAK) strength.set(name, graded);
       nameSet.add(name);

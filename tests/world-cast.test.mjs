@@ -55,11 +55,14 @@ const find = (result, name) => result.detected.find((item) => item.name === name
 
 console.log('T-437 本地抽取（零调用）');
 
-await check('行首标签式：`XX：` / `XX ——` / `XX -` 都能识别（世界书最常见的写法）', () => {
-  const result = extractWorldCast([entry('艾拉：她是宅子里最安静的那个。\n管家 · 莫兰——管着整栋老宅。\n莉泽 - 只在夜里出现。')]);
+await check('行首标签式：`XX：` / `XX ——` 认；**行内单破折号不认**（2026-09-14 修）', () => {
+  const result = extractWorldCast([entry('艾拉：她是宅子里最安静的那个。\n管家 · 莫兰——管着整栋老宅。')]);
   assert.ok(names(result).includes('艾拉'), '`XX：` 必须能认出来（漏了等于没做）');
   assert.ok(names(result).includes('管家 · 莫兰'), '`XX——` 带间隔号的写法也要认');
-  assert.ok(names(result).includes('莉泽'), '`XX -` 也要认');
+
+  // 单破折号当分隔符会把半句话切成"人名" —— 维护者清单里的 `布满深浅不-` 就是这么来的
+  assert.deepEqual(names(extractWorldCast([entry('布满深浅不-的疤痕一直延伸到下颌。')])), [],
+    '行内单破折号不是标签分隔符');
 });
 
 await check('引号前主语：`XX说：“…”` / `XX低声说：“…”` 认的是 XX', () => {
@@ -69,14 +72,23 @@ await check('引号前主语：`XX说：“…”` / `XX低声说：“…”` �
   assert.equal(names(result).includes('艾拉说'), false, '不能出现"艾拉说"这种带动词的候选');
 });
 
-// 2026-09-14 实机反馈：「温柔 / 底色」混进候选 —— 根因就是 `XX的` 这条规则。
-// 现在分档：**动词模式 = 强证据**（直接进候选），**`XX的` = 弱证据**（只进折叠区，不吵人）。
-await check('称谓模式：`XX 看着` / `XX 笑了` = 强证据；`XX 的` = 弱证据', () => {
-  const result = extractWorldCast([entry('莉泽看着窗外。\n艾拉笑了。\n管家的手很稳。')]);
-  assert.ok(names(result).includes('莉泽'), '动词模式足够可靠，直接进候选');
+// 2026-09-14 实机反馈：「温柔 / 底色」混进候选 —— 根因是 `XX的` 这条弱规则。
+// 第一次修（hy4）把它降级成弱证据；第二次修（见下）**直接删掉** —— 它造的半句噪声远比真信号多。
+await check('称谓模式：`XX 看着` / `XX 笑了` 认；**`XX 的` 已删除**（噪声源）', () => {
+  const result = extractWorldCast([entry('莉泽看着窗外。\n艾拉笑了。')]);
+  assert.ok(names(result).includes('莉泽'), '动词模式可靠，直接进候选');
   assert.ok(names(result).includes('艾拉'));
-  assert.equal(names(result).includes('管家'), false, '`XX的` 不算强证据，不该占候选位');
-  assert.ok((result.weak ?? []).map((item) => item.name).includes('管家'), '但也不能丢 —— 待在弱证据折叠区');
+  assert.deepEqual(result.weak ?? [], [], '弱证据通道现在是空的（没有规则再产出它）');
+
+  // 这条规则造过的半句噪声（维护者清单里的原话）：全都得消失
+  for (const sentence of ['他喜欢用黑色的风衣。', '陈旧血迹的痕迹还在。', '兄弟间存有一份默契。', '布满深浅不一的疤痕。']) {
+    const got = names(extractWorldCast([entry(sentence)]));
+    assert.deepEqual(got, [], `不该从「${sentence}」里挖出任何名字（实际：${got.join('、')}）`);
+  }
+
+  // 但"没名字的角色"要捞回来：`管家` 走的是亲属/角色称谓白名单（规则④），不是 `XX的`
+  assert.ok(names(extractWorldCast([entry('管家的手很稳。')])).includes('管家'),
+    '`管家` 是角色称谓白名单命中的 —— `XX的` 删了之后靠它捞回来');
 });
 
 await check('2026-09-14 反馈：「温柔」「底色」这类词不许进候选', () => {
@@ -85,6 +97,65 @@ await check('2026-09-14 反馈：「温柔」「底色」这类词不许进候�
     assert.equal(names(result).includes(noise), false, `「${noise}」不是角色，候选区里不许有`);
   }
   assert.deepEqual(names(result), [], '这一段里根本没有角色名，候选区该是空的');
+});
+
+// ★ 2026-09-14 第二次实机反馈的主症状：世界书是"设定卡"写法（每行 `栏目名：值`），
+//   而规则①把每个栏目名都当成了人名 —— 维护者贴出的几十个假人名就是这些。
+await check('★ 设定卡写法：栏目名一个都不许进候选，只留下真角色', () => {
+  const card = [
+    '名称：裴玉',
+    '代号：Lobo',
+    '性别：男',
+    '年龄：25',
+    '体型：高挺',
+    '面部：轮廓柔和',
+    '发型：黑短发',
+    '遮面：无',
+    '价值观：利己',
+    '知识盲区：青春期',
+    '核心身份：裴氏集团小裴董',
+    '性格：温柔、腹黑',
+    '性格调色盘：强硬 / 冷酷无情',
+    '外貌：黑短发整齐，浅灰下垂眼，布满深浅不一的疤痕',
+    '服饰：喜欢用黑色的风衣',
+    '鞋履：皮鞋',
+    '配饰：手表',
+    '气味：香柠檬',
+    '习惯：摸爬滚打多年，经过血火考验',
+    '经历：青春期在宿舍',
+    '语言：说带浓重口普',
+    '对话示例：“你来了。”',
+    '关系描述：与伯伯、哥哥、父亲、母亲',
+    '角色阶段：远观窥伺 → 蛇行试探',
+    '作息：工作后熬夜',
+    '变化倾向：兽化缠身',
+    '表达方式：惯于按摩',
+    '基本信息：补充说明',
+  ].join('\n');
+
+  const result = extractWorldCast([entry(card, '裴玉设定', '裴玉')], { known: ['裴玉'] });
+
+  // 维护者清单里的栏目名（含他那张卡的自定义栏目）—— 一个都不许出现
+  const fieldLabels = ['名称', '代号', '性别', '年龄', '体型', '面部', '发型', '遮面', '价值观',
+    '知识盲区', '核心身份', '性格', '性格调色盘', '外貌', '服饰', '鞋履', '配饰', '气味', '习惯',
+    '经历', '语言', '对话示例', '关系描述', '角色阶段', '作息', '变化倾向', '表达方式', '基本信息',
+    '青春期', '宿舍', '按摩', '惯于', '补充', '描述', '重点'];
+  for (const word of fieldLabels) {
+    assert.equal(names(result).includes(word), false, `栏目名「${word}」不许进候选`);
+  }
+
+  // 真角色要留下：裴玉（已知名单）+ 关系行里那四个没名字的配角
+  assert.deepEqual(names(result), ['裴玉', '伯伯', '哥哥', '父亲', '母亲'],
+    '设定卡该只剩角色：主角 + 关系描述里那几位');
+});
+
+await check('角色小标题 `【裴玉】` / `[裴玉]` / `### 裴玉` 是最直白的信号', () => {
+  const result = extractWorldCast([entry('【裴玉】\n他是小裴董。\n\n### 罗德里戈\n另一个主角。')]);
+  assert.ok(names(result).includes('裴玉'), '`【名字】` 要认');
+  assert.ok(names(result).includes('罗德里戈'), '`### 名字` 要认');
+  // `[名字]` 也要认，但 markdown 链接 `[文字](url)` 不算
+  assert.ok(names(extractWorldCast([entry('[莉泽] 只在夜里出现。')])).includes('莉泽'));
+  assert.deepEqual(names(extractWorldCast([entry('见 [设定文档](https://example.com/x) 的说明。')])), []);
 });
 
 await check('停用词过滤（噪声比漏检更烦人）', () => {
@@ -123,14 +194,29 @@ await check('出现次数与出处准确（同一位置被多条规则命中只�
 
 await check('排序：出现次数降序；同次数按首次出现位置；上限 30', () => {
   const result = extractWorldCast([entry('艾拉说：“一。”\n莉泽笑了。\n莉泽说：“二。”\n管家的手很稳。')]);
-  assert.deepEqual(names(result), ['莉泽', '艾拉'], '次数多的在前，同次数按谁先出现（`管家的` 属弱证据，不在这里）');
+  // 管家 = 角色称谓白名单（规则④）命中的 —— `XX的` 删掉之后，靠它把这类"没名字的角色"捞回来
+  assert.deepEqual(names(result), ['莉泽', '艾拉', '管家'], '次数多的在前，同次数按谁先出现');
 
+  // 「名字：描述句」是**角色列表**（值长），不是设定卡（值短）—— 40 个都该认出来
   const many = extractWorldCast([
-    entry(Array.from({ length: 40 }, (_, i) => `角色${'甲乙丙丁戊己庚辛壬癸'[i % 10]}${i}：第 ${i} 条。`).join('\n')),
+    entry(Array.from({ length: 40 }, (_, i) => `角色${'甲乙丙丁戊己庚辛壬癸'[i % 10]}${i}：他是第 ${i} 个离开村子的人，走的时候只带了一只旧皮箱。`).join('\n')),
   ]);
   assert.equal(many.detected.length, WORLD_CAST_LIMIT, `最多列 ${WORLD_CAST_LIMIT} 个`);
   assert.equal(many.truncated, true, '超出的要能告诉界面"还有 N 个"');
   assert.equal(many.total, 40);
+});
+
+await check('★ 角色列表（`名字：描述句`）不能被当成设定卡误杀', () => {
+  const list = [
+    '艾拉：宅子里最安静的那个，总喜欢躲在角落看书。',
+    '莉泽：只在夜里出现，从不和任何人说话。',
+    '罗德里戈：名义上的家主，实际上早就不管事了。',
+    '管家：管着整栋老宅，规矩比谁都多。',
+  ].join('\n');
+  const result = extractWorldCast([entry(list)]);
+  assert.ok(names(result).includes('艾拉'), '值长的"名字：描述"块要认（值短才是设定卡）');
+  assert.ok(names(result).includes('莉泽'));
+  assert.ok(names(result).length >= 3, `这一块应该都是角色（实际：${names(result).join('、')}）`);
 });
 
 await check('已知名单（主角 / 当前生成者）排最前，且豁免长度限制', () => {
