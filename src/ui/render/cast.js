@@ -95,7 +95,7 @@ export function render(state) {
         const input = ctx.root?.()?.querySelector?.('input[data-act="cast.add"]');
         const name = String(fromInput || input?.value || '').trim();
         if (!name) {
-          ctx.flash('cast', '先在上面那个框里填个名字');
+          ctx.flash('cast', '还没填名字（在上面那个框里写，回车或点「添加」）');
           return;
         }
         const before = (api.cast?.get?.() ?? []).length;

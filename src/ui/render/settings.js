@@ -115,7 +115,7 @@ export function render(state, ctxState) {
           ${toggle({ act: 'conn.setStream', checked: params.stream !== false })}
         </div>
         <div class="dt-note" data-flash="conn" hidden></div>
-        <div class="dt-note">密钥明文存在本机 settings.json，共享环境慎用</div>
+        <div class="dt-note">密钥存在本机 settings.json（明文保存）—— 共享设备上请注意</div>
       </div>
     </details>
 
@@ -194,7 +194,7 @@ export function render(state, ctxState) {
     </details>
 
     <details data-key="settings.params">
-      <summary>调参（默认值就能用，不懂别动）</summary>
+      <summary>调参（默认值就能用）</summary>
       <div class="dt-box">
         <div class="dt-lbl" style="margin-top:0">每场楼层（min ~ max）</div>
         <div class="dt-line">

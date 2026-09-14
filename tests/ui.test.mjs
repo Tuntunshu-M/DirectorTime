@@ -382,6 +382,18 @@ function bootApi() {
   return bootstrap({ ctx, store });
 }
 
+check('UI 文案不许出现"把用户当傻子"的强硬措辞（AGENTS G9）', () => {
+  const files = ['panel.js', 'render/journal.js', 'render/script.js', 'render/cast.js',
+    'render/worldbook.js', 'render/prompts.js', 'render/settings.js', 'render/debug.js'];
+  const banned = ['不懂别动', '别乱改', '别乱动', '别碰', '自己看着办', '傻子', '小白', '慎用', '后果自负'];
+  const hits = [];
+  for (const file of files) {
+    const code = fs.readFileSync(new URL(`../src/ui/${file}`, import.meta.url), 'utf8');
+    for (const word of banned) if (code.includes(word)) hits.push(`${file} → "${word}"`);
+  }
+  assert.deepEqual(hits, [], `这些措辞不许再出现：\n${hits.join('\n')}`);
+});
+
 check('界面模块里出现的 api.xxx 都能在真 api 上找到', () => {
   const api = bootApi();
   const files = ['panel.js', 'render/journal.js', 'render/script.js', 'render/cast.js',
