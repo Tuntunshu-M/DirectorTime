@@ -126,6 +126,8 @@ export function createDefaultSettings() {
     timeoutMs: 30000,
     // 用户指定的主目标（T-416；留空则由 AI 自己构思一个）
     objective: '',
+    // 场记页「剧情走向」输入框（2026-09-14 #2）：点「重新生成剧本」时作为"用户的想法"带给导演
+    premise: '',
     // 楼层节奏：每场最少 / 最多聊几楼（T-416；阶段自己的 pacing 可覆盖）
     pacing: { min: 3, max: 8 },
     // 规则引擎四词库（T-406）：默认一份，用户改的就是这份、直接持久化

@@ -50,24 +50,24 @@ export function render(state, ctxState) {
 
     <div class="dt-sec" style="margin-top:12px">本轮回放 · 跟随 user 输入发送了什么</div>
 
-    <details open><summary>注入全文（下一轮用、当前挂着的那份）</summary>
+    <details open data-key="debug.injection"><summary>注入全文（下一轮用、当前挂着的那份）</summary>
       <pre>${esc(debug.injection?.text ?? '（没有注册任何注入）')}</pre>
     </details>
 
-    <details><summary>上次判定</summary><pre>${esc(judgement)}</pre></details>
+    <details data-key="debug.judgement"><summary>上次判定</summary><pre>${esc(judgement)}</pre></details>
 
-    <details><summary>模型原始返回</summary><pre>${esc(debug.lastRaw || '（没有记录）')}</pre></details>
+    <details data-key="debug.raw"><summary>模型原始返回</summary><pre>${esc(debug.lastRaw || '（没有记录）')}</pre></details>
 
-    <details><summary>上次发给导演 API（实际文本）</summary><pre>${esc(debug.lastRequest || '（没有记录）')}</pre></details>
+    <details data-key="debug.request"><summary>上次发给导演 API（实际文本）</summary><pre>${esc(debug.lastRequest || '（没有记录）')}</pre></details>
 
-    <details open><summary>上一轮注入（实际发送的那一份）</summary>
+    <details open data-key="debug.lastInjection"><summary>上一轮注入（实际发送的那一份）</summary>
       <pre>${esc(lastInjection?.text ?? '（还没有跑过完整一轮）')}</pre>
       <div class="dt-note">${lastInjection?.speculation
     ? `上一轮投机：${lastInjection.speculation.hit ? '命中' : '失手'}（猜「${esc(lastInjection.speculation.guess ?? '')}」）`
     : '上一轮没有投机'}</div>
     </details>
 
-    <details><summary>角色回复 · 原文 / 清洗后</summary>
+    <details data-key="debug.reply"><summary>角色回复 · 原文 / 清洗后</summary>
       <div class="dt-seg2" style="margin:8px 0 6px">
         <button type="button" class="${showRaw ? '' : 'on'}" data-act="debug.showCleaned">清洗后</button>
         <button type="button" class="${showRaw ? 'on' : ''}" data-act="debug.showRaw">显示原文</button>
@@ -76,7 +76,7 @@ export function render(state, ctxState) {
       <div class="dt-note">清洗只作用于插件自己看到的文本，聊天记录原文永远不动</div>
     </details>
 
-    <details><summary>导演 API 日志（最近 ${apiLog.length} 条）</summary>
+    <details data-key="debug.apiLog"><summary>导演 API 日志（最近 ${apiLog.length} 条）</summary>
       <div class="dt-log" style="margin-top:7px">
         ${apiLog.length ? apiLog.map((item) => `<div class="dt-log-row">
           <span>${esc(clock(item.at))}</span>

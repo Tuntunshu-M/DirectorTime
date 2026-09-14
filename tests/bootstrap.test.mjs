@@ -459,4 +459,71 @@ await acheck('api.ui.read() 里带着最近一次远程检查结果（面板状�
   }
 });
 
+console.log('2026-09-14 · 反馈 #2（剧情走向）+ #4（占比锁）');
+
+await acheck('#4：占比线「锁」真的锁住了（拖别的线 / 重绘都不会丢）', async () => {
+  const env = makeBootEnv();
+  const api = bootstrap({ ctx: env.ctx, store: env.store });
+
+  api.tone.set('daily', 60, ['daily']); // 点「锁」
+  assert.deepEqual(env.store.get().tone.locked, ['daily'], '锁必须存进 tone（以前被 rebalanceTone 洗掉）');
+  assert.equal(api.ui.read().toneLocked.includes('daily'), true, '界面要读得到锁状态');
+
+  const daily = api.tone.get().daily;
+  api.tone.set('crisis', 20); // 拖另一条（老代码这里会把 locked 洗成空）
+  assert.deepEqual(env.store.get().tone.locked, ['daily'], '拖别的线不能把锁弄丢');
+  assert.equal(api.tone.get().daily, daily, '锁住的线不许被配平改动');
+
+  api.tone.set('daily', daily, []); // 解锁
+  assert.deepEqual(env.store.get().tone.locked, [], '能解锁');
+  const tone = api.tone.get();
+  assert.equal(tone.daily + tone.crisis + tone.intimate, 100, '解完锁仍是 100');
+});
+
+await acheck('#4：认不出的键不进 locked（免得存一坨垃圾）', async () => {
+  const env = makeBootEnv();
+  const api = bootstrap({ ctx: env.ctx, store: env.store });
+  api.tone.set('daily', 50, ['daily', '瞎写的']);
+  assert.deepEqual(env.store.get().tone.locked, ['daily']);
+});
+
+await acheck('#2：场记的「剧情走向」会跟着「重新生成剧本」进请求', async () => {
+  const originalFetch = globalThis.fetch;
+  const bodies = [];
+  globalThis.fetch = async (_url, init) => {
+    bodies.push(String(init?.body ?? ''));
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              objective: '让她走出门', title: '出门', premise: '一周没出门', foreshadows: [],
+              stages: [{ title: 's1', goal: '把出门挑明', activity: '收拾行李', checkpoint: { criteria: '他把话说死', antiCriteria: '他改口' }, beats: ['提起周末'] }],
+            }),
+          },
+        }],
+      }),
+    };
+  };
+  try {
+    const env = makeBootEnv();
+    // 侧写为空 + 关掉一致性自检 → 只发一次 GEN_OUTLINE，好数
+    env.ctx.getCharacterField = () => undefined;
+    const api = bootstrap({ ctx: env.ctx, store: env.store });
+    env.store.saveSettings({
+      connection: { endpoint: 'https://x/v1', model: 'm', apiKey: 'k' },
+      consistencyCheck: false,
+      premise: '让他这一场挑明，但别太快和解',
+    });
+
+    await api.regenerateScript();
+
+    assert.equal(bodies.length, 1, `只该发一次生成调用，实际 ${bodies.length}`);
+    assert.ok(bodies[0].includes('让他这一场挑明，但别太快和解'), '剧情走向要进请求');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 console.log(`\n通过 ${passed} 项`);

@@ -9,7 +9,10 @@
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { renderPanel, createMainPanel, normalizePalette, UI_VERSION } from '../src/ui/panel.js';
+import {
+  renderPanel, createMainPanel, normalizePalette, UI_VERSION,
+  captureDetailsOpen, applyDetailsOpen, captureScroll, applyScroll, describeControl, applyFlash,
+} from '../src/ui/panel.js';
 import { bootstrap } from '../src/bootstrap.js';
 import { createStateStore } from '../src/core/state.js';
 
@@ -712,6 +715,165 @@ check('设置层底部：有远程检查结果时显示状态行（有新版本�
 
   const failed = renderPanel(fakeState({ update: { checked: { ok: false, reason: 'network' } } }), { layer: 'settings' }).html;
   assert.ok(failed.includes('上次没查到'), '查不到要如实说，不能装作没事');
+});
+
+console.log('2026-09-14 · 重绘不该让界面"回归原始状态"（反馈 #4/#5）');
+
+check('折叠状态：收起/展开都记住，重绘后照原样放回', () => {
+  const map = captureDetailsOpen([
+    { dataset: { key: 'settings.tone' }, open: false },
+    { dataset: { key: 'prompt.presets' }, open: true },
+  ]);
+  assert.deepEqual(map, { 'settings.tone': false, 'prompt.presets': true });
+
+  // 重绘后是全新的节点，默认值可能相反 —— 必须被放回去
+  const fresh = [
+    { dataset: { key: 'settings.tone' }, open: true },
+    { dataset: { key: 'prompt.presets' }, open: false },
+  ];
+  applyDetailsOpen(fresh, map);
+  assert.equal(fresh[0].open, false, '刚收起的要还它收起');
+  assert.equal(fresh[1].open, true, '刚展开的要还它展开');
+});
+
+check('没有 data-key 的折叠块不记（免得张冠李戴）', () => {
+  assert.deepEqual(captureDetailsOpen([{ dataset: {}, open: true }]), {});
+  applyDetailsOpen([{ dataset: {}, open: false }], { '': true }); // 不该炸
+});
+
+check('滚动位置：按 data-scroll 记住并放回（列表不跳回顶部）', () => {
+  const map = captureScroll([{ dataset: { scroll: 'layer:world' }, scrollTop: 420 }]);
+  assert.deepEqual(map, { 'layer:world': 420 });
+  const node = { dataset: { scroll: 'layer:world' }, scrollTop: 0 };
+  applyScroll([node], map);
+  assert.equal(node.scrollTop, 420);
+});
+
+check('提示文案：重绘后要还在（以前 flash 完紧跟 refresh = 闪一下就没）', () => {
+  const node = { dataset: { flash: 'journal' }, hidden: true, textContent: '' };
+  applyFlash([node], { journal: '已保存：pacing.min = 4' });
+  assert.equal(node.hidden, false, '要显示出来');
+  assert.equal(node.textContent, '已保存：pacing.min = 4');
+
+  const untouched = { dataset: { flash: 'params' }, hidden: true, textContent: '' };
+  applyFlash([untouched], { journal: 'x' });
+  assert.equal(untouched.hidden, true, '没记录的提示位不许乱写');
+});
+
+check('焦点键：同一个动作的多个控件靠 data-key 区分（不然焦点还错地方）', () => {
+  const a = describeControl({ dataset: { act: 'rules.save', key: 'strong' } });
+  const b = describeControl({ dataset: { act: 'rules.save', key: 'weak' } });
+  assert.notEqual(a, b);
+  assert.equal(describeControl({ dataset: {} }), '');
+});
+
+check('界面里每个折叠块都有 data-key（不然用户折的它记不住）', () => {
+  const { html } = renderPanel(fakeState(), { layer: 'settings', worldSources });
+  const details = html.match(/<details[^>]*>/g) ?? [];
+  assert.ok(details.length >= 8, `折叠块太少（${details.length}）`);
+  for (const tag of details) assert.ok(tag.includes('data-key='), `折叠块缺 data-key：${tag}`);
+
+  // 面板的两个滚动容器也要带 data-scroll
+  assert.ok(html.includes('data-scroll="body"'), '分类页容器要有 data-scroll');
+  assert.ok(html.includes('data-scroll="layer:settings"'), '弹层内容区要有 data-scroll');
+});
+
+check('#6 破限预设默认折叠；设置的「导演 API」仍默认展开', () => {
+  const { html } = renderPanel(fakeState(), { layer: 'prompt', worldSources });
+  assert.ok(html.includes('<details data-key="prompt.presets">'), '破限预设要默认折叠');
+  assert.ok(html.includes('<details open data-key="settings.api">'), '导演 API 仍是主入口，默认展开');
+});
+
+check('#3 世界书：每本书默认折叠（几百本也不铺屏），且带 data-key', () => {
+  const { html } = renderPanel(fakeState(), { worldSources });
+  const books = html.match(/<details class="dt-book"[^>]*>/g) ?? [];
+  assert.ok(books.length > 0, '测试数据里应该有书');
+  for (const tag of books) {
+    assert.equal(/\sopen(\s|>)/.test(tag), false, `书必须默认折叠：${tag}`);
+    assert.ok(tag.includes('data-key="book:'), `书要带 data-key：${tag}`);
+  }
+});
+
+check('#2 场记：有「剧情走向」输入框，值来自 settings.premise', () => {
+  const { html } = renderPanel(fakeState({ premise: '让他先挑明，别太快和解' }), { worldSources });
+  assert.ok(html.includes('data-act="journal.premise"'), '要有输入框');
+  assert.ok(html.includes('让他先挑明，别太快和解'), '要回显已存的值');
+});
+
+await acheck('#2 改「剧情走向」→ 存进 settings，且**不重绘**（打字不被打断）', async () => {
+  const { actions } = renderPanel(fakeState(), { worldSources });
+  const saved = [];
+  let refreshed = 0;
+  await actions['journal.premise']({ value: '让他先挑明' }, {
+    ctx: { ...fakeCtx(), refresh: () => { refreshed += 1; } },
+    api: { saveSettings: (patch) => saved.push(patch) },
+    state: fakeState(),
+  });
+  assert.deepEqual(saved, [{ premise: '让他先挑明' }]);
+  assert.equal(refreshed, 0, '打字时不要重绘');
+});
+
+await acheck('#1 破限预设：全选 / 全不选都调 selectEntries（全不选带 none 标记）', async () => {
+  const state = fakeState({
+    presets: {
+      list: ['P'],
+      status: { name: 'P', length: 10, active: true },
+      entries: [{ index: 0, name: '一', selected: true }, { index: 1, name: '二', selected: false }],
+    },
+  });
+  const { actions } = renderPanel(state, { worldSources });
+  const calls = [];
+  const api = { presets: { selectEntries: (...args) => calls.push(args) } };
+
+  await actions['presets.all'](fakeElement('presets.all'), { ctx: fakeCtx(), api, state });
+  await actions['presets.none'](fakeElement('presets.none'), { ctx: fakeCtx(), api, state });
+
+  assert.deepEqual(calls[0], [[0, 1]], '全选传全部下标');
+  assert.deepEqual(calls[1], [[], { none: true }], '全不选要显式说明"一个都不要"');
+});
+
+check('#1 勾到最后一条取消 → 传的是「全不选」而不是空数组（以前会回弹成全部）', () => {
+  const state = fakeState({
+    presets: {
+      list: ['P'],
+      status: { name: 'P' },
+      entries: [{ index: 0, name: '一', selected: true }, { index: 1, name: '二', selected: false }],
+    },
+  });
+  const { actions } = renderPanel(state, { worldSources });
+  const calls = [];
+  const api = { presets: { selectEntries: (...args) => calls.push(args) } };
+  const el = { ...fakeElement('presets.entry'), dataset: { act: 'presets.entry', index: '0' }, checked: false };
+
+  actions['presets.entry'](el, { ctx: fakeCtx(), api, state });
+  assert.deepEqual(calls[0], [[], { none: true }], '取消到一条不剩 = 全不选');
+});
+
+check('#4 偏好：锁住的线按钮写「已锁」', () => {
+  const locked = renderPanel(fakeState({ toneLocked: ['daily'] }), { worldSources }).html;
+  assert.ok(/data-act="tone\.lock" data-key="daily"[^>]*>已锁</.test(locked), '锁住的要显示已锁');
+
+  const plain = renderPanel(fakeState({ toneLocked: [] }), { worldSources }).html;
+  assert.ok(/data-act="tone\.lock" data-key="daily"[^>]*>锁</.test(plain), '没锁的显示"锁"');
+});
+
+await acheck('#4 点锁 → tone.set 带上新的 locked 数组', async () => {
+  const state = fakeState({ toneLocked: [], tone: { daily: 70, crisis: 30, intimate: 0 } });
+  const { actions } = renderPanel(state, { worldSources });
+  const calls = [];
+  const api = { tone: { set: (...args) => calls.push(args) } };
+  const el = { ...fakeElement('tone.lock'), dataset: { act: 'tone.lock', key: 'daily' } };
+
+  await actions['tone.lock'](el, { ctx: fakeCtx(), api, state });
+  assert.equal(calls[0][0], 'daily');
+  assert.deepEqual(calls[0][2], ['daily'], '要把 daily 加进锁列表');
+
+  // 再点一次 = 解锁
+  const state2 = fakeState({ toneLocked: ['daily'] });
+  const { actions: actions2 } = renderPanel(state2, { worldSources });
+  const calls2 = [];
+  await actions2['tone.lock'](el, { ctx: fakeCtx(), api: { tone: { set: (...args) => calls2.push(args) } }, state: state2 });
+  assert.deepEqual(calls2[0][2], [], '再点一次要解锁');
 });
 
 console.log('版本号一致性（防再次漂移）');

@@ -287,4 +287,75 @@ await check('诊断：探测结果能直接贴给我（不猜、不造）', () =
   assert.deepEqual(probe.names, ['默认', '破限A']);
 });
 
+console.log('2026-09-14 #1 · 全不选（以前"取消不掉"：勾到一条不剩会被自动勾回去）');
+
+const MULTI_HOST = {
+  getPresetManager: () => ({
+    getPresetList: () => ['多条目'],
+    getCompletionPresetByName: () => ({
+      prompts: [
+        { name: '一', content: '内容一' },
+        { name: '二', content: '内容二' },
+        { name: '三', content: '内容三', enabled: false },
+      ],
+    }),
+  }),
+};
+
+await check('默认（没勾过）= 全部启用的条目（零回归）', () => {
+  const { service } = makeService(MULTI_HOST);
+  service.select('多条目');
+  assert.deepEqual(service.entries().map((entry) => entry.selected), [true, true, false]);
+  assert.equal(service.text(), '内容一\n\n内容二');
+});
+
+await check('全不选 → 一条都不注入，勾选状态全 false（不会自动回弹）', () => {
+  const { service, cell } = makeService(MULTI_HOST);
+  service.select('多条目');
+  service.selectEntries([], { none: true });
+
+  assert.equal(cell.none, true, '要显式记住"全不选"');
+  assert.deepEqual(service.entries().map((entry) => entry.selected), [false, false, false], '界面必须全不勾');
+  assert.equal(service.text(), '', '一条都不注入');
+  assert.equal(service.status().active, false);
+  assert.equal(service.status().none, true);
+});
+
+await check('全选 → 三条都注入（酒馆里禁用的也注入，T-432 口径）', () => {
+  const { service } = makeService(MULTI_HOST);
+  service.select('多条目');
+  service.selectEntries([0, 1, 2]);
+  assert.deepEqual(service.entries().map((entry) => entry.selected), [true, true, true]);
+  assert.ok(service.text().includes('内容三'), '禁用的那条勾了也要注入');
+});
+
+await check('从"全不选"勾回一条 → 以勾选为准（全不选标记清掉）', () => {
+  const { service, cell } = makeService(MULTI_HOST);
+  service.select('多条目');
+  service.selectEntries([], { none: true });
+  service.selectEntries([1]);
+
+  assert.equal(cell.none, false);
+  assert.deepEqual(service.entries().map((entry) => entry.selected), [false, true, false]);
+  assert.equal(service.text(), '内容二');
+});
+
+await check('空数组（不带 none）仍是"全部启用条目" —— 老行为零回归', () => {
+  const { service } = makeService(MULTI_HOST);
+  service.select('多条目');
+  service.selectEntries([]);
+  assert.deepEqual(service.entries().map((entry) => entry.selected), [true, true, false]);
+  assert.equal(service.text(), '内容一\n\n内容二');
+});
+
+await check('换预设 / 清空 → 全不选标记跟着重置', () => {
+  const { service, cell } = makeService(MULTI_HOST);
+  service.selectEntries([], { none: true });
+  service.select('多条目');
+  assert.equal(cell.none, false, '换预设要清掉');
+  service.selectEntries([], { none: true });
+  service.clear();
+  assert.equal(cell.none, false, '清空要清掉');
+});
+
 console.log(`\n通过 ${passed} 项`);

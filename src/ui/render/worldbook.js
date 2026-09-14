@@ -51,8 +51,14 @@ export function render(state, ctxState) {
       <span>${esc(entry.name)}<em> · ${fmtNumber(String(entry.text ?? '').length)} 字</em></span>
     </div>`;
 
+  /**
+   * 一本书一个折叠块。
+   *
+   * 2026-09-14 反馈 #3：**默认一律折叠**（以前"有启用条目就自动展开"，
+   * 用户几百本书一打开就是铺满屏，翻起来要命）。展开状态由面板重绘时保留（data-key）。
+   */
   const bookBlock = (item) => `
-    <details class="dt-book" ${item.enabledEntries.length ? 'open' : ''}>
+    <details class="dt-book" data-key="book:${esc(item.source.type ?? '')}:${esc(item.book.name)}">
       <summary>${esc(item.book.name)} <span class="dt-src">${esc(item.source.label ?? item.source.type ?? '')}</span></summary>
       ${item.enabledEntries.map(entryRow).join('')}
       ${item.disabledEntries.length ? `<div class="dt-note" style="padding:0 10px 4px">酒馆里已禁用（${item.disabledEntries.length} 条）</div>${item.disabledEntries.map(entryRow).join('')}` : ''}
@@ -62,15 +68,22 @@ export function render(state, ctxState) {
   const enabledBlocks = books.filter((item) => item.enabledEntries.length).map(bookBlock).join('');
   const disabledBlocks = books.filter((item) => !item.enabledEntries.length).map(bookBlock).join('');
 
+  // 读不到"全局启用"列表时如实说明（2026-09-14 反馈 #3）
+  const sourceHints = (ctxState?.worldSources ?? world.sources ?? [])
+    .filter((source) => source.hint)
+    .map((source) => `<div class="dt-note">${esc(source.label ?? '')}：${esc(source.hint)}</div>`)
+    .join('');
+
   const body = `
     <div style="display:flex;gap:6px;margin-bottom:9px">
       <input type="text" data-act="world.search" value="${esc(keyword)}" placeholder="搜索书名 / 条目名">
       <button class="dt-mini" type="button" data-act="world.all">全选</button><button class="dt-mini" type="button" data-act="world.none">全不选</button>
     </div>
+    ${sourceHints}
     ${(ctxState?.worldSources ?? world.sources ?? []).length ? '' : '<div class="dt-note">这个聊天里没有可用的世界书（角色卡内嵌书 / 全局书 / 绑定书都没有）</div>'}
     ${enabledBlocks ? `<div class="dt-sec">已启用</div>${enabledBlocks}` : ''}
     ${disabledBlocks ? `<div class="dt-sec" style="margin-top:12px">未启用</div>${disabledBlocks}` : ''}
-    <div class="dt-note">选择按聊天记，换聊天互不影响</div>`;
+    <div class="dt-note">书默认折叠，点书名展开（展开状态会记住）；选择按聊天记，换聊天互不影响</div>`;
 
   return {
     html: layerShell({

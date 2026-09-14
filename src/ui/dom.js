@@ -44,7 +44,7 @@ export function layerShell({ layer, title, backLabel = '返回', body, foot = ''
       <strong class="dt-layer-title">${esc(title)}</strong><span class="spacer"></span>
       <button class="dt-icon" type="button" data-act="layer.close" title="关闭" aria-label="关闭">${icon('close')}</button>
     </div>
-    <div class="dt-layer-body">${body}</div>
+    <div class="dt-layer-body" data-scroll="layer:${esc(layer)}">${body}</div>
     ${foot ? `<div class="dt-layer-foot">${foot}</div>` : ''}
   </div>`;
 }

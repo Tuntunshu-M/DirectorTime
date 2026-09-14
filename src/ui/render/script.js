@@ -26,7 +26,7 @@ function stageBlock(stage, index, total, activeId, pacing) {
     : `楼层：min ${min} / max ${max} · 第 ${Number(stage.turnCount ?? 0)} 楼`;
 
   return `
-  <details class="dt-stage${current ? ' dt-stage-cur' : ''}" ${current ? 'open' : ''} data-stage="${esc(stage.id)}">
+  <details class="dt-stage${current ? ' dt-stage-cur' : ''}" ${current ? 'open' : ''} data-stage="${esc(stage.id)}" data-key="stage:${esc(stage.id)}">
     <summary>${index + 1}. ${esc(stage.title || '未命名')} · ${esc(stageStatus(stage, activeId))}</summary>
     <div class="dt-stage-body">
       <div style="display:flex;gap:5px;flex-wrap:wrap;margin:6px 0">
@@ -57,7 +57,7 @@ export function render(state) {
     : '阶段 0 个 · 先去「场记」生成剧本';
 
   const foreshadowBlock = foreshadows.length
-    ? `<details class="dt-fold" id="fh" open>
+    ? `<details class="dt-fold" id="fh" open data-key="script.foreshadows">
         <summary>伏笔（${foreshadows.length} 条未回收）</summary>
         ${foreshadows.map((item) => `<div class="dt-entry">
           <span>${esc(item.text ?? item.summary ?? '')}<em>${item.stageTitle ? ` · ${esc(item.stageTitle)}埋下` : ''}</em></span>
@@ -65,7 +65,7 @@ export function render(state) {
         </div>`).join('')}
         <div class="dt-note">重生成剧本时未回收的伏笔不丢失</div>
       </details>`
-    : `<details class="dt-fold" id="fh">
+    : `<details class="dt-fold" id="fh" data-key="script.foreshadows">
         <summary>伏笔（已全部回收）</summary>
         <div class="dt-note">还没有埋下伏笔，或者都已经回收了</div>
       </details>`;

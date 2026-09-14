@@ -298,10 +298,44 @@ export function createSillyTavernContext(contextProvider = defaultProvider) {
     },
 
     // ---------- 世界书 ----------
+    /** 酒馆里**所有**世界书的书名（书名库） */
     getWorldInfoNames() {
       const host = getHost();
       const names = hasFunction(host.getWorldInfoNames) ? host.getWorldInfoNames() : host.world_names;
       return [...new Set((Array.isArray(names) ? names : []).filter(Boolean).map(String))];
+    },
+
+    /**
+     * 2026-09-14 反馈 #3：**酒馆里"全局世界书"= 全局启用的那几本**（世界书面板里打了全局开关的），
+     * 不是"酒馆里一共有多少本"。以前把全部书名塞进「全局世界书」分组，标签是假的。
+     *
+     * 酒馆没把这个列表暴露给扩展时**如实回报 readable:false**（不拿全部书名冒充全局）。
+     * 探测多个可能的位置：不同版本放的地方不一样，认不出来就返回空 + readable:false。
+     */
+    getGlobalWorldInfoNames() {
+      const host = getHost();
+      const looksLikeList = (value) => Array.isArray(value) || typeof value === 'string';
+      const candidates = [
+        () => host.worldInfo?.globalSelect,
+        () => host.world_info?.globalSelect,
+        () => host.getWorldInfoGlobalSelect?.(),
+        () => host.powerUserSettings?.world_info,
+        () => host.power_user?.world_info,
+        () => host.worldInfoGlobal,
+      ];
+      for (const read of candidates) {
+        try {
+          const value = read();
+          if (!looksLikeList(value)) continue;
+          const names = (Array.isArray(value) ? value : [value])
+            .filter((name) => typeof name === 'string' && name.trim())
+            .map((name) => name.trim());
+          return { names: [...new Set(names)], readable: true };
+        } catch {
+          // 探测下一个
+        }
+      }
+      return { names: [], readable: false };
     },
 
     async loadWorldInfoBook(name) {
@@ -334,8 +368,25 @@ export function createSillyTavernContext(contextProvider = defaultProvider) {
           .map((name) => name.trim());
       };
 
+      // 2026-09-14 反馈 #3：拆成两组 —— 「全局世界书」只放酒馆里全局启用的那几本，
+      // 其余的书仍在（放到「其它世界书」组里，默认折叠），不丢功能，只是标签不再骗人。
+      const allNames = ctx.getWorldInfoNames();
+      const global = ctx.getGlobalWorldInfoNames();
+      const globalSet = new Set(global.names);
+      const rest = allNames.filter((name) => !globalSet.has(name));
+
       return [
-        { type: 'global', label: '全局世界书', names: ctx.getWorldInfoNames() },
+        {
+          type: 'global',
+          label: '全局世界书（酒馆里全局启用）',
+          names: global.names,
+          ...(global.readable ? {} : { hint: '这个酒馆版本没把"全局启用"列表给扩展，所以这组是空的；全部书在下面那组里' }),
+        },
+        {
+          type: 'library',
+          label: global.readable ? '其它世界书（未全局启用）' : '全部世界书（没能读到全局启用列表）',
+          names: rest,
+        },
         { type: 'character-primary', label: '角色主世界书', names: asNames(character?.world) },
         { type: 'character-extra', label: '角色附加世界书', names: asNames(character?.data?.extensions?.world ?? character?.extraBooks) },
         { type: 'persona', label: '人格世界书', names: asNames(persona?.world_info ?? persona?.world) },

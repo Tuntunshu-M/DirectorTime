@@ -289,4 +289,54 @@ check('同一个聊天：正常的读写不受影响（不误判成"换了聊天
   assert.equal(env.store.get().outline.title, '第二份');
 });
 
+console.log('2026-09-14 #3 · 全局世界书 = 酒馆里"全局启用"的那些');
+
+check('认 worldInfo.globalSelect（酒馆里打了全局开关的书）', () => {
+  const ctx = createSillyTavernContext(() => ({
+    world_names: ['全局A', '闲书B', '全局C'],
+    worldInfo: { globalSelect: ['全局A', '全局C'] },
+  }));
+  assert.deepEqual(ctx.getGlobalWorldInfoNames(), { names: ['全局A', '全局C'], readable: true });
+});
+
+check('别的酒馆形状也认（world_info.globalSelect / powerUserSettings.world_info）', () => {
+  const a = createSillyTavernContext(() => ({ world_info: { globalSelect: '只有一本' } }));
+  assert.deepEqual(a.getGlobalWorldInfoNames(), { names: ['只有一本'], readable: true });
+  const b = createSillyTavernContext(() => ({ powerUserSettings: { world_info: ['X', 'Y'] } }));
+  assert.deepEqual(b.getGlobalWorldInfoNames(), { names: ['X', 'Y'], readable: true });
+});
+
+check('读不到 → readable:false（**绝不**拿全部书名冒充全局）', () => {
+  const ctx = createSillyTavernContext(() => ({ world_names: ['A', 'B'] }));
+  assert.deepEqual(ctx.getGlobalWorldInfoNames(), { names: [], readable: false });
+});
+
+check('来源分组：全局那组只放全局启用的书，其余进「其它世界书」', () => {
+  const ctx = createSillyTavernContext(() => ({
+    world_names: ['全局A', '闲书B', '全局C'],
+    worldInfo: { globalSelect: ['全局A', '全局C'] },
+  }));
+  const sources = ctx.getLorebookSources();
+  const global = sources.find((source) => source.type === 'global');
+  const library = sources.find((source) => source.type === 'library');
+
+  assert.deepEqual(global.names, ['全局A', '全局C'], '全局组只放全局启用的');
+  assert.ok(global.label.includes('全局启用'), global.label);
+  assert.equal(global.hint, undefined, '读得到就不该有"读不到"提示');
+  assert.deepEqual(library.names, ['闲书B'], '其它书不能丢');
+  assert.ok(library.label.includes('其它'), library.label);
+});
+
+check('读不到全局列表 → 全局组空 + 如实提示，书全在「全部世界书」组里（不丢功能）', () => {
+  const ctx = createSillyTavernContext(() => ({ world_names: ['A', 'B'] }));
+  const sources = ctx.getLorebookSources();
+  const global = sources.find((source) => source.type === 'global');
+  const library = sources.find((source) => source.type === 'library');
+
+  assert.deepEqual(global.names, []);
+  assert.ok(global.hint, '要如实说明"没读到"');
+  assert.deepEqual(library.names, ['A', 'B'], '书一本都不能少');
+  assert.ok(library.label.includes('全部'), library.label);
+});
+
 console.log(`\n通过 ${passed} 项`);

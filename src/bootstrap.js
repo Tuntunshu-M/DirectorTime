@@ -448,7 +448,9 @@ export function bootstrap({ ctx, store } = {}) {
       const ok = await ctx.showConfirm?.('重新生成会丢弃当前剧本。继续？');
       if (!ok) return { ok: false, error: '已取消' };
     }
-    return generateScript({});
+    // 2026-09-14 反馈 #2：场记页那个「剧情走向」输入框存进 settings.premise，
+    // 点「重新生成剧本」时作为"用户的想法"带给导演（角色回复端不受影响）
+    return generateScript({ premise: settings().premise ?? '' });
   }
 
   // 待演阶段的存货目标：少于这个数就续写，保证"演完一场还有下一场"
@@ -830,9 +832,18 @@ export function bootstrap({ ctx, store } = {}) {
   const toneApi = {
     get: () => normalizeTone(store.get().tone),
     keys: () => [...TONE_KEYS],
-    /** locked：锁住的线不参与配平（T-415 用户反馈 3） */
-    set: (key, value, locked = []) => {
-      const next = rebalanceTone(store.get().tone, key, value, { locked });
+    /**
+     * locked：锁住的线不参与配平（T-415 用户反馈 3）。
+     *
+     * 2026-09-14 反馈 #4：`rebalanceTone` / `normalizeTone` 只认三条占比，**会把 locked 洗掉** ——
+     * 于是"锁"点了也没用（重绘后 `state.tone.locked` 永远是空）。
+     * 现在：给 locked（数组）就按它存；**不给（null/undefined）就沿用已存的** —— 拖滑块不会把锁弄丢。
+     */
+    set: (key, value, locked = null) => {
+      const stored = store.get().tone ?? {};
+      const source = Array.isArray(locked) ? locked : (Array.isArray(stored.locked) ? stored.locked : []);
+      const nextLocked = source.filter((item) => TONE_KEYS.includes(item));
+      const next = { ...rebalanceTone(stored, key, value, { locked: nextLocked }), locked: nextLocked };
       store.update((draft) => ({ ...draft, tone: next }), { label: '调整剧情占比' });
       return next;
     },
@@ -998,6 +1009,8 @@ export function bootstrap({ ctx, store } = {}) {
         toneKeys: [...TONE_KEYS],
         toneLabels: { ...TONE_LABELS },
         toneLocked: state.tone?.locked ?? [],
+        // 场记页「剧情走向」输入框（2026-09-14 #2）
+        premise: settings().premise ?? '',
         intensity: intensityApi.get(),
         intensityHint: intensityHint(intensityApi.get()),
         breakFilter: breakFilterApi.get(),

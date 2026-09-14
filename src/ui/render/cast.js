@@ -13,14 +13,14 @@ export function render(state) {
   const generated = state.profile?.generatedAtText ?? '';
 
   const leadBlock = list.length
-    ? `<details class="dt-fold">
+    ? `<details class="dt-fold" data-key="cast.lead">
         <summary>主角（多人卡，多选一）· 当前：${esc(current || list[0] || '—')}</summary>
         <div class="dt-radio">
           ${list.map((name) => `<label><input type="radio" name="dt-lead" value="${esc(name)}" data-act="cast.setLead" ${name === (current || list[0]) ? 'checked' : ''}> ${esc(name)}${name === current ? ' <span class="dt-chip">当前生成者</span>' : ''}</label>`).join('')}
         </div>
         <div class="dt-note">侧写按角色分存，切换主角自动带出对应侧写；<br>注入前会判断「当前生成者是不是主角」，不是就清空注入</div>
       </details>`
-    : `<details class="dt-fold">
+    : `<details class="dt-fold" data-key="cast.lead">
         <summary>主角（还没设置）</summary>
         <div class="dt-note">这是一张单卡，或者还没选主角 —— 注入按当前说话人走，不需要额外设置</div>
       </details>`;

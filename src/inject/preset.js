@@ -60,6 +60,10 @@ export function createPresetService({ ctx, getPreset, setPreset } = {}) {
     return {
       name: String(saved.name ?? '').trim(),
       entries: Array.isArray(saved.entries) ? saved.entries : [],
+      // 2026-09-14 反馈 #1：显式"全不选"标记。entries 为空时以前一律当"全部启用条目"，
+      // 于是**取消勾选到一条不剩会被自动勾回去**（用户根本取消不掉）——
+      // 现在用 none 区分「没勾过（= 全部启用）」与「明确一个都不要」。
+      none: saved.none === true,
     };
   };
   const save = (patch) => setPreset?.({ ...current(), ...patch });
@@ -88,18 +92,19 @@ export function createPresetService({ ctx, getPreset, setPreset } = {}) {
     } catch {
       raw = null;
     }
-    const picked = current().entries;
+    const { entries: picked, none } = current();
     if (raw) stamp();
     return presetEntries(raw).map((entry) => ({
       ...entry,
-      // 一条都没勾 = 用全部启用的条目（默认行为，与 T-418 一致）
-      selected: picked.length ? picked.includes(entry.index) : entry.enabled,
+      // 全不选 → 一个都不勾；没勾过 → 默认勾上启用条目（T-418 老行为）
+      selected: none ? false : (picked.length ? picked.includes(entry.index) : entry.enabled),
     }));
   }
 
-  /** 选中预设的内容（没选 / 读不到 → ''） */
+  /** 选中预设的内容（没选 / 读不到 / 全不选 → ''） */
   function text(name = current().name, selected = current().entries) {
     if (!name) return '';
+    if (current().none) return ''; // 显式全不选：一条都不注入
     try {
       return presetContentText(ctx?.readPreset?.(name), selected);
     } catch {
@@ -108,10 +113,11 @@ export function createPresetService({ ctx, getPreset, setPreset } = {}) {
   }
 
   function status() {
-    const { name, entries: picked } = current();
+    const { name, entries: picked, none } = current();
     const content = text(name);
     return {
       name,
+      none,
       available: list().length,
       entries: picked.length,
       length: content.length,
@@ -122,18 +128,24 @@ export function createPresetService({ ctx, getPreset, setPreset } = {}) {
   }
 
   function select(name) {
-    save({ name: String(name ?? '').trim(), entries: [] });
+    save({ name: String(name ?? '').trim(), entries: [], none: false });
     return status();
   }
 
-  /** 自选条目：传条目下标数组；空数组 = 全部启用 */
-  function selectEntries(indices) {
-    save({ entries: (Array.isArray(indices) ? indices : []).map(Number) });
+  /**
+   * 自选条目：传条目下标数组。
+   * @param {number[]} indices 勾选的条目下标
+   * @param {{none?: boolean}} options none=true 且一条没勾 = **显式全不选**（不注入任何条目）；
+   *   空数组且 none 不为 true = 老行为「全部启用条目」
+   */
+  function selectEntries(indices, { none = false } = {}) {
+    const list = (Array.isArray(indices) ? indices : []).map(Number);
+    save({ entries: list, none: Boolean(none) && list.length === 0 });
     return status();
   }
 
   function clear() {
-    save({ name: '', entries: [] });
+    save({ name: '', entries: [], none: false });
     return status();
   }
 

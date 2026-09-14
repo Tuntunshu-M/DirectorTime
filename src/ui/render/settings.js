@@ -78,7 +78,7 @@ export function render(state, ctxState) {
   }).join('');
 
   const body = `
-    <details open>
+    <details open data-key="settings.api">
       <summary>导演 API</summary>
       <div class="dt-box">
         <div class="dt-lbl" style="margin-top:0">模式</div>
@@ -109,7 +109,7 @@ export function render(state, ctxState) {
       </div>
     </details>
 
-    <details>
+    <details data-key="settings.world">
       <summary>世界书</summary>
       <div class="dt-box">
         <div class="dt-line"><span style="flex:1">已选 ${picked.length} 条 · 约 ${fmtNumber(worldTokens)} tokens</span>
@@ -118,7 +118,7 @@ export function render(state, ctxState) {
       </div>
     </details>
 
-    <details>
+    <details data-key="settings.tone">
       <summary>偏好</summary>
       <div class="dt-box">
         <div class="dt-lbl" style="margin-top:0">剧情占比（和恒为 100，可单锁）</div>
@@ -158,7 +158,7 @@ export function render(state, ctxState) {
       </div>
     </details>
 
-    <details>
+    <details data-key="settings.rules">
       <summary>词库（规则引擎：判得准就不花钱调 API）</summary>
       <div class="dt-box">
         <div class="dt-note" style="margin-top:0">这些词用来在本地判 user 的态度 —— 判得准就<b>一次 API 都不发</b>。<br>
@@ -174,7 +174,7 @@ export function render(state, ctxState) {
       </div>
     </details>
 
-    <details>
+    <details data-key="settings.params">
       <summary>调参（默认值就能用，不懂别动）</summary>
       <div class="dt-box">
         <div class="dt-lbl" style="margin-top:0">每场楼层（min ~ max）</div>
@@ -213,7 +213,7 @@ export function render(state, ctxState) {
       </div>
     </details>
 
-    <details>
+    <details data-key="settings.safety">
       <summary>安全（硬禁区）</summary>
       <div class="dt-box">
         <div class="dt-lbl" style="margin-top:0">命中即停：清空注入、本轮终止，硬禁区优先于一切</div>
@@ -222,7 +222,7 @@ export function render(state, ctxState) {
       </div>
     </details>
 
-    <details>
+    <details data-key="settings.copy">
       <summary>副本迁移</summary>
       <div class="dt-box">
         <div style="display:flex;gap:6px">
@@ -243,7 +243,7 @@ export function render(state, ctxState) {
         <strong class="dt-layer-title">设置</strong><span class="spacer"></span>
         <button class="dt-icon" type="button" data-act="layer.close" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24"><path d="M18.3 5.7 12 12l6.3 6.3-1.4 1.4L10.6 13.4 12 12 5.7 5.7 7.1 4.3 13.4 10.6 12 12l1.4 1.4 6.3 6.3-1.4 1.4z"/></svg></button>
       </div>
-      <div class="dt-layer-body">${body}</div>
+      <div class="dt-layer-body" data-scroll="layer:settings">${body}</div>
       <div class="dt-layer-foot"><span>v${esc(state.version ?? '—')}</span>${updateStatusLine(state.update?.checked)}<span class="spacer"></span>
         <button class="dt-mini" type="button" data-act="update.check">检查更新</button>
         <button class="dt-mini" type="button" data-act="update.apply">更新插件</button>

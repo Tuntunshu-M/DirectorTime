@@ -73,6 +73,10 @@ export function render(state) {
         ${row('投机', specLine)}
         ${row('累计', `调用 <span class="num">${Number(cost.callCount ?? 0)}</span> 次`)}
       </div>
+      <div class="dt-lbl" style="margin-top:11px">剧情走向（可选 · 你想让它怎么演）</div>
+      <textarea rows="2" data-act="journal.premise" placeholder="例：让他这一场挑明，但别太快和解；重点放在试探而不是表白">${esc(state.premise ?? '')}</textarea>
+      <div class="dt-note">点「重新生成剧本」时会把它当成"用户的想法"一起交给导演。改完直接点生成就行，不用另外保存。</div>
+
       <div class="dt-actions">
         <button class="dt-btn dt-btn-primary" type="button" data-act="journal.generate">重新生成剧本</button>
         <button class="dt-btn" type="button" data-act="journal.extend" ${stage.total ? '' : 'disabled'}>重新续写</button>
@@ -85,6 +89,16 @@ export function render(state) {
         api.onToggleEnabled?.(el.checked);
         ctx.flash('journal', el.checked ? '已启用：下一轮开始注入' : '已停用：注入已清空、复盘停止');
         ctx.refresh();
+      },
+      /**
+       * 「剧情走向」输入框：改完即存（change 触发）。
+       * 不刷新界面 —— 不然正在打字的框会被重绘打断。
+       */
+      'journal.premise': (el, { api, ctx }) => {
+        api.saveSettings?.({ premise: String(el.value ?? '') });
+        ctx.flash('journal', String(el.value ?? '').trim()
+          ? '已记下剧情走向，点「重新生成剧本」就会带上'
+          : '剧情走向已清空（这次生成不带额外要求）');
       },
       'journal.generate': async (el, { api, ctx }) => {
         ctx.busy('journal', '生成中…');

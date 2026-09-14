@@ -31,7 +31,7 @@ const TABS = [
  * 与 `manifest.json` 的版本**保持一致**（同一份发布里跟着一起跳），
  * 这样"面板显示 0.10.0 / 更新提示 0.10.0"永远不会互相打脸 —— 一开始想只按界面改动跳，实际只会让人怀疑没更新成功。
  */
-export const UI_VERSION = '0.12.0';
+export const UI_VERSION = '0.13.0';
 
 const PALETTE_KEY = 'dt-palette';
 const LAYER_NAMES = { world: '世界书', prompt: '提示词', settings: '设置', debug: '调试面板' };
@@ -53,6 +53,82 @@ export function syncPageVisibility(html, active = 'status') {
     /<div data-page="([a-z]+)"(\s+hidden)?>/g,
     (match, name) => `<div data-page="${name}"${name === active ? '' : ' hidden'}>`,
   );
+}
+
+/** 控件/容器的稳定键：data-key → data-scroll → 空串（没有键就不记，免得张冠李戴） */
+function nodeKey(node, field = 'key') {
+  const dataset = node?.dataset ?? {};
+  return String(dataset[field] ?? '');
+}
+
+/**
+ * 记住 `<details>` 的展开状态（键写在 data-key 上）。
+ *
+ * 2026-09-14 实机反馈 #4/#5："做完调整之后整个页面就回归原始状态" ——
+ * 根因是 `card.innerHTML = html` 全量重绘：**展开状态、滚动位置、焦点全丢**，
+ * 用户刚展开的折叠区又合上、滚到一半的列表又回到顶部、正在打字的框掉焦点。
+ * 所以重绘前先收一遍、重绘后照原样放回去。
+ */
+export function captureDetailsOpen(nodes) {
+  const map = {};
+  for (const node of nodes ?? []) {
+    const key = nodeKey(node);
+    if (key) map[key] = Boolean(node.open);
+  }
+  return map;
+}
+
+/** 把记下来的展开状态放回去（只认 data-key 对得上的） */
+export function applyDetailsOpen(nodes, map) {
+  if (!map) return;
+  for (const node of nodes ?? []) {
+    const key = nodeKey(node);
+    if (key && key in map) node.open = Boolean(map[key]);
+  }
+}
+
+/** 记住可滚动容器的位置（键写在 data-scroll 上） */
+export function captureScroll(nodes) {
+  const map = {};
+  for (const node of nodes ?? []) {
+    const key = nodeKey(node, 'scroll');
+    if (key) map[key] = Number(node.scrollTop ?? 0);
+  }
+  return map;
+}
+
+/** 放回滚动位置 */
+export function applyScroll(nodes, map) {
+  if (!map) return;
+  for (const node of nodes ?? []) {
+    const key = nodeKey(node, 'scroll');
+    if (key && key in map) node.scrollTop = Number(map[key] ?? 0);
+  }
+}
+
+/**
+ * 把提示文案写回提示位（键写在 data-flash 上）。
+ *
+ * 2026-09-14 反馈 #5："做完调整整个窗口闪一下就回归原始状态" —— 其中一半原因是：
+ * 动作里 `ctx.flash(...)` 之后紧跟 `ctx.refresh()`，重绘把刚写上去的提示**一起冲掉**了，
+ * 用户只看到闪一下。所以提示改成先存进 uiState.flash，重绘后再写回去。
+ */
+export function applyFlash(nodes, map) {
+  for (const node of nodes ?? []) {
+    const key = nodeKey(node, 'flash');
+    if (!key) continue;
+    const text = map?.[key];
+    if (!text) continue;
+    node.hidden = false;
+    node.textContent = text;
+  }
+}
+
+/** 焦点记录的匹配键：动作名 + 关键 dataset（同一个动作可能有多个控件） */
+export function describeControl(node) {
+  if (!node?.dataset?.act) return '';
+  const dataset = node.dataset;
+  return [dataset.act, dataset.key ?? '', dataset.index ?? '', dataset.field ?? '', dataset.feature ?? ''].join('|');
 }
 
 /** 面板 HTML（纯函数：state + 临时 UI 状态 → 字符串 + 动作表） */
@@ -99,7 +175,7 @@ export function renderPanel(state, uiState = {}) {
       ${TABS.map((tab) => `<button class="dt-tab${active === tab.view ? ' dt-tab-on' : ''}" type="button" data-act="shell.tab" data-view="${tab.view}">${tab.label}</button>`).join('')}
     </nav>
 
-    <div class="dt-body">${syncPageVisibility(pages.join(''), active)}</div>
+    <div class="dt-body" data-scroll="body">${syncPageVisibility(pages.join(''), active)}</div>
     ${layers.join('')}
   </section>`;
 
@@ -137,6 +213,10 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
     debugShowRaw: false,
     models: [],
     palette: readPalette(),
+    // 重绘要保持的界面状态（见 captureDetailsOpen / captureScroll / applyFlash 的说明）
+    open: {},
+    scroll: {},
+    flash: {},
   };
 
   function readPalette() {
@@ -162,6 +242,8 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
   const stats = { seen: 0, byType: {}, lastAct: '', lastError: '', lastAt: 0 };
 
   function flash(key, text) {
+    // 先存进 uiState：紧接着的 ctx.refresh() 会重绘整棵子树，不存就"闪一下没了"
+    uiState.flash = { ...(uiState.flash ?? {}), [key]: text };
     const target = card?.querySelector(`[data-flash="${key}"]`);
     if (!target) return;
     target.hidden = false;
@@ -302,11 +384,55 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
     render();
   }
 
+  /** 重绘前记下"用户此刻的界面状态"：正在打字/拖动的控件 + 它的光标位置 */
+  function captureFocus() {
+    const active = globalThis.document?.activeElement ?? null;
+    if (!active || !card?.contains?.(active)) return null;
+    const node = active.closest?.('[data-act]') ?? null;
+    if (!node) return null;
+    let start = null;
+    let end = null;
+    try {
+      start = active.selectionStart ?? null;
+      end = active.selectionEnd ?? null;
+    } catch {
+      // range / number 之类的输入不支持选区，忽略
+    }
+    return { id: describeControl(node), start, end };
+  }
+
+  /** 重绘后把焦点与光标还给同一个控件（正在打字时重绘不再"断手"） */
+  function restoreFocus(info) {
+    if (!info?.id) return;
+    const nodes = card?.querySelectorAll?.('[data-act]') ?? [];
+    for (const node of nodes) {
+      if (describeControl(node) !== info.id) continue;
+      try {
+        node.focus?.();
+        if (info.start !== null) node.setSelectionRange?.(info.start, info.end ?? info.start);
+      } catch {
+        // 某些 input 类型不支持 setSelectionRange —— 焦点给了就行
+      }
+      return;
+    }
+  }
+
   function render() {
     if (!card) return;
     const api = getApi();
     state = api?.ui?.read?.() ?? {};
     if (uiState.worldSources) state.world = { ...(state.world ?? {}), sources: uiState.worldSources };
+
+    // ① 重绘前：收起当前界面状态（展开 / 滚动 / 焦点 + 已经写出来的提示文案）
+    uiState.open = { ...(uiState.open ?? {}), ...captureDetailsOpen(card.querySelectorAll('details')) };
+    uiState.scroll = { ...(uiState.scroll ?? {}), ...captureScroll(card.querySelectorAll('[data-scroll]')) };
+    for (const node of card.querySelectorAll('[data-flash]')) {
+      const key = String(node.dataset?.flash ?? '');
+      // 提示位是空的（hidden 且没字）→ 别把空文案记下来盖掉后来的
+      if (key && !node.hidden && node.textContent) uiState.flash = { ...(uiState.flash ?? {}), [key]: node.textContent };
+    }
+    const focusInfo = captureFocus();
+
     const out = renderPanel(state, { ...uiState, backTo: backToName() });
     actions = out.actions;
     card.innerHTML = out.html;
@@ -319,6 +445,13 @@ export function createMainPanel({ getApi = () => ({}) } = {}) {
     card.querySelectorAll('[data-page]').forEach((page) => {
       page.hidden = page.dataset.page !== (uiState.view ?? 'status');
     });
+
+    // ② 重绘后：把界面状态放回去 —— 折叠区不自己合上、列表不跳回顶部、打字不掉焦点、提示还在
+    applyDetailsOpen(card.querySelectorAll('details'), uiState.open);
+    applyScroll(card.querySelectorAll('[data-scroll]'), uiState.scroll);
+    applyFlash(card.querySelectorAll('[data-flash]'), uiState.flash);
+    restoreFocus(focusInfo);
+
     bindDelegated();
     // 旧引擎不认 :has() —— 给选中的单选补一个 .dt-on（视觉兜底，见 style.css）
     card.querySelectorAll('.dt-seg input:checked, .dt-radio input:checked').forEach((input) => {

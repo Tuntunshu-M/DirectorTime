@@ -38,7 +38,7 @@ export function render(state, ctxState) {
   const selectedCount = entries.filter((entry) => entry.selected).length;
 
   const body = `
-    <details open>
+    <details data-key="prompt.presets">
       <summary>破限预设（跟随酒馆内预设，只读）</summary>
       <div class="dt-box">
         <div class="dt-lbl" style="margin-top:0">选择预设</div>
@@ -47,21 +47,26 @@ export function render(state, ctxState) {
           ${(presets.list ?? []).map((name) => `<option value="${esc(name)}" ${name === presetName ? 'selected' : ''}>${esc(name)}</option>`).join('')}
         </select>
         ${presetName ? `
-          <div class="dt-lbl">只注入勾选的条目（一个不勾 = 全部启用条目）</div>
+          <div class="dt-lbl">注入哪些条目（勾了哪条就注入哪条；酒馆里禁用的也照样注入）</div>
+          ${entries.length ? `<div style="display:flex;gap:6px;margin:0 0 6px">
+            <button class="dt-mini" type="button" data-act="presets.all">全选</button>
+            <button class="dt-mini" type="button" data-act="presets.none">全不选</button>
+          </div>` : ''}
           <div class="dt-pipe">
             ${entries.map((entry) => `<div class="dt-pipe-row">
               <input class="chk" type="checkbox" data-act="presets.entry" data-index="${esc(entry.index)}" ${entry.selected ? 'checked' : ''}>
               <span>${esc(entry.label ?? entry.name ?? `条目 ${entry.index}`)}${entry.enabled === false ? ' <em style="font-style:normal;color:var(--faded)">（酒馆里已禁用，勾了照样注入）</em>' : ''}</span>
             </div>`).join('') || '<div class="dt-pipe-row"><span>这个预设读不到条目</span></div>'}
           </div>
-          <div class="dt-note">已选 ${selectedCount} 条 · 注入 ${fmtNumber(status.length ?? 0)} 字${status.active ? '' : ' · 读不到内容，等于没注入'}</div>
+          <div class="dt-note">已选 ${selectedCount} 条 · 注入 ${fmtNumber(status.length ?? 0)} 字${status.active ? '' : ' · 读不到内容，等于没注入'}<br>
+            <b>全不选 = 一条都不注入</b>（想回到"全部启用条目"点「全选」）</div>
         ` : '<div class="dt-note">选「不使用」→ 不注入任何额外内容</div>'}
         <button class="dt-mini" style="margin-top:6px" type="button" data-act="presets.refresh">刷新列表</button>
         ${status.lastReadAt ? `<div class="dt-note">上次读取 · ${esc(new Date(status.lastReadAt).toLocaleTimeString('zh-CN', { hour12: false }))}（没变化说明酒馆那边还没应用）</div>` : ''}
       </div>
     </details>
 
-    <details>
+    <details data-key="prompt.break">
       <summary>破限词模式</summary>
       <div class="dt-box">
         ${seg({ name: 'dt-break', act: 'break.setMode', value: filter.mode, options: BREAK_MODES })}
@@ -71,7 +76,7 @@ export function render(state, ctxState) {
       </div>
     </details>
 
-    <details>
+    <details data-key="prompt.model">
       <summary>模型特化预设（三选一，不能同时开）</summary>
       <div class="dt-box">
         ${seg({ name: 'dt-mp', act: 'modelPreset.setKind', value: modelPreset.kind, options: PRESET_KINDS })}
@@ -83,7 +88,7 @@ export function render(state, ctxState) {
       </div>
     </details>
 
-    <details>
+    <details data-key="prompt.pipe">
       <summary>注入顺序（只读）</summary>
       <div class="dt-box">
         <div class="dt-pipe">
@@ -97,7 +102,7 @@ export function render(state, ctxState) {
       </div>
     </details>
 
-    <details>
+    <details data-key="prompt.sanitize">
       <summary>输出清洗</summary>
       <div class="dt-box">
         <div class="dt-toggle"><div>内置规则（&lt;thinking&gt; / &lt;think&gt; 思考块）</div>
@@ -130,7 +135,20 @@ export function render(state, ctxState) {
         const indices = entries
           .filter((entry) => (entry.index === Number(el.dataset.index) ? el.checked : entry.selected))
           .map((entry) => entry.index);
+        // 2026-09-14 反馈 #1：取消勾选到一条不剩时，以前会自动回落成"全部启用条目"
+        //（等于取消不掉）→ 现在空集就是**显式全不选**
+        api.presets?.selectEntries?.(indices, { none: indices.length === 0 });
+        ctx.refresh();
+      },
+      'presets.all': (el, { api, ctx, state }) => {
+        const indices = (state.presets?.entries ?? []).map((entry) => entry.index);
         api.presets?.selectEntries?.(indices);
+        ctx.flashGlobal(`已全选 ${indices.length} 条（酒馆里禁用的也会注入）`);
+        ctx.refresh();
+      },
+      'presets.none': (el, { api, ctx }) => {
+        api.presets?.selectEntries?.([], { none: true });
+        ctx.flashGlobal('已全不选：这个预设一条都不注入');
         ctx.refresh();
       },
       'presets.refresh': async (el, { api, ctx }) => {
