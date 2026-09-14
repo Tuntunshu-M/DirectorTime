@@ -31,7 +31,7 @@ const TABS = [
  * 与 `manifest.json` 的版本**保持一致**（同一份发布里跟着一起跳），
  * 这样"面板显示 0.10.0 / 更新提示 0.10.0"永远不会互相打脸 —— 一开始想只按界面改动跳，实际只会让人怀疑没更新成功。
  */
-export const UI_VERSION = '0.17.0';
+export const UI_VERSION = '0.17.1';
 
 const PALETTE_KEY = 'dt-palette';
 const LAYER_NAMES = { world: '世界书', prompt: '提示词', settings: '设置', debug: '调试面板' };

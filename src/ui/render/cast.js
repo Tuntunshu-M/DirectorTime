@@ -19,27 +19,34 @@ export function render(state) {
   const locked = state.profile?.locked ?? {};
   const generated = state.profile?.generatedAtText ?? '';
 
-  // ---------- T-437：当前已勾选世界书条目里识别出来的角色 ----------
+  // ---------- T-437：世界书里提到的角色 ----------
+  // 2026-09-14 实机反馈三条：①「温柔/底色」混进候选 ②别的卡的角色也混进来 ③几百本全摊开。
+  // → 现在：**按来源分两档**（当前角色卡的书 / 其它世界书），**两档都默认折叠**，
+  //  弱线索（`XX的` `XX说`）单独进「可能是人名」，默认折叠；默认只扫当前这张卡的书。
   const worldCast = state.cast?.world ?? {};
-  const detected = worldCast.detected ?? [];
-  const worldNames = new Set(detected.map((item) => String(item.name).toLowerCase()));
+  const worldGroups = [
+    { key: 'current', group: worldCast.current ?? {}, label: '当前角色卡的世界书',
+      note: '这张卡的主世界书 / 附加书 / 卡内嵌 —— 多人卡的角色一般都写在这里' },
+    { key: 'other', group: worldCast.other ?? {}, label: '其它世界书（全局书等）',
+      note: '全局启用的书、人格书、聊天书 —— 默认不扫，展开后点「重新识别」才扫' },
+  ];
   const inProtagonists = (name) => isProtagonist(list, { name });
-  // 已添加 / 候选分开列（规格 §3.2：已在名单里的不重复混在候选里）
-  const addedWorld = detected.filter((item) => inProtagonists(item.name));
-  const pendingWorld = detected.filter((item) => !inProtagonists(item.name));
-
-  // 手填项 = 没卡 id 且**不是**世界书识别出来的（否则会跟上面那节重复出现两次）
-  const manual = list.filter((item) => (item.manual || !item.id) && !worldNames.has(String(item.name).toLowerCase()));
+  // 手填项 = 没卡 id 且**不是**世界书识别出来的（否则会在上面那节重复出现两次）
+  const worldDetectedNames = new Set(worldGroups.flatMap(
+    (item) => (item.group.detected ?? []).map((row) => String(row.name).toLowerCase()),
+  ));
+  const manual = list.filter((item) => (item.manual || !item.id) && !worldDetectedNames.has(String(item.name).toLowerCase()));
   const currentChecked = Boolean(current) && isProtagonist(list, { name: current });
 
   /** 扫描计数行：规格要求界面上直接显示"扫了 X 条 / 共勾选 Y 条"（别只打控制台） */
-  const worldCountText = () => {
-    if (!worldCast.selectedCount) {
-      return '还没有勾选世界书条目 —— 到「世界书」里勾几条，再点「重新识别」';
-    }
-    if (worldCast.stale) return '正在识别当前已勾选的条目…';
-    const parts = [`扫了 ${worldCast.scannedCount} 条 / 共勾选 ${worldCast.selectedCount} 条`];
-    if (worldCast.unreadable) parts.push(`（${worldCast.unreadable} 条读不到内容）`);
+  const groupCountText = (group = {}) => {
+    if (!group.selectedCount) return '还没有勾选世界书条目 —— 到「世界书」里勾几条再来';
+    if (group.stale) return '正在识别当前已勾选的条目…';
+    // 兜底：有些快照没带 scannedOnce，但确实扫出过条数 —— 那就当扫过
+    if (!group.scannedOnce && !group.scannedCount) return '这一档还没扫描 —— 点「重新识别」跑一遍（本地跑，不花 API）';
+    const parts = [`扫了 ${group.scannedCount} 条 / 共勾选 ${group.selectedCount} 条`];
+    if (group.otherSelected > 0) parts.push(`（另有 ${group.otherSelected} 条属于另一档）`);
+    if (group.unreadable) parts.push(`${group.unreadable} 条读不到内容`);
     return parts.join('');
   };
 
@@ -64,21 +71,41 @@ export function render(state) {
    *
    * 与下面「酒馆里的角色」不是一回事：那一节读的是酒馆的角色卡列表（T-436），
    * 这一节读的是**世界书条目的正文**里提到了谁（多人卡的角色描写都在世界书里）。
+   *
+   * 2026-09-14：**按来源分成两档**（当前卡 / 其它世界书），每档一个折叠；
+   * 档内再按「已添加 / 候选 / 弱证据」分层，弱证据默认折叠 —— 用户有几百本书，不能全摊开。
    */
+  const renderWorldGroup = ({ key, group = {}, label, note }) => {
+    const detected = group.detected ?? [];
+    const added = detected.filter((item) => inProtagonists(item.name));
+    const pending = detected.filter((item) => !inProtagonists(item.name));
+    const weakList = (group.weak ?? []).filter((item) => !inProtagonists(item.name));
+    return `<details class="dt-fold" data-key="cast.world.${key}">
+      <summary>${esc(label)} · 候选 ${detected.length}${pending.length ? ` · 未勾 ${pending.length}` : ''}</summary>
+      <div class="dt-note" style="margin-top:0">${esc(note)}</div>
+      <div class="dt-note">${esc(groupCountText(group))}
+        <button class="dt-mini" type="button" data-act="cast.rescan" data-scope="${esc(key)}">重新识别</button>
+      </div>
+      ${added.length ? `<div class="dt-lbl">已添加（${added.length}）</div>${added.map(worldRow).join('')}` : ''}
+      ${pending.length ? `<div class="dt-lbl">候选（${pending.length}）</div>${pending.map(worldRow).join('')}` : ''}
+      ${!added.length && !pending.length
+        ? '<div class="dt-note">这一档还没识别出角色 —— 没勾条目，或条目里没写人名。识别漏了的用下面的手填框补。</div>'
+        : ''}
+      ${group.truncated ? `<div class="dt-note">还有 ${Math.max(0, Number(group.total ?? 0) - detected.length)} 个出现次数较少的没列出来</div>` : ''}
+      ${weakList.length ? `<details class="dt-fold" data-key="cast.world.${key}.weak">
+        <summary>可能是人名（弱证据 ${weakList.length}）</summary>
+        <div class="dt-note">只命中「XX的 / XX说」这类弱线索，可能是形容词或名词（例：<code>温柔的底色</code>）。真角色请用下面的手填框补。</div>
+        ${weakList.map(worldRow).join('')}
+      </details>` : ''}
+    </details>`;
+  };
+
   const worldBlock = `
-    <div class="dt-lbl">世界书里提到的角色（扫当前已勾选的条目）</div>
+    <div class="dt-lbl">世界书里提到的角色（本地识别，不花 API）</div>
     <div class="dt-note" style="margin-top:0">
-      只扫你在「世界书」里<b>勾选</b>的条目正文，<b>本地识别、不花 API</b>；
-      识别结果只是候选，<b>勾了才算主角</b>（不会自动帮你勾任何一个）。
-      <button class="dt-mini" type="button" data-act="cast.rescan">重新识别</button>
+      只扫你在「世界书」里<b>勾选</b>的条目正文；识别结果只是候选，<b>勾了才算主角</b>（不会自动帮你勾任何一个）。
     </div>
-    <div class="dt-note">${esc(worldCountText())}</div>
-    ${addedWorld.length ? `<div class="dt-lbl">已添加（${addedWorld.length}）</div>${addedWorld.map(worldRow).join('')}` : ''}
-    ${pendingWorld.length ? `<div class="dt-lbl">候选（${pendingWorld.length}）</div>${pendingWorld.map(worldRow).join('')}` : ''}
-    ${!addedWorld.length && !pendingWorld.length
-      ? '<div class="dt-note">这里还没有可选的 —— 没勾选世界书条目，或条目里没写人名。识别漏了的用下面的手填框补。</div>'
-      : ''}
-    ${worldCast.truncated ? `<div class="dt-note">还有 ${Math.max(0, Number(worldCast.total ?? 0) - detected.length)} 个出现次数较少的没列出来</div>` : ''}`;
+    ${worldGroups.map(renderWorldGroup).join('')}`;
 
   /**
    * 主角 / 攻略对象（T-412 多人卡 + T-436 自选 + T-437 世界书识别）。
@@ -166,10 +193,13 @@ export function render(state) {
        * `force: true` —— 指纹没变也照扫（缓存是给"自动补扫"省事用的，手动点就得真重算）。
        */
       'cast.rescan': async (el, { api, ctx }) => {
-        ctx.busy('cast', '正在扫当前已勾选的世界书条目…');
-        const result = await api.scanWorldCast?.({ force: true });
+        // 一次扫全量（本地正则，很便宜），结果由 bootstrap 按来源分档
+        ctx.busy('cast', '正在扫已勾选的世界书条目…');
+        const result = await api.scanWorldCast?.({ force: true, scope: 'all' });
+        const count = (result?.detected ?? []).length;
+        const weakCount = (result?.weak ?? []).length;
         ctx.flash('cast', result
-          ? `识别完成：扫了 ${result.scannedCount} 条 / 共勾选 ${result.selectedCount} 条${(result.detected ?? []).length ? `，识别到 ${result.detected.length} 个角色` : '，还没识别到角色（可以用下面的手填框）'}`
+          ? `识别完成：扫了 ${result.scannedCount} 条 / 共勾选 ${result.selectedCount} 条${count ? `，识别到 ${count} 个角色${weakCount ? `（另有 ${weakCount} 个弱证据，在折叠里）` : ''}` : '，还没识别到角色（可以用下面的手填框）'}`
           : '没扫到（世界书里可能一条都没勾选）');
         ctx.refresh();
       },

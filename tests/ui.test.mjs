@@ -113,8 +113,10 @@ function fakeState(patch = {}) {
     current: '罗德里戈',
     candidates: [{ id: '0', name: '洛佩兹' }, { id: '1', name: '罗德里戈' }],
     // T-437：当前已勾选世界书条目里识别出来的角色（本地零调用，等用户勾选）
+    // 2026-09-14：按来源分档 —— current = 当前角色卡的书，other = 全局书等
     world: {
-      stale: false,
+      current: {
+        stale: false,
       scannedAt: 1,
       scannedCount: 12,
       selectedCount: 18,
@@ -138,6 +140,8 @@ function fakeState(patch = {}) {
           sources: [{ bookName: '老宅', entryName: '夜里的访客', entryKey: '老宅::5', sourceType: 'library', sourceLabel: '全部世界书' }],
         },
       ],
+      },
+      other: { stale: false, scannedOnce: false, scannedCount: 0, selectedCount: 18, detected: [] },
     },
   },
     profile: {
@@ -1077,8 +1081,11 @@ check('世界书识别出来的角色不再出现在「自选（手填）」那�
       current: '',
       candidates: [],
       world: {
-        stale: false, scannedCount: 1, selectedCount: 1, unreadable: 0, total: 1, truncated: false,
-        detected: [{ name: '莉泽', count: 3, known: false, sources: [{ bookName: '老宅', entryName: '夜里的访客', entryKey: '老宅::5', sourceType: 'library' }] }],
+        current: {
+          stale: false, scannedOnce: true, scannedCount: 1, selectedCount: 1, unreadable: 0, total: 1, truncated: false,
+          detected: [{ name: '莉泽', count: 3, known: false, sources: [{ bookName: '老宅', entryName: '夜里的访客', entryKey: '老宅::5', sourceType: 'library' }] }],
+        },
+        other: { stale: false, scannedOnce: false, scannedCount: 0, selectedCount: 1, detected: [] },
       },
     },
   }), { view: 'cast' }).html;
@@ -1089,12 +1096,12 @@ check('世界书识别出来的角色不再出现在「自选（手填）」那�
 
 check('没勾选任何世界书条目 / 还没扫过时如实说明，不报错', () => {
   const nothing = renderPanel(fakeState({
-    cast: { list: [], current: '', candidates: [], world: { stale: false, selectedCount: 0, scannedCount: 0, detected: [] } },
+    cast: { list: [], current: '', candidates: [], world: { current: { stale: false, selectedCount: 0, scannedCount: 0, detected: [] }, other: { stale: false, selectedCount: 0, detected: [] } } },
   }), { view: 'cast' }).html;
   assert.ok(nothing.includes('还没有勾选世界书条目'), '要告诉用户去勾世界书');
 
   const stale = renderPanel(fakeState({
-    cast: { list: [], current: '', candidates: [], world: { stale: true, selectedCount: 4, scannedCount: 0, detected: [] } },
+    cast: { list: [], current: '', candidates: [], world: { current: { stale: true, scannedOnce: false, selectedCount: 4, scannedCount: 0, detected: [] }, other: { stale: false, selectedCount: 4, detected: [] } } },
   }), { view: 'cast' }).html;
   assert.ok(stale.includes('正在识别'), '过期时别显示假的旧数字');
 });

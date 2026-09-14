@@ -349,19 +349,42 @@ export function bootstrap({ ctx, store } = {}) {
   }
 
   /**
-   * 扫当前**已勾选**的世界书条目，本地抽出里面提到的角色，缓存进 `runtime.worldCastCandidates`。
+   * 2026-09-14 实机反馈：「别的角色卡里的角色也出现了」。
+   * 根因是勾选跨书共享 —— 一次 `pickSelected` 会把**其它卡 / 全局书**里勾过的条目一起捞进来。
+   * 现在按来源分两档：
+   *   · current = **当前这张角色卡**的世界书（主书 / 附加书 / 卡内嵌）—— 默认就扫这些
+   *   · other   = 全局书、其它世界书、人格书、聊天书 —— 要扫得用户自己点开那一组
+   */
+  const CURRENT_CARD_SOURCE_TYPES = new Set(['character-primary', 'character-extra', 'character-embedded']);
+  // `all` 用主缓存键（界面与快照读这一份）；单扫某一档时才落到各自的键
+  const SCOPE_CACHE_KEYS = { all: 'worldCastCandidates', current: 'worldCastCandidatesCurrent', other: 'worldCastCandidatesOther' };
+
+  function splitEntryScope(items = []) {
+    const current = [];
+    const other = [];
+    for (const item of items ?? []) {
+      (CURRENT_CARD_SOURCE_TYPES.has(String(item?.sourceType ?? '')) ? current : other).push(item);
+    }
+    return { current, other };
+  }
+
+  /**
+   * 扫**当前已勾选**的世界书条目，本地抽出里面提到的角色，缓存进 `runtime.*`。
    *
-   * 三条硬要求（规格 §2/§3/§7）：
-   *   · 只扫已勾选条目（未勾的、其它书、角色卡正文一律不扫）
+   * 四条硬要求（规格 §2/§3/§7）：
+   *   · 只扫已勾选条目（未勾的、角色卡正文一律不扫）
+   *   · **一次扫全量**，结果**按来源分两档**返回（当前角色卡的书 / 其它世界书）
+   *     —— 试过默认只扫当前卡的那档：全局书里的角色会被整档漏掉，不能这么干
    *   · **零 API 调用** —— 只读世界书文本 + 本地正则，绝不碰 client
    *   · **不自动设主角** —— 结果只进候选清单，`settings.protagonists` 一个字都不动
-   * @param {{force?: boolean}} options force=true = 界面点「重新识别」
+   * @param {{force?: boolean, scope?: 'all'|'current'|'other'}} options force=true = 界面点「重新识别」
    */
-  async function scanWorldCast({ force = false } = {}) {
+  async function scanWorldCast({ force = false, scope = 'all' } = {}) {
     const selection = store.get().worldSelection ?? {};
     const selectedCount = Object.keys(selection).filter((key) => selection[key]).length;
     const signature = selectionSignature(selection);
-    const cached = store.get().runtime?.worldCastCandidates ?? null;
+    const cacheKey = SCOPE_CACHE_KEYS[scope] ?? SCOPE_CACHE_KEYS.current;
+    const cached = store.get().runtime?.[cacheKey] ?? null;
     // 没勾选就没有可扫的（也避免"空勾选 → 反复重扫"）
     if (!force && cached && cached.selectionKey === signature) return cached;
 
@@ -375,20 +398,55 @@ export function bootstrap({ ctx, store } = {}) {
     }
     rememberWorldSizes(picked);
 
-    const extracted = extractWorldCast(picked, { known: knownCastNames(), limit: WORLD_CAST_LIMIT });
-    const result = {
+    const scopeSplit = splitEntryScope(picked);
+    const targets = scope === 'current' ? scopeSplit.current
+      : scope === 'other' ? scopeSplit.other
+        : picked;
+    const known = knownCastNames();
+
+    const extracted = extractWorldCast(targets, { known, limit: WORLD_CAST_LIMIT });
+    /**
+     * 界面要的两档：**当前角色卡的书** / **其它世界书**。
+     * 两组各自抽一遍（本地正则，跑第二遍几乎不花钱），这样"扫了 X 条"每档都能对上账。
+     */
+    const shapeGroup = (extract, scanned) => ({
       at: Date.now(),
       selectionKey: signature,
-      scannedCount: picked.length,
+      scannedCount: scanned,
+      selectedCount,
+      otherSelected: selectedCount - scanned,
+      unreadable: Math.max(0, selectedCount - picked.length),
+      total: extract.total ?? 0,
+      weakTotal: extract.weakTotal ?? 0,
+      truncated: Boolean(extract.truncated),
+      weakTruncated: Boolean(extract.weakTruncated),
+      detected: extract.detected ?? [],
+      weak: extract.weak ?? [],
+    });
+    const groups = {
+      all: shapeGroup(extracted, targets.length),
+      current: shapeGroup(extractWorldCast(scopeSplit.current, { known, limit: WORLD_CAST_LIMIT }), scopeSplit.current.length),
+      other: shapeGroup(extractWorldCast(scopeSplit.other, { known, limit: WORLD_CAST_LIMIT }), scopeSplit.other.length),
+    };
+
+    const result = {
+      at: Date.now(),
+      scope,
+      selectionKey: signature,
+      scannedCount: targets.length,
       selectedCount,
       // 拿不到内容的条目（书读取失败等）如实报出来，别假装都扫到了
       unreadable: Math.max(0, selectedCount - picked.length),
       total: extracted.total,
+      weakTotal: extracted.weakTotal ?? 0,
       truncated: extracted.truncated,
+      weakTruncated: extracted.weakTruncated ?? false,
       detected: extracted.detected,
+      weak: extracted.weak ?? [],
+      groups,
     };
     store.update(
-      (draft) => ({ ...draft, runtime: { ...draft.runtime, worldCastCandidates: result } }),
+      (draft) => ({ ...draft, runtime: { ...draft.runtime, [cacheKey]: result } }),
       { track: false },
     );
     return result;
@@ -400,17 +458,27 @@ export function bootstrap({ ctx, store } = {}) {
     const selectedCount = Object.keys(selection).filter((key) => selection[key]).length;
     const signature = selectionSignature(selection);
     const cache = store.get().runtime?.worldCastCandidates ?? null;
-    return {
-      // stale=true → 还没扫过 / 勾选变过了，人物页会自动补扫一次
-      stale: !cache || cache.selectionKey !== signature,
-      scannedAt: cache?.at ?? 0,
-      scannedCount: cache?.scannedCount ?? 0,
-      selectedCount,
-      unreadable: cache?.unreadable ?? 0,
-      total: cache?.total ?? 0,
-      truncated: Boolean(cache?.truncated),
-      detected: cache?.detected ?? [],
+    const read = (key) => {
+      // 没扫过那一档时 groups 里没有它 —— 至少给界面一个空壳（别让模板读 undefined 崩）
+      const group = cache?.groups?.[key] ?? null;
+      return {
+        // stale=true → 还没扫过 / 勾选变过了，人物页会自动补扫一次
+        stale: !cache || cache.selectionKey !== signature,
+        scannedAt: cache?.at ?? 0,
+        scannedCount: group?.scannedCount ?? 0,
+        scannedOnce: Boolean(cache),
+        selectedCount,
+        otherSelected: group?.otherSelected ?? 0,
+        unreadable: group?.unreadable ?? 0,
+        total: group?.total ?? 0,
+        weakTotal: group?.weakTotal ?? 0,
+        truncated: Boolean(group?.truncated),
+        weakTruncated: Boolean(group?.weakTruncated),
+        detected: group?.detected ?? [],
+        weak: group?.weak ?? [],
+      };
     };
+    return { all: read('all'), current: read('current'), other: read('other') };
   }
 
   /**

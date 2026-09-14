@@ -43,8 +43,9 @@ function entry(text, name = '条', book = '书') {
     entryKey: entryKey(book, name),
     name,
     bookName: book,
-    sourceType: 'library',
-    sourceLabel: '全部世界书',
+    // 2026-09-14：这条模拟**当前角色卡的世界书**（主书），多人卡的角色一般就写在这里
+    sourceType: 'character-primary',
+    sourceLabel: '角色主世界书',
     content: text,
   };
 }
@@ -68,11 +69,22 @@ await check('引号前主语：`XX说：“…”` / `XX低声说：“…”` �
   assert.equal(names(result).includes('艾拉说'), false, '不能出现"艾拉说"这种带动词的候选');
 });
 
-await check('称谓模式：`XX 看着` / `XX 笑了` / `XX 的`', () => {
+// 2026-09-14 实机反馈：「温柔 / 底色」混进候选 —— 根因就是 `XX的` 这条规则。
+// 现在分档：**动词模式 = 强证据**（直接进候选），**`XX的` = 弱证据**（只进折叠区，不吵人）。
+await check('称谓模式：`XX 看着` / `XX 笑了` = 强证据；`XX 的` = 弱证据', () => {
   const result = extractWorldCast([entry('莉泽看着窗外。\n艾拉笑了。\n管家的手很稳。')]);
-  assert.ok(names(result).includes('莉泽'));
+  assert.ok(names(result).includes('莉泽'), '动词模式足够可靠，直接进候选');
   assert.ok(names(result).includes('艾拉'));
-  assert.ok(names(result).includes('管家'));
+  assert.equal(names(result).includes('管家'), false, '`XX的` 不算强证据，不该占候选位');
+  assert.ok((result.weak ?? []).map((item) => item.name).includes('管家'), '但也不能丢 —— 待在弱证据折叠区');
+});
+
+await check('2026-09-14 反馈：「温柔」「底色」这类词不许进候选', () => {
+  const result = extractWorldCast([entry('温柔的底色是冷漠，底色之下没有别的东西。\n成功的阈值很高。')]);
+  for (const noise of ['温柔', '底色', '冷漠', '成功', '阈值', '东西']) {
+    assert.equal(names(result).includes(noise), false, `「${noise}」不是角色，候选区里不许有`);
+  }
+  assert.deepEqual(names(result), [], '这一段里根本没有角色名，候选区该是空的');
 });
 
 await check('停用词过滤（噪声比漏检更烦人）', () => {
@@ -111,7 +123,7 @@ await check('出现次数与出处准确（同一位置被多条规则命中只�
 
 await check('排序：出现次数降序；同次数按首次出现位置；上限 30', () => {
   const result = extractWorldCast([entry('艾拉说：“一。”\n莉泽笑了。\n莉泽说：“二。”\n管家的手很稳。')]);
-  assert.deepEqual(names(result), ['莉泽', '艾拉', '管家'], '次数多的在前，同次数按谁先出现');
+  assert.deepEqual(names(result), ['莉泽', '艾拉'], '次数多的在前，同次数按谁先出现（`管家的` 属弱证据，不在这里）');
 
   const many = extractWorldCast([
     entry(Array.from({ length: 40 }, (_, i) => `角色${'甲乙丙丁戊己庚辛壬癸'[i % 10]}${i}：第 ${i} 条。`).join('\n')),
@@ -164,7 +176,8 @@ function makeEnv({ selection = {}, books } = {}) {
     clearExtensionPrompt: () => true,
     getCharacterId: () => 0,
     getCharacterData: () => ({ name: '罗德里戈' }),
-    getLorebookSources: () => [{ type: 'library', label: '全部世界书', names: Object.keys(data) }],
+    // 2026-09-14：模拟**当前角色卡的主世界书**（多人卡的角色就写在这种书里）
+    getLorebookSources: () => [{ type: 'character-primary', label: '角色主世界书', names: Object.keys(data) }],
     loadWorldInfoBook: async (name) => {
       reads.push(name);
       if (data[name] === 'ERROR') throw new Error('加载失败');
@@ -259,11 +272,12 @@ await check('读不到内容的条目如实计入「N 条读不到内容」', as
 });
 
 await check('缓存：勾选没变不重扫；勾选变了自动标记过期', async () => {
+  // 2026-09-14：快照按来源分档（current = 当前角色卡的书 / other = 其它世界书）
   const env = makeEnv({ selection: { [entryKey('书A', '1')]: true } });
-  assert.equal(env.api.ui.read().cast.world.stale, true, '还没扫过 = 过期');
+  assert.equal(env.api.ui.read().cast.world.current.stale, true, '还没扫过 = 过期');
 
   await env.api.cast.scanWorld();
-  const snapshot = env.api.ui.read().cast.world;
+  const snapshot = env.api.ui.read().cast.world.current;
   assert.equal(snapshot.stale, false, '扫完就不该再算过期');
   assert.equal(snapshot.scannedCount, 1);
   assert.equal(snapshot.selectedCount, 1);
@@ -274,9 +288,9 @@ await check('缓存：勾选没变不重扫；勾选变了自动标记过期', a
   assert.equal(env.reads.length, readsAfterFirst, '勾选没变 → 走缓存，不重读世界书');
 
   env.api.ui.saveWorldSelection({ [entryKey('书A', '1')]: true, [entryKey('书B', '1')]: true });
-  assert.equal(env.api.ui.read().cast.world.stale, true, '改了勾选 → 下次打开人物页要重扫');
+  assert.equal(env.api.ui.read().cast.world.current.stale, true, '改了勾选 → 下次打开人物页要重扫');
   await env.api.cast.scanWorld();
-  assert.equal(env.api.ui.read().cast.world.selectedCount, 2);
+  assert.equal(env.api.ui.read().cast.world.current.selectedCount, 2);
 });
 
 await check('「重新识别」= force：指纹没变也照重算（不能把旧缓存端回去）', async () => {

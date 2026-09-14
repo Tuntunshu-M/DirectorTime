@@ -38,6 +38,23 @@ export const WORLD_CAST_STOPWORDS = new Set([
   '低头', '转身', '点头', '摇头', '皱眉', '叹气', '冷笑', '笑了', '笑着',
 ]);
 
+/**
+ * 描写词 / 抽象名词：**任何情况下都不算角色**（强证据命中也不收）。
+ *
+ * 2026-09-14 实机：用户看到「温柔」「底色」出现在候选里。
+ * 「温」本身是姓氏，「温柔」靠姓氏表拦不住 —— 只能显式点名。
+ * 这里只放**几乎不会当人名**的词（「希望」「光明」这类能当名字的**不收**，
+ * 万一真有同名角色还有手填框兜底）。
+ */
+export const ABSTRACT_NOUNS = new Set([
+  '温柔', '底色', '冷漠', '冰冷', '温暖', '孤独', '悲伤', '愤怒', '恐惧', '痛苦',
+  '尴尬', '平静', '神秘', '危险', '美丽', '优雅', '高贵', '丑陋', '真实', '虚假',
+  '表面', '本质', '气氛', '氛围', '情绪', '状态', '情况', '变化', '过程', '意义',
+  '价值', '力量', '能力', '存在', '距离', '关系', '内心', '外表', '命运', '灵魂',
+  '阴影', '黑暗', '寒冷', '潮湿', '柔软', '坚硬', '明亮', '昏暗', '寂静', '绝望',
+  '世界', '故事', '时间', '空间', '记忆', '过去', '未来', '现在', '命运', '规则',
+]);
+
 /** 名字里带这些字一定不是人名（的/了/着/是/在/和/与/为 都是纯虚词） */
 const FUNCTION_CHARS = /[\u7684\u4e86\u7740\u662f\u5728\u548c\u4e0e\u4e3a]/;
 /** 组织 / 地点不是"可攻略的角色"（`裴氏集团` `洛佩兹的庄园` 这类） */
@@ -51,7 +68,55 @@ const HAS_NAME_CHAR = /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7afA-Za-z]/;
 /** 名字允许出现的字符（捕获用） */
 const NAME_CHARS = '\u4e00-\u9fff\u3040-\u30ffA-Za-z';
 
+/**
+ * 常见中文姓氏（单姓取篇幅，够用即可）。
+ *
+ * 为什么需要它：2026-09-14 实机反馈 —— 界面上冒出了「温柔」「底色」这种词。
+ * 根因是 `XX的` 这条弱规则：`温柔的底色` 会被当成候选 `温柔`。
+ * **中文人名几乎必含姓氏字**，用姓氏表一拦，形容词/普通名词基本挡在外面。
+ * 西式译名、日文名不一定有（例如「艾拉」），所以这里是**降级为弱证据**，
+ * 不是直接丢掉 —— 宁漏勿噪，但也别把真角色扔了。
+ */
+export const CHINESE_SURNAMES = new Set([...(
+  '赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜戚谢邹喻柏水窦章'
+  + '云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳鲍史唐费廉岑薛雷贺倪汤滕殷罗毕郝安常乐于'
+  + '时傅皮卞齐康伍余元卜顾孟平黄和穆萧尹姚邵汪祁毛禹狄米贝明臧计伏成戴谈宋茅庞熊纪舒'
+  + '屈项祝董梁杜阮蓝闵席季麻强贾路娄江童颜郭梅盛林刁钟徐邱骆高夏蔡田樊胡凌霍虞万支柯'
+  + '管卢莫经房裘缪干解应宗丁宣邓郁单杭洪包诸左石崔吉钮龚程嵇邢滑裴陆荣翁荀羊惠甄曲家'
+  + '封芮储靳邴松井段富巫乌焦巴弓牧山谷车侯全班仰秋仲伊宫宁仇栾甘厉戎祖武符刘景詹束龙'
+  + '叶幸司韶黎薄印宿白怀蒲从鄂索咸籍赖卓蔺屠蒙池乔阴胥能苍双闻莘党翟贡劳姬申扶堵冉宰'
+  + '郦雍桑桂濮牛寿通边燕冀浦尚农温别庄晏柴瞿阎充慕连茹习宦艾鱼容向古易慎戈廖庾终暨居'
+  + '衡步都耿满弘匡国文寇广禄阙东欧沃利蔚越隆师巩聂晁冷辛阚那简饶空曾沙养鞠须丰巢关蒯'
+  + '相查后荆红游权盖益桓公上官令狐'
+)].filter((ch) => ch));
+
+/** 复姓（两个字）*/
+const COMPOUND_SURNAMES = ['欧阳', '太史', '端木', '上官', '司马', '东方', '独孤', '南宫', '万俟', '闻人',
+  '夏侯', '诸葛', '尉迟', '公孙', '赫连', '澹台', '皇甫', '宗政', '濮阳', '公冶', '太叔', '申屠',
+  '慕容', '长孙', '宇文', '司徒', '司空', '轩辕', '钟离', '闾丘', '亓官', '鲜于'];
+
+/**
+ * 纯汉字名的"像不像人名"打分。
+ * @returns {'likely'|'unlikely'} unlikely = 降级到弱证据（不是丢掉）
+ */
+function looksLikeChineseName(raw) {
+  const name = normalizeCastName(raw).replace(/[\s·・]/g, '');
+  if (!/^[\u4e00-\u9fff]{2,4}$/.test(name)) return 'likely'; // 含英文/日文/间隔号的不查姓，放过
+  for (const prefix of COMPOUND_SURNAMES) {
+    if (name.startsWith(prefix)) {
+      return name.length >= 3 ? 'likely' : 'unlikely'; // 复姓后面至少还得有一个字
+    }
+  }
+  return CHINESE_SURNAMES.has(name[0]) ? 'likely' : 'unlikely';
+}
+
 // ---------- 抽取规则（规格 §3.1，按优先级）----------
+//
+// 2026-09-14 改：**分级**。以前所有规则一视同仁 → 「温柔」「底色」混进候选。
+// · 强证据（$STRONG）：行首标签式 / 引号前主语 / 已知名单 —— 直接进候选区
+// · 弱证据（$WEAK）：`XX的` `XX说` —— 只进「可能是人名（弱证据）」，默认折叠
+export const STRENGTH_STRONG = 'strong';
+export const STRENGTH_WEAK = 'weak';
 
 /**
  * 说话/动作词。**长词必须排前面**，否则 `笑了笑` 会被 `笑` 抢先匹配。
@@ -115,6 +180,7 @@ export function isCastNameCandidate(raw) {
   if (len < WORLD_CAST_MIN_LEN || len > WORLD_CAST_MAX_LEN) return false;
   if (!HAS_NAME_CHAR.test(name)) return false;
   if (WORLD_CAST_STOPWORDS.has(name)) return false;
+  if (ABSTRACT_NOUNS.has(name)) return false; // 「温柔」这种：姓氏表拦不住，显式点名
   if (CHAPTER_TITLE.test(name)) return false;
   if (FUNCTION_CHARS.test(name)) return false;
   if (PRONOUN_START.test(name)) return false;
@@ -140,13 +206,13 @@ function escapeRe(text) {
 function ruleHits(text) {
   const out = [];
 
-  // ① 行首标签式
+  // ① 行首标签式 —— 强证据
   for (const match of text.matchAll(LABEL_RE)) {
     const offset = match.index + match[0].search(/[^\s\u3000]/);
-    out.push([stripTrailingVerb(match[1]), offset]);
+    out.push([stripTrailingVerb(match[1]), offset, STRENGTH_STRONG]);
   }
 
-  // ② 引号前主语（`艾拉低声说：“…”`）
+  // ② 引号前主语（`艾拉低声说：“…”`）—— 强证据
   QUOTE_OPEN_RE.lastIndex = 0;
   let quote;
   while ((quote = QUOTE_OPEN_RE.exec(text))) {
@@ -156,19 +222,40 @@ function ruleHits(text) {
     if (!run || !VERB_SUFFIX_RE.test(run)) continue;
     const name = stripTrailingVerb(run);
     if (!name || name === normalizeCastName(run)) continue; // 剥不掉动词 = 那不是"谁在说"
-    out.push([name, headStart + head.length - run.length]);
+    out.push([name, headStart + head.length - run.length, STRENGTH_STRONG]);
   }
 
-  // ③ 称谓模式：XX 说 / XX 问 / XX 笑了 / XX 看着
+  // ③ 称谓模式：XX 说 / XX 问 / XX 笑了 / XX 看着 —— **强证据**
+  //    只要后面真跟着说话/动作动词，主语是角色的把握很高（"温柔笑了"几乎不会出现在正文里）
   for (const match of text.matchAll(TITLE_VERB_RE)) {
-    out.push([normalizeCastName(match[1]), match.index]);
+    out.push([normalizeCastName(match[1]), match.index, STRENGTH_STRONG]);
   }
-  // ③ 称谓模式：XX 的
+  // ③ 称谓模式：XX 的 —— **唯一的重灾区**（`温柔的底色` 就出自这条），永远只算弱证据
   for (const match of text.matchAll(TITLE_OF_RE)) {
-    out.push([normalizeCastName(match[1]), match.index]);
+    out.push([normalizeCastName(match[1]), match.index, STRENGTH_WEAK]);
   }
 
   return out;
+}
+
+/**
+ * 一个名字该排在哪个档 —— 返回 `null` 表示该丢掉。
+ *
+ * | 命中的规则 | 像中文人名 | 结果 |
+ * |---|---|---|
+ * | 强（行首标签 / 引号主语） | 是 | strong |
+ * | 强 | 不像（如西式译名） | weak（降级，不丢） |
+ * | 弱（`XX的` / `XX说`） | 是 | weak |
+ * | 弱 | 不像 | **丢弃** ← 「温柔」「底色」走这条 |
+ */
+function grade(name, strength) {
+  if (!isCastNameCandidate(name)) return null;
+  if (strength === STRENGTH_STRONG) return STRENGTH_STRONG;
+  // 走到这里 = 只命中了 `XX的`。中文里"XX的"太常见（温柔的底色 / 成功的阈值），
+  // 所以姓氏表过不了就丢掉 —— 用户看到的「温柔」「底色」全出自这条。
+  // 反过来：动词 / 行首标签 / 引号主语命中的**一律不查姓氏**（西式译名如「莉泽」
+  // 根本不在百家姓里，查了会把真角色误杀，试过一次，不能再来）。
+  return looksLikeChineseName(name) === 'likely' ? STRENGTH_WEAK : null;
 }
 
 /**
@@ -185,15 +272,26 @@ export function extractWorldCast(entries = [], { known = [], limit = WORLD_CAST_
   const knownSet = new Set((known ?? []).map(normalizeCastName).filter(acceptKnown));
   const max = Number.isFinite(Number(limit)) && Number(limit) > 0 ? Math.floor(Number(limit)) : WORLD_CAST_LIMIT;
 
-  // ① 第一遍：按规则找出"谁是角色"（行首标签 / 引号主语 / 称谓 / 已知名单）
+  // ① 第一遍：按规则找出"谁是角色"，并按证据强弱分档
   const nameSet = new Set();
+  const strength = new Map(); // name → strong / weak
   for (const item of list) {
-    for (const [name] of ruleHits(String(item.content))) {
-      if (isCastNameCandidate(name)) nameSet.add(name);
+    for (const [name, , hitStrength] of ruleHits(String(item.content))) {
+      const graded = grade(name, hitStrength);
+      if (!graded) continue; // 「温柔」「底色」这类在这里被丢掉
+      // 一条规则说 strong、另一条说 weak → 取 strong（宁可让用户看到）
+      if (!strength.has(name) || strength.get(name) === STRENGTH_WEAK) strength.set(name, graded);
+      nameSet.add(name);
     }
   }
-  for (const name of knownSet) nameSet.add(name);
-  if (!nameSet.size) return { detected: [], total: 0, truncated: false, scanned: list.length };
+  // 已知名单（主角 / 当前生成者）无条件进强证据区
+  for (const name of knownSet) {
+    nameSet.add(name);
+    strength.set(name, STRENGTH_STRONG);
+  }
+  if (!nameSet.size) {
+    return { detected: [], weak: [], total: 0, weakTotal: 0, truncated: false, weakTruncated: false, scanned: list.length };
+  }
 
   /**
    * ② 第二遍：把认出来的名字在全篇里的**每一次出现**都数上（含"莉泽提起过艾拉"这种裸提）
@@ -248,17 +346,26 @@ export function extractWorldCast(entries = [], { known = [], limit = WORLD_CAST_
     return a.firstSeq - b.firstSeq;
   });
 
-  const detected = all.slice(0, max).map((item) => ({
+  const shape = (item) => ({
     name: item.name,
     count: item.count,
     known: knownSet.has(item.name),
     sources: [...item.sources.values()],
-  }));
+  });
+
+  // 强证据 = 默认展示的候选；弱证据单独给一组，界面默认折叠（宁漏勿噪，但不丢）
+  const strongAll = all.filter((item) => strength.get(item.name) === STRENGTH_STRONG);
+  const weakAll = all.filter((item) => strength.get(item.name) !== STRENGTH_STRONG);
+  const detected = strongAll.slice(0, max).map(shape);
+  const weak = weakAll.slice(0, max).map(shape);
 
   return {
     detected,
-    total: all.length,
-    truncated: all.length > detected.length,
+    weak,
+    total: strongAll.length,
+    weakTotal: weakAll.length,
+    truncated: strongAll.length > detected.length,
+    weakTruncated: weakAll.length > weak.length,
     scanned: list.length,
   };
 }
