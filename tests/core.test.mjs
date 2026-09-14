@@ -339,4 +339,34 @@ check('读不到全局列表 → 全局组空 + 如实提示，书全在「全�
   assert.ok(library.label.includes('全部'), library.label);
 });
 
+console.log('2026-09-14 #2 · 读 user 人设（persona）');
+
+check('persona_descriptions 那条路（酒馆常见形状）', () => {
+  const ctx = createSillyTavernContext(() => ({
+    user_avatar: 'me.png',
+    name1: '小雨',
+    persona_descriptions: { 'me.png': { description: '讨厌薄荷，怕吵' } },
+  }));
+  assert.deepEqual(ctx.getUserPersona(), { name: '小雨', description: '讨厌薄荷，怕吵' });
+});
+
+check('别的酒馆形状也认（powerUserSettings / personas 对象）', () => {
+  const a = createSillyTavernContext(() => ({
+    user_avatar: 'u.png',
+    powerUserSettings: { personas: { 'u.png': '阿程' }, persona_descriptions: { 'u.png': { description: '易过敏' } } },
+  }));
+  assert.deepEqual(a.getUserPersona(), { name: '阿程', description: '易过敏' });
+
+  const b = createSillyTavernContext(() => ({
+    user_avatar: 'u.png',
+    personas: { 'u.png': { description: '素食主义' } },
+  }));
+  assert.deepEqual(b.getUserPersona(), { name: '', description: '素食主义' });
+});
+
+check('读不到 → 两个字段都是空串（不拿角色卡冒充用户）', () => {
+  const ctx = createSillyTavernContext(() => ({}));
+  assert.deepEqual(ctx.getUserPersona(), { name: '', description: '' });
+});
+
 console.log(`\n通过 ${passed} 项`);

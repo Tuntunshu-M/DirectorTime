@@ -354,6 +354,46 @@ export function createSillyTavernContext(contextProvider = defaultProvider) {
     },
 
     /**
+     * 2026-09-14 反馈 #2：**user 的人设**（SillyTavern 的 persona）。
+     *
+     * 以前剧本 / 侧写生成完全看不到"用户是谁" —— 用户在 persona 里写了"讨厌薄荷"，
+     * 模型还让 char 送薄荷。酒馆各版本把 persona 放在不同地方，这里逐个探测；
+     * 认不出来就返回空（**不猜、不编**，也不拿角色卡去冒充用户）。
+     * @returns {{name: string, description: string}}
+     */
+    getUserPersona() {
+      const host = getHost();
+      const avatar = host.user_avatar ?? host.userAvatar ?? null;
+      const pick = (value) => (typeof value === 'string' && value.trim() ? value.trim() : '');
+      const first = (candidates) => {
+        for (const read of candidates) {
+          try {
+            const value = pick(read());
+            if (value) return value;
+          } catch {
+            // 探测下一个
+          }
+        }
+        return '';
+      };
+
+      const name = first([
+        () => host.name1,
+        () => host.personas?.[avatar],
+        () => host.powerUserSettings?.personas?.[avatar],
+        () => host.power_user?.personas?.[avatar],
+      ]);
+      const description = first([
+        () => host.persona_descriptions?.[avatar]?.description,
+        () => host.powerUserSettings?.persona_descriptions?.[avatar]?.description,
+        () => host.power_user?.persona_descriptions?.[avatar]?.description,
+        () => host.personas?.[avatar]?.description,
+      ]);
+
+      return { name, description };
+    },
+
+    /**
      * 世界书来源枚举（项目书 §F1）：全局 / 角色主 / 角色附加 / 人格 / 聊天（按名字加载）
      * + 角色卡内嵌（直接读条目）。ST 版本差异大，缺哪类就返回空数组，不报错。
      */

@@ -326,6 +326,20 @@ export function bootstrap({ ctx, store } = {}) {
   }
 
   /**
+   * 2026-09-14 反馈 #2：**user 人设文本**（喂给剧本 / 侧写生成）。
+   *
+   * 为什么要它：用户在 persona 里写了"讨厌薄荷"，模型却让 char 送薄荷 ——
+   * 因为生成侧从来没见过"用户是谁"。读不到就返回空串（模板里的那段会整块消失，零回归）。
+   */
+  function userPersonaText() {
+    const persona = ctx?.getUserPersona?.() ?? { name: '', description: '' };
+    const lines = [];
+    if (persona.name) lines.push(`名字：${persona.name}`);
+    if (persona.description) lines.push(`人设：${persona.description}`);
+    return lines.join('\n');
+  }
+
+  /**
    * 老数据兼容：世界书选择以前存在全局 settings 里，现在搬到 chat 级。
    * 当前聊天还没有选择、而全局设置里有 → 先把全局那份搬过来（只搬一次）。
    */
@@ -450,6 +464,8 @@ export function bootstrap({ ctx, store } = {}) {
         // T-408：把还没回收的伏笔告诉导演，别重复埋、能回收就回收
         foreshadows: foreshadowText(store.get().outline),
         context: recentContext(),
+        // 2026-09-14 反馈 #2：生成剧本也要知道 user 是谁（别写出他明确反感的东西）
+        userPersona: userPersonaText(),
       };
       let result = rememberRequest(await outline.generate(vars));
 
@@ -616,6 +632,8 @@ export function bootstrap({ ctx, store } = {}) {
       hardLimits: hardLimitText(settings().hardLimits),
       // T-408：续写也要知道哪些坑还没填
       foreshadows: foreshadowText(state.outline),
+      // 2026-09-14 反馈 #2：续写同样要尊重 user 人设
+      userPersona: userPersonaText(),
       history,
       context: recentContext(),
     };
@@ -722,7 +740,7 @@ export function bootstrap({ ctx, store } = {}) {
       }
       // T-414：侧写档位 L1 → 生成完先进队列，确认后才写入
       if (gate(settings().automation, 'profile').queue) {
-        const generated = await profile.generate({ world: await worldText(), context: recentContext() });
+        const generated = await profile.generate({ world: await worldText(), context: recentContext(), persona: userPersonaText() });
         if (!generated.ok) return generated;
         const fields = { ...generated.fields };
         for (const key of PROFILE_FIELDS) {
@@ -736,7 +754,7 @@ export function bootstrap({ ctx, store } = {}) {
         return { ok: true, pending: true, fields };
       }
 
-      const result = await profile.regenerate({ world: await worldText(), context: recentContext() });
+      const result = await profile.regenerate({ world: await worldText(), context: recentContext(), persona: userPersonaText() });
       if (result.ok) review.syncInjection();
       return result;
     },
@@ -1226,7 +1244,12 @@ export function bootstrap({ ctx, store } = {}) {
       list: () => presets.list(),
       entries: () => presets.entries(),
       select: (name) => presets.select(name),
-      selectEntries: (indices) => presets.selectEntries(indices),
+      /**
+       * 2026-09-14 修：这里以前只转发 `indices`，**把 `{ none: true }` 吃掉了** ——
+       * 于是界面点「全不选」传进来的空数组又被当成"全部启用条目"，勾选立刻弹回去。
+       * 参数原样转发（第二个参数是"显式全不选"标记）。
+       */
+      selectEntries: (indices, options) => presets.selectEntries(indices, options),
       clear: () => presets.clear(),
       text: () => presets.text(),
       status: () => presets.status(),
@@ -1270,6 +1293,8 @@ export function bootstrap({ ctx, store } = {}) {
     // T-408：伏笔查看 / 手动销账
     foreshadows: foreshadowApi,
     generateScript, regenerateScript, topUpStages, resetScript, setEnabled,
+    // 2026-09-14：控制台里核对"user 人设到底读到没有"（读不到就是空串）
+    userPersonaText,
     // T-430：启动/轮询时自动查一次 GitHub（index.js 调它，有新版本会提示一次）
     checkRemoteUpdate,
     collectWorldSources, worldText, profileText,

@@ -49,13 +49,20 @@ check('两套内置文本方向相反：一个推主动、一个收敛极端', (
   assert.ok(GEMINI_REDLINE.includes('控制欲'), 'Gemini 那套是拉回边界');
 });
 
-check('两套都自带 6 条生成前自检', () => {
+check('两套都自带 8 条生成前自检', () => {
   for (const [name, text] of Object.entries(BUILTIN_PRESETS)) {
-    for (const n of ['1.', '2.', '3.', '4.', '5.', '6.']) {
+    for (const n of ['1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.']) {
       assert.ok(text.includes(n), `${name} 缺第 ${n} 条自检`);
     }
     assert.ok(text.includes('自检'), `${name} 要写明是生成前自检`);
   }
+});
+
+check('Claude 那套要压住"回避型人格结论"（2026-09-14 反馈 #3）', () => {
+  assert.ok(CLAUDE_ACTIVE.includes('禁止回避型人格结论'), '要有总的禁止项');
+  assert.ok(CLAUDE_ACTIVE.includes('情感上绝不主动'), '要点名具体是哪类结论');
+  assert.ok(CLAUDE_ACTIVE.includes('卡面写明的主动优先'), '卡面主动的角色不能被写成木头');
+  assert.ok(CLAUDE_ACTIVE.includes('往前挪一格'), '关系要递进，不许原地打转');
 });
 
 check('自定义各存各的：改 Claude 不会串到 Gemini', () => {

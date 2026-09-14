@@ -526,4 +526,80 @@ await acheck('#2：场记的「剧情走向」会跟着「重新生成剧本」�
   }
 });
 
+console.log('2026-09-14 · 反馈 #1（全不选真的生效）+ #2（user 人设进请求）');
+
+await acheck('#1：api.presets.selectEntries 必须把 { none: true } 转发下去（以前被吃掉 → 点了没反应）', async () => {
+  const env = makeBootEnv();
+  const api = bootstrap({ ctx: env.ctx, store: env.store });
+
+  api.presets.selectEntries([], { none: true });
+  assert.equal(env.store.getSettings().preset?.none, true, '全不选标记要存下来');
+  assert.equal(api.presets.status().none, true);
+  assert.equal(api.ui.read().presets.status.none, true, '界面读到的也必须是"全不选"');
+  assert.equal(api.presets.text(), '', '一条都不注入');
+
+  api.presets.selectEntries([1]);
+  assert.equal(api.presets.status().none, false, '勾回一条就取消全不选');
+});
+
+await acheck('#2：user 人设进剧本请求（persona 里写了讨厌薄荷，就不能再送薄荷）', async () => {
+  const originalFetch = globalThis.fetch;
+  const bodies = [];
+  globalThis.fetch = async (_url, init) => {
+    bodies.push(String(init?.body ?? ''));
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              objective: '让她走出门', title: '出门', premise: '一周没出门', foreshadows: [],
+              stages: [{ title: 's1', goal: '把出门挑明', activity: '收拾行李', checkpoint: { criteria: '他把话说死', antiCriteria: '他改口' }, beats: ['提起周末'] }],
+            }),
+          },
+        }],
+      }),
+    };
+  };
+  try {
+    const env = makeBootEnv();
+    env.ctx.getCharacterField = () => undefined;
+    env.ctx.getUserPersona = () => ({ name: '小雨', description: '讨厌薄荷，怕吵' });
+    const api = bootstrap({ ctx: env.ctx, store: env.store });
+    env.store.saveSettings({ connection: { endpoint: 'https://x/v1', model: 'm', apiKey: 'k' }, consistencyCheck: false });
+
+    assert.equal(api.userPersonaText().includes('讨厌薄荷'), true, '控制台能核对读到没有');
+
+    await api.regenerateScript();
+    assert.equal(bodies.length, 1);
+    assert.ok(bodies[0].includes('讨厌薄荷'), '剧本请求里必须带上 user 人设');
+    assert.ok(bodies[0].includes('小雨'), '名字也带上');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+await acheck('#2：侧写请求同样带上 user 人设', async () => {
+  const originalFetch = globalThis.fetch;
+  const bodies = [];
+  globalThis.fetch = async (_url, init) => { bodies.push(String(init?.body ?? '')); return { ok: true, json: async () => ({ choices: [{ message: { content: '{}' } }] }) }; };
+  try {
+    const env = makeBootEnv();
+    env.ctx.getUserPersona = () => ({ name: '', description: '讨厌薄荷' });
+    const api = bootstrap({ ctx: env.ctx, store: env.store });
+    env.store.saveSettings({ connection: { endpoint: 'https://x/v1', model: 'm', apiKey: 'k' } });
+
+    await api.profileApi.regenerate();
+    assert.ok(bodies[0].includes('讨厌薄荷'), '侧写请求也要带 user 人设');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+await acheck('#2：读不到 persona → 请求里没有那段（零回归）', async () => {
+  const env = makeBootEnv();
+  const api = bootstrap({ ctx: env.ctx, store: env.store });
+  assert.equal(api.userPersonaText(), '', '读不到就是空串');
+});
+
 console.log(`\n通过 ${passed} 项`);

@@ -101,14 +101,20 @@ export function createProfileService({ ctx, client, getConnection, now = Date.no
     return next;
   }
 
-  /** 调 GEN_PROFILE；解析失败返回 ok:false，调用方不写不注入（G5） */
-  async function generate({ world = '', context = '' } = {}) {
+  /**
+   * 调 GEN_PROFILE；解析失败返回 ok:false，调用方不写不注入（G5）。
+   * @param {{world?: string, context?: string, persona?: string}} options
+   *   persona：**user 的人设**（2026-09-14 反馈 #2）—— 不带的话模型不知道用户是"讨厌薄荷"的人，
+   *   侧写与剧本都可能写出用户明确反感的东西。
+   */
+  async function generate({ world = '', context = '', persona = '' } = {}) {
     const card = ctx?.getCharacterData?.() ?? null;
     const charText = [card?.description, card?.personality].filter(Boolean).join('\n') || '（无角色卡）';
     const messages = buildMessages('GEN_PROFILE', {
       char: charText,
       world: world || '（未选世界书）',
       context: context || '（暂无对话）',
+      userPersona: String(persona ?? '').trim(),
     });
 
     let raw;
@@ -133,9 +139,9 @@ export function createProfileService({ ctx, client, getConnection, now = Date.no
   }
 
   /** 生成并写入；**locked 的字段保留旧值**，只重生成未锁定的 */
-  async function regenerate({ world = '', context = '' } = {}) {
+  async function regenerate({ world = '', context = '', persona = '' } = {}) {
     const current = read();
-    const result = await generate({ world, context });
+    const result = await generate({ world, context, persona });
     if (!result.ok) return result;
 
     const fields = { ...result.fields };

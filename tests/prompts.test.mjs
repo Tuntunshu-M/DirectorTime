@@ -166,14 +166,18 @@ await check('GEN_INITIATIVE 带 intensityNote 变量（克制档降调用）', (
 
 console.log('T-427 · 条件块 + 重生成带上驳回原因（首轮零回归）');
 
-/** 独立实现：按行把条件块整段删掉（与被测实现用不同机制，用来钉住"零回归"） */
-function stripBlockByLines(template, key) {
+/**
+ * 独立实现：按行把**所有**条件块整段删掉（与被测实现用不同机制，用来钉住"零回归"）。
+ * 不只是 rejectReason —— 现在还有 userPersona 等可选块，只要变量为空就都不该留下痕迹。
+ */
+function stripBlockByLines(template) {
   const lines = String(template).split('\n');
   const out = [];
   let inside = false;
   for (const line of lines) {
-    if (line.trim() === `{{#${key}}}`) { inside = true; continue; }
-    if (line.trim() === `{{/${key}}}`) { inside = false; continue; }
+    const text = line.trim();
+    if (/^\{\{#[\w.]+\}\}$/.test(text)) { inside = true; continue; }
+    if (/^\{\{\/[\w.]+\}\}$/.test(text)) { inside = false; continue; }
     if (!inside) out.push(line);
   }
   return out.join('\n');
@@ -209,10 +213,10 @@ check('条件块：文件首尾也能用；相邻两块互不影响；没闭合�
   assert.equal(renderTemplate('A\n{{#x}}\nX\nB', { x: 1 }), 'A\n{{#x}}\nX\nB');
 });
 
-check('首轮零回归：不带 rejectReason 时，渲染结果与"把块整段删掉"逐字一致', () => {
-  for (const name of ['GEN_OUTLINE', 'EXTEND_OUTLINE']) {
+check('首轮零回归：可选块（rejectReason / userPersona）为空时，渲染结果与"把块整段删掉"逐字一致', () => {
+  for (const name of ['GEN_OUTLINE', 'EXTEND_OUTLINE', 'GEN_PROFILE', 'GEN_INITIATIVE']) {
     const rendered = renderTemplate(PROMPTS[name].user, GEN_VARS);
-    const golden = stripBlockByLines(PROMPTS[name].user, 'rejectReason');
+    const golden = stripBlockByLines(PROMPTS[name].user);
     assert.equal(rendered, renderTemplate(golden, GEN_VARS), `${name}：与删掉块的原文不一致（多/少了空行）`);
     assert.equal(
       rendered.split('\n').length,
@@ -220,7 +224,17 @@ check('首轮零回归：不带 rejectReason 时，渲染结果与"把块整段�
       `${name}：行数变了，说明留了空行`,
     );
     assert.ok(!rendered.includes('上一版被判定为不符合人设'), `${name}：首轮不该出现驳回原因段`);
+    assert.ok(!rendered.includes('user 的人设'), `${name}：没人设时不该出现人设段`);
     assert.ok(!rendered.includes('{{'), `${name}：不能留下未替换的占位符`);
+  }
+});
+
+check('带上 userPersona → 请求里能看到（#2：别写出用户明确反感的东西）', () => {
+  const vars = { ...GEN_VARS, userPersona: '名字：小雨\n人设：讨厌薄荷，怕吵' };
+  for (const name of ['GEN_OUTLINE', 'EXTEND_OUTLINE', 'GEN_PROFILE', 'GEN_INITIATIVE']) {
+    const rendered = renderTemplate(PROMPTS[name].user, vars);
+    assert.ok(rendered.includes('讨厌薄荷，怕吵'), `${name} 没带上 user 人设`);
+    assert.ok(rendered.includes('必须尊重') || rendered.includes('尊重它'), `${name} 要写明"必须尊重"`);
   }
 });
 
